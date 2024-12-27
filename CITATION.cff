@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+  - family-names: "Chelbi"
+    given-names: "Moudather"
+    email: "moudather.chelbi@gmail.com"
+    orcid: "https://orcid.org/0000-0000-0000-0000"  # Placeholder until I replace it with actual DOI when registered
+title: "Virtual Power Plant Library"
+version: 0.1.0
+doi: 10.5281/zenodo.0000000  # Placeholder until I replace it with actual DOI when registered
+date-released: 2024-01-01
+url: "https://github.com/vinerya/virtual-power-plant"
+repository-code: "https://github.com/vinerya/virtual-power-plant"
+license: MIT
+keywords:
+  - virtual power plant
+  - energy management
+  - renewable energy
+  - optimization
+  - python
+  - smart grid
+  - energy storage
+  - power systems
+abstract: |
+  A comprehensive Python library for virtual power plant management, simulation, and research.
+  The library provides tools for managing distributed energy resources, optimizing power dispatch,
+  and analyzing system performance. It includes features for both production use and research
+  applications, with support for multiple optimization strategies and extensive analysis capabilities.
+references:
+  - type: software
+    title: "PuLP"
+    version: "2.7.0"
+    repository-code: "https://github.com/coin-or/pulp"
+  - type: software
+    title: "NumPy"
+    version: "1.20.0"
+    repository-code: "https://github.com/numpy/numpy"

@@ -254,6 +254,27 @@ See [Contributing Guide](https://github.com/vinerya/virtual-power-plant/CONTRIBU
 
 </div>
 
+## 📚 Citation
+
+If you use this software in your research, please cite it as:
+
+```bibtex
+@software{chelbi2024vpp,
+  author       = {Chelbi, Moudather},
+  title        = {Virtual Power Plant Library},
+  month        = dec,
+  year         = 2024,
+  publisher    = {GitHub},
+  version      = {0.1.0},
+  url          = {https://github.com/vinerya/virtual-power-plant},
+  doi          = {10.5281/zenodo.0000000}  # Placeholder until I replace it with actual DOI when registered
+}
+```
+
+You can also cite this project using the GitHub citation feature or the [CITATION.cff](CITATION.cff) file.
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.0000000.svg)](https://doi.org/10.5281/zenodo.0000000)
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -261,5 +282,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ---
 
 <div align="center">
+
+[![Made with Python](https://img.shields.io/badge/Made%20with-Python-1f425f.svg)](https://www.python.org/)
+[![Made with Love](https://img.shields.io/badge/Made%20with-Love-red.svg)](https://github.com/vinerya)
+
 Made with ❤️ by Moudather Chelbi
+
 </div>
