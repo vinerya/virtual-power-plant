@@ -12,7 +12,6 @@ A comprehensive Python library for virtual power plant management, simulation, a
 [Features](#-features) •
 [Installation](#-installation) •
 [Usage](#-usage) •
-[Documentation](#-documentation) •
 [Contributing](#-contributing)
 
 </div>
@@ -225,12 +224,7 @@ vpp = VirtualPowerPlant(
 
 ## 📚 Documentation
 
-For detailed documentation, see:
-- 📖 [API Reference](https://github.com/vinerya/virtual-power-plant/docs/api.md)
-- 🔋 [Resource Types](https://github.com/vinerya/virtual-power-plant/docs/resources.md)
-- 🎯 [Optimization Strategies](https://github.com/vinerya/virtual-power-plant/docs/optimization.md)
-- 🔬 [Research Tools](https://github.com/vinerya/virtual-power-plant/docs/research.md)
-- 💡 [Examples](https://github.com/vinerya/virtual-power-plant/examples/)
+Work in Progress ...
 
 ## 🤝 Contributing
 
