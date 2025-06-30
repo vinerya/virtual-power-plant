@@ -1,0 +1,336 @@
+# Advanced Virtual Power Plant Configuration
+# This configuration demonstrates the enhanced capabilities of the VPP library
+# including physics-based models, advanced optimization, and rule-based systems
+
+name: "Advanced Research VPP"
+description: "Demonstration of advanced VPP capabilities with physics-based modeling"
+location: "Research Facility, California"
+timezone: "America/Los_Angeles"
+config_version: "1.0"
+
+# Optimization Configuration
+optimization:
+  strategy: "multi_objective"
+  time_horizon: 24  # hours
+  time_step: 15     # minutes
+  solver_timeout: 300  # seconds
+  
+  # Multi-objective optimization
+  objectives:
+    - name: "cost_minimization"
+      weight: 0.4
+      priority: 1
+      enabled: true
+      parameters:
+        electricity_price_forecast: true
+        demand_response_participation: true
+    
+    - name: "emissions_reduction"
+      weight: 0.3
+      priority: 2
+      enabled: true
+      parameters:
+        carbon_intensity_forecast: true
+        renewable_preference: 0.8
+    
+    - name: "reliability_maximization"
+      weight: 0.3
+      priority: 3
+      enabled: true
+      parameters:
+        reserve_margin: 0.1
+        frequency_response: true
+
+  # Operational constraints
+  constraints:
+    - name: "ramp_rate_limits"
+      enabled: true
+      violation_penalty: 1000.0
+      parameters:
+        max_ramp_up: 50.0    # kW/min
+        max_ramp_down: 30.0  # kW/min
+    
+    - name: "minimum_runtime"
+      enabled: true
+      violation_penalty: 500.0
+      parameters:
+        duration: 60  # minutes
+    
+    - name: "reserve_requirements"
+      enabled: true
+      violation_penalty: 2000.0
+      parameters:
+        spinning_reserve: 0.05    # 5% of capacity
+        non_spinning_reserve: 0.10 # 10% of capacity
+    
+    - name: "grid_stability"
+      enabled: true
+      violation_penalty: 1500.0
+      parameters:
+        frequency_deadband: 0.05  # Hz
+        voltage_regulation: true
+
+  solver_options:
+    method: "interior_point"
+    tolerance: 1e-6
+    max_iterations: 1000
+
+# Heuristic Algorithms Configuration
+heuristics:
+  algorithm: "genetic_algorithm"
+  max_iterations: 500
+  convergence_tolerance: 1e-6
+  random_seed: 42
+  
+  parameters:
+    population_size: 100
+    mutation_rate: 0.1
+    crossover_rate: 0.8
+    selection_method: "tournament"
+    tournament_size: 5
+    elitism_rate: 0.1
+    
+    # Multi-objective specific
+    pareto_front_size: 50
+    diversity_preservation: true
+    
+    # Adaptive parameters
+    adaptive_mutation: true
+    adaptive_crossover: true
+
+# Rule Engine Configuration
+rules:
+  inference_method: "forward_chaining"
+  conflict_resolution: "priority"
+  max_inference_depth: 100
+  enable_explanation: true
+  
+  rules:
+    # Safety rules (highest priority)
+    - name: "battery_temperature_protection"
+      enabled: true
+      priority: 1
+      conditions:
+        battery_temperature: ">= 55"
+      actions:
+        reduce_power: 0.5
+        send_alert: "high_temperature"
+    
+    - name: "grid_frequency_response"
+      enabled: true
+      priority: 2
+      conditions:
+        grid_frequency: "< 59.8 or > 60.2"
+      actions:
+        activate_frequency_response: true
+        adjust_power_output: "proportional"
+    
+    # Economic rules
+    - name: "peak_shaving"
+      enabled: true
+      priority: 5
+      conditions:
+        time_of_day: "17:00-21:00"
+        electricity_price: "> 0.15"
+      actions:
+        discharge_battery: true
+        target_power: "peak_demand * 0.8"
+    
+    - name: "arbitrage_opportunity"
+      enabled: true
+      priority: 6
+      conditions:
+        price_spread: "> 0.05"
+        battery_soc: "> 0.2"
+      actions:
+        optimize_arbitrage: true
+        time_horizon: 4  # hours
+    
+    # Environmental rules
+    - name: "renewable_maximization"
+      enabled: true
+      priority: 7
+      conditions:
+        renewable_generation: "> 0.8 * capacity"
+        battery_soc: "< 0.9"
+      actions:
+        charge_from_renewables: true
+        curtailment_avoidance: true
+
+# Monitoring and Diagnostics
+monitoring:
+  enabled: true
+  log_level: "INFO"
+  log_file: "vpp_advanced.log"
+  metrics_collection: true
+  performance_profiling: true
+  dashboard_enabled: true
+  dashboard_port: 8080
+  
+  alert_thresholds:
+    battery_soc_low: 0.1
+    battery_soc_high: 0.95
+    battery_temperature_high: 50.0
+    system_efficiency_low: 0.85
+    optimization_failure_rate: 0.05
+
+# Simulation Configuration
+simulation:
+  enabled: true
+  start_time: "2024-01-01T00:00:00"
+  end_time: "2024-01-07T23:59:59"
+  time_step_minutes: 15
+  weather_simulation: true
+  market_simulation: true
+  random_seed: 123
+  monte_carlo_runs: 100
+
+# Security Configuration
+security:
+  enable_authentication: false
+  api_key_required: false
+  rate_limiting: true
+  max_requests_per_minute: 100
+  allowed_ips: []
+  encryption_enabled: false
+
+# Resource Definitions
+resources:
+  # Advanced Battery with Physics-Based Model
+  - name: "main_battery"
+    type: "battery"
+    enabled: true
+    parameters:
+      # Basic specifications
+      nominal_capacity: 2000.0  # Ah
+      nominal_voltage: 400.0    # V
+      max_voltage: 420.0        # V
+      min_voltage: 320.0        # V
+      max_current: 500.0        # A
+      initial_soc: 0.5
+      
+      # Model selection
+      model_type: "advanced"  # or "simple"
+      
+      # Electrochemical parameters (for advanced model)
+      diffusion_coefficient: 1e-14  # m²/s
+      particle_radius: 5e-6         # m
+      electrode_thickness: 100e-6   # m
+      porosity: 0.3
+      
+      # Aging parameters
+      capacity_fade_rate: 0.0002    # per cycle
+      resistance_growth_rate: 0.0001 # per cycle
+      calendar_fade_rate: 0.00005   # per day
+      
+      # Thermal parameters
+      thermal_mass: 1000.0          # J/K
+      thermal_resistance: 0.1       # K/W
+      ambient_temperature: 25.0     # C
+      
+      # Efficiency parameters
+      charge_efficiency: 0.95
+      discharge_efficiency: 0.95
+      
+    constraints:
+      max_soc: 0.95
+      min_soc: 0.05
+      max_temperature: 60.0
+      min_temperature: -20.0
+      max_charge_rate: 0.5  # C-rate
+      max_discharge_rate: 1.0  # C-rate
+
+  # Advanced Solar PV System
+  - name: "solar_array"
+    type: "solar"
+    enabled: true
+    parameters:
+      peak_power: 1000.0      # kW
+      panel_area: 5000.0      # m²
+      panel_efficiency: 0.22  # 22%
+      
+      # Advanced modeling parameters
+      temperature_coefficient: -0.004  # per °C
+      irradiance_threshold: 50.0       # W/m²
+      inverter_efficiency: 0.98
+      dc_ac_ratio: 1.2
+      
+      # Degradation modeling
+      annual_degradation: 0.005  # 0.5% per year
+      
+      # Shading analysis
+      shading_enabled: true
+      shading_profile: "morning_partial"
+      
+    constraints:
+      max_power_output: 1000.0
+      min_irradiance: 10.0
+      max_temperature: 85.0
+
+  # Advanced Wind Turbine
+  - name: "wind_turbine"
+    type: "wind"
+    enabled: true
+    parameters:
+      rated_power: 2000.0     # kW
+      rotor_diameter: 80.0    # m
+      hub_height: 100.0       # m
+      cut_in_speed: 3.0       # m/s
+      cut_out_speed: 25.0     # m/s
+      rated_speed: 12.0       # m/s
+      
+      # Advanced aerodynamics
+      power_coefficient: 0.45
+      tip_speed_ratio: 7.0
+      air_density: 1.225      # kg/m³
+      
+      # Control systems
+      pitch_control: true
+      yaw_control: true
+      
+      # Wake modeling
+      wake_effects: true
+      turbulence_intensity: 0.1
+      
+    constraints:
+      max_power_output: 2000.0
+      min_wind_speed: 2.0
+      max_wind_speed: 30.0
+      max_turbulence: 0.3
+
+  # Backup Generator
+  - name: "backup_generator"
+    type: "generator"
+    enabled: true
+    parameters:
+      rated_power: 500.0      # kW
+      fuel_type: "natural_gas"
+      efficiency: 0.35
+      startup_time: 300       # seconds
+      shutdown_time: 180      # seconds
+      min_load: 0.3          # 30% of rated power
+      
+      # Emissions
+      co2_emissions: 0.2      # kg/kWh
+      nox_emissions: 0.001    # kg/kWh
+      
+    constraints:
+      max_runtime: 8          # hours continuous
+      min_runtime: 1          # hour minimum
+      max_starts_per_day: 3
+
+# Advanced Settings
+enable_hot_reload: true
+backup_config: true
+
+# Performance tuning
+performance:
+  parallel_processing: true
+  max_threads: 4
+  memory_limit: "2GB"
+  cache_size: 1000
+  
+  # Optimization performance
+  warm_start: true
+  solution_caching: true
+  constraint_preprocessing: true
