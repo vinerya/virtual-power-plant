@@ -79,7 +79,7 @@ optimization:
 heuristics:
   algorithm: "genetic_algorithm"
   max_iterations: 500
-  convergence_tolerance: 1e-6
+  convergence_tolerance: 0.000001
   random_seed: 42
   
   parameters:

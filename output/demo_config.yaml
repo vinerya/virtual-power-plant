@@ -1,0 +1,111 @@
+backup_config: true
+config_version: '1.0'
+description: Created programmatically for demonstration
+enable_hot_reload: false
+heuristics:
+  algorithm: genetic_algorithm
+  convergence_tolerance: 1.0e-06
+  max_iterations: 1000
+  parameters: {}
+  random_seed: null
+location: Demo Location
+monitoring:
+  alert_thresholds: {}
+  dashboard_enabled: false
+  dashboard_port: 8080
+  enabled: true
+  log_file: null
+  log_level: INFO
+  metrics_collection: true
+  performance_profiling: false
+name: Programmatic VPP
+optimization:
+  constraints:
+  - enabled: true
+    name: power_balance
+    parameters:
+      tolerance: 0.01
+    violation_penalty: 10000.0
+  - enabled: true
+    name: ramp_limits
+    parameters:
+      max_ramp: 100.0
+    violation_penalty: 1000.0
+  objectives:
+  - enabled: true
+    name: cost_minimization
+    parameters:
+      include_demand_charges: true
+    priority: 1
+    weight: 0.6
+  - enabled: true
+    name: emissions_reduction
+    parameters:
+      carbon_price: 50.0
+    priority: 2
+    weight: 0.4
+  solver_options: {}
+  solver_timeout: 300
+  strategy: linear_programming
+  time_horizon: 24
+  time_step: 15
+resources:
+- constraints:
+    max_soc: 0.9
+    min_soc: 0.1
+  enabled: true
+  name: demo_battery
+  parameters:
+    max_current: 250.0
+    model_type: simple
+    nominal_capacity: 1000.0
+    nominal_voltage: 400.0
+  type: battery
+- constraints: {}
+  enabled: true
+  name: demo_solar
+  parameters:
+    panel_area: 2500.0
+    panel_efficiency: 0.2
+    peak_power: 500.0
+  type: solar
+rules:
+  conflict_resolution: priority
+  enable_explanation: true
+  inference_method: forward_chaining
+  max_inference_depth: 100
+  rules:
+  - actions:
+      notify_operator: true
+      shutdown_all: true
+    conditions:
+      system_fault: true
+    enabled: true
+    name: emergency_shutdown
+    priority: 1
+  - actions:
+      discharge_battery: true
+      target_power: max_discharge
+    conditions:
+      battery_soc: '> 0.3'
+      peak_demand_signal: true
+    enabled: true
+    name: peak_demand_response
+    priority: 5
+security:
+  allowed_ips: []
+  api_key_required: false
+  enable_authentication: false
+  encryption_enabled: false
+  max_requests_per_minute: 100
+  rate_limiting: true
+simulation:
+  enabled: false
+  end_time: null
+  market_simulation: true
+  monte_carlo_runs: 1
+  random_seed: null
+  start_time: null
+  time_step_minutes: 15
+  weather_simulation: true
+timezone: UTC

@@ -105,13 +105,14 @@ def create_optimization_engine(engine_type: str = "standard") -> OptimizationEng
     return OptimizationFactory.create_engine(engine_type)
 
 
-def create_stochastic_problem(base_data: dict, num_scenarios: int = 10) -> OptimizationProblem:
+def create_stochastic_problem(base_data: dict, num_scenarios: int = 10, uncertainty_config: dict = None) -> OptimizationProblem:
     """
     Create a stochastic optimization problem with scenario generation.
     
     Args:
         base_data: Base forecast data (prices, load, renewable generation)
         num_scenarios: Number of scenarios to generate
+        uncertainty_config: Configuration for uncertainty parameters
         
     Returns:
         OptimizationProblem configured for stochastic optimization
@@ -125,7 +126,7 @@ def create_stochastic_problem(base_data: dict, num_scenarios: int = 10) -> Optim
         >>> problem = create_stochastic_problem(base_data, num_scenarios=20)
     """
     manager = StochasticOptimizationManager()
-    return manager.create_stochastic_problem(base_data, num_scenarios)
+    return manager.create_stochastic_problem(base_data, num_scenarios, uncertainty_config)
 
 
 def create_realtime_problem(current_state: dict, forecasts: dict = None) -> OptimizationProblem:

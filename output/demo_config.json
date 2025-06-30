@@ -1,0 +1,150 @@
+{
+  "name": "Programmatic VPP",
+  "description": "Created programmatically for demonstration",
+  "location": "Demo Location",
+  "timezone": "UTC",
+  "optimization": {
+    "strategy": "linear_programming",
+    "objectives": [
+      {
+        "name": "cost_minimization",
+        "weight": 0.6,
+        "priority": 1,
+        "enabled": true,
+        "parameters": {
+          "include_demand_charges": true
+        }
+      },
+      {
+        "name": "emissions_reduction",
+        "weight": 0.4,
+        "priority": 2,
+        "enabled": true,
+        "parameters": {
+          "carbon_price": 50.0
+        }
+      }
+    ],
+    "constraints": [
+      {
+        "name": "power_balance",
+        "enabled": true,
+        "parameters": {
+          "tolerance": 0.01
+        },
+        "violation_penalty": 10000.0
+      },
+      {
+        "name": "ramp_limits",
+        "enabled": true,
+        "parameters": {
+          "max_ramp": 100.0
+        },
+        "violation_penalty": 1000.0
+      }
+    ],
+    "time_horizon": 24,
+    "time_step": 15,
+    "solver_timeout": 300,
+    "solver_options": {}
+  },
+  "heuristics": {
+    "algorithm": "genetic_algorithm",
+    "parameters": {},
+    "max_iterations": 1000,
+    "convergence_tolerance": 1e-06,
+    "random_seed": null
+  },
+  "rules": {
+    "inference_method": "forward_chaining",
+    "conflict_resolution": "priority",
+    "rules": [
+      {
+        "name": "emergency_shutdown",
+        "enabled": true,
+        "priority": 1,
+        "conditions": {
+          "system_fault": true
+        },
+        "actions": {
+          "shutdown_all": true,
+          "notify_operator": true
+        }
+      },
+      {
+        "name": "peak_demand_response",
+        "enabled": true,
+        "priority": 5,
+        "conditions": {
+          "peak_demand_signal": true,
+          "battery_soc": "> 0.3"
+        },
+        "actions": {
+          "discharge_battery": true,
+          "target_power": "max_discharge"
+        }
+      }
+    ],
+    "max_inference_depth": 100,
+    "enable_explanation": true
+  },
+  "monitoring": {
+    "enabled": true,
+    "log_level": "INFO",
+    "log_file": null,
+    "metrics_collection": true,
+    "performance_profiling": false,
+    "alert_thresholds": {},
+    "dashboard_enabled": false,
+    "dashboard_port": 8080
+  },
+  "simulation": {
+    "enabled": false,
+    "start_time": null,
+    "end_time": null,
+    "time_step_minutes": 15,
+    "weather_simulation": true,
+    "market_simulation": true,
+    "random_seed": null,
+    "monte_carlo_runs": 1
+  },
+  "security": {
+    "enable_authentication": false,
+    "api_key_required": false,
+    "rate_limiting": true,
+    "max_requests_per_minute": 100,
+    "allowed_ips": [],
+    "encryption_enabled": false
+  },
+  "resources": [
+    {
+      "name": "demo_battery",
+      "type": "battery",
+      "enabled": true,
+      "parameters": {
+        "nominal_capacity": 1000.0,
+        "nominal_voltage": 400.0,
+        "max_current": 250.0,
+        "model_type": "simple"
+      },
+      "constraints": {
+        "max_soc": 0.9,
+        "min_soc": 0.1
+      }
+    },
+    {
+      "name": "demo_solar",
+      "type": "solar",
+      "enabled": true,
+      "parameters": {
+        "peak_power": 500.0,
+        "panel_area": 2500.0,
+        "panel_efficiency": 0.2
+      },
+      "constraints": {}
+    }
+  ],
+  "enable_hot_reload": false,
+  "backup_config": true,
+  "config_version": "1.0"
+}
