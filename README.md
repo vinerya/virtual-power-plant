@@ -103,6 +103,38 @@ A comprehensive, production-ready Python library for virtual power plant managem
   - Resource utilization tracking
   - Comprehensive logging and diagnostics
 
+### 💹 **Advanced Trading System**
+- **⚡ Multi-Market Trading**
+  - Day-ahead auction markets with hourly clearing
+  - Real-time continuous trading with sub-millisecond execution
+  - Ancillary services markets (frequency response, reserves)
+  - Bilateral contract trading with custom terms
+
+- **🔄 Trading Strategies**
+  - Multi-market arbitrage with automatic opportunity detection
+  - Momentum trading with configurable lookback periods
+  - Mean reversion strategies with statistical analysis
+  - Machine learning-based signal generation
+  - Multi-strategy aggregation with weighted signals
+
+- **💼 Portfolio Management**
+  - Real-time position tracking across all markets
+  - Mark-to-market P&L calculation with performance metrics
+  - Risk management with position limits and drawdown controls
+  - Comprehensive trade analytics and reporting
+
+- **📊 Market Data Integration**
+  - Simulated market data for testing and development
+  - Live market data feeds with real-time price updates
+  - Historical data for backtesting and strategy validation
+  - Market depth analysis and order book management
+
+- **🛡️ Risk Management**
+  - Position size limits and concentration controls
+  - Daily loss limits and maximum drawdown monitoring
+  - Value at Risk (VaR) calculation and stress testing
+  - Real-time risk limit enforcement with automatic controls
+
 ---
 
 ## 🚀 Installation
@@ -228,6 +260,47 @@ result = solve_with_fallback(problem, timeout_ms=1000)
 print("Site allocations:")
 for site_id, power in result.solution['target_power'].items():
     print(f"  {site_id}: {power:.1f} kW")
+```
+
+### 💹 **Energy Trading**
+
+```python
+from vpp.trading import (
+    create_trading_engine, 
+    create_arbitrage_strategy,
+    calculate_arbitrage_opportunity,
+    optimize_trading_schedule
+)
+
+# Calculate arbitrage opportunity
+opportunity = calculate_arbitrage_opportunity(
+    price1=0.08,  # Day-ahead price $/kWh
+    price2=0.12,  # Real-time price $/kWh
+    transaction_cost=0.002
+)
+
+if opportunity['profitable']:
+    print(f"Arbitrage profit: ${opportunity['profit_per_mwh']:.2f}/MWh")
+    print(f"Strategy: Buy in {opportunity['buy_market']}, Sell in {opportunity['sell_market']}")
+
+# Optimize 24-hour trading schedule
+prices = [0.06, 0.05, 0.04, 0.08, 0.12, 0.15, 0.18, 0.20, 0.22, 0.15, 0.10, 0.08] * 2
+schedule = optimize_trading_schedule(prices, capacity=1000, efficiency=0.92)
+
+print(f"Expected profit: ${schedule['total_profit']:.2f}")
+print(f"Battery utilization: {schedule['utilization']:.1f}%")
+
+# Create trading engine with risk management
+engine = create_trading_engine({
+    'risk_limits': {'max_position': 1000, 'max_daily_loss': 5000},
+    'markets': ['day_ahead', 'real_time'],
+    'strategies': ['arbitrage']
+})
+
+# Add arbitrage strategy
+strategy = create_arbitrage_strategy(price_threshold=0.02)
+engine.add_strategy(strategy)
+engine.start()  # Begin automated trading
 ```
 
 ---
@@ -414,7 +487,14 @@ See [`configs/advanced_vpp_config.yaml`](configs/advanced_vpp_config.yaml) for c
    - Configuration validation and hot reload
    - Programmatic configuration creation
 
-3. **[Comprehensive Test Suite](tests/test_optimization_framework.py)**
+3. **[Trading System Demo](examples/trading_demo.py)**
+   - Multi-market arbitrage trading strategies
+   - Portfolio management with risk controls
+   - Trading schedule optimization
+   - Complete trading engine integration
+   - Performance analytics and reporting
+
+4. **[Comprehensive Test Suite](tests/test_optimization_framework.py)**
    - Edge case handling and stress testing
    - Performance benchmarking and validation
    - Plugin architecture robustness testing
