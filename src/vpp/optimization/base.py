@@ -206,7 +206,14 @@ class OptimizationEngine:
             if plugin.is_available() and plugin.validate_problem(problem):
                 try:
                     self.logger.debug(f"Solving with plugin: {plugin.name}")
-                    result = plugin.solve(problem, timeout_ms)
+                    
+                    # Check timeout before calling plugin
+                    elapsed_ms = (time.time() - start_time) * 1000
+                    if elapsed_ms >= timeout_ms:
+                        self.logger.warning(f"Timeout before plugin call: {elapsed_ms:.1f}ms >= {timeout_ms}ms")
+                    else:
+                        remaining_timeout = max(1, int(timeout_ms - elapsed_ms))
+                        result = plugin.solve(problem, remaining_timeout)
                     
                     # Record solve attempt
                     solve_time = time.time() - start_time
