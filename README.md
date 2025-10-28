@@ -54,7 +54,7 @@ A comprehensive, production-ready Python library for virtual power plant managem
   - ADMM distributed optimization for multi-site coordination
 
 - **⚡ Real-Time Grid Services**
-  - Sub-millisecond frequency response (tested: 0.1-0.3ms)
+  - Sub-millisecond frequency response
   - Automatic voltage support and reactive power management
   - Emergency load shedding and generation curtailment
   - Economic dispatch with price-based arbitrage
@@ -393,18 +393,6 @@ config.enable_hot_reload = True
 ```
 
 ---
-
-## 📈 Performance
-
-### 🏆 **Benchmark Results**
-
-| Metric | Our Framework | Commercial Solutions | Improvement |
-|--------|---------------|---------------------|-------------|
-| **Response Time** | 0.1-0.3ms | 1-10ms | **10-100x faster** |
-| **Reliability** | 100% (fallbacks) | 99.9% | **Higher reliability** |
-| **Scalability** | 20+ sites tested | Limited | **Unlimited scaling** |
-| **Cost** | Free (Open Source) | $50K-500K/year | **100% cost savings** |
-| **Customization** | Full source access | Limited APIs | **Unlimited flexibility** |
 
 ### ✅ **Test Coverage**
 
