@@ -25,9 +25,7 @@ A comprehensive, production-ready Python library for virtual power plant managem
 ## 🚀 Why Choose This VPP Library?
 
 ### 🏆 **Industry-Leading Performance**
-- **Sub-millisecond response times** (0.1-0.3ms) for real-time grid services
 - **100% reliability** with comprehensive rule-based fallbacks
-- **Unlimited scalability** - tested with 20+ distributed sites
 - **Production-ready** with comprehensive testing and validation
 
 ### 💰 **Cost-Effective Alternative**
