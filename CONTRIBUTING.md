@@ -1,6 +1,6 @@
-# Contributing to Virtual Power Plant Library
+# Contributing to Virtual Power Plant
 
-We love your input! We want to make contributing to the Virtual Power Plant library as easy and transparent as possible, whether it's:
+We love your input! We want to make contributing to the Virtual Power Plant platform as easy and transparent as possible, whether it's:
 
 - Reporting a bug
 - Discussing the current state of the code
@@ -17,7 +17,7 @@ We use GitHub Flow, so all code changes happen through pull requests:
 1. Fork the repo and create your branch from `main`
 2. If you've added code that should be tested, add tests
 3. If you've changed APIs, update the documentation
-4. Ensure the test suite passes
+4. Ensure the test suite passes (`pytest tests/ -v` — all 226 tests must pass)
 5. Make sure your code lints
 6. Issue that pull request!
 
@@ -25,14 +25,14 @@ We use GitHub Flow, so all code changes happen through pull requests:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/username/virtual-power-plant.git
+git clone https://github.com/vinerya/virtual-power-plant.git
 cd virtual-power-plant
 ```
 
 2. Create a virtual environment and activate it:
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
 3. Install development dependencies:
@@ -45,23 +45,54 @@ pip install -e ".[dev]"
 pre-commit install
 ```
 
+5. Run the test suite:
+```bash
+pytest tests/ -v
+```
+
 ## Code Style
 - We use [Black](https://github.com/psf/black) for code formatting
 - Type hints are required for all functions and classes
 - Docstrings should follow Google style
 - Maximum line length is 88 characters (Black default)
 
-## Testing
-- All new code should include tests
-- Tests are written using pytest
-- Run tests with: `pytest tests/`
-- Aim for 90%+ test coverage
+## Architecture Principles
 
-## Documentation
-- Documentation is written in Markdown and reStructuredText
-- API documentation is auto-generated from docstrings
-- Examples should be included for new features
-- Build docs with: `cd docs && make html`
+- **Rule-based logic for production** — AI/ML goes in `src/vpp/research/` only, never in production code paths
+- **Plugin architecture** — new optimization methods, protocols, and strategies should be plugins
+- **Edge-first, cloud-optional** — the platform must run standalone without external services
+
+## Testing
+- All new code must include tests
+- Tests are written using pytest
+- Run tests with: `pytest tests/ -v`
+- Aim for 90%+ test coverage
+- Test files go in `tests/` with the naming convention `test_<module>.py`
+
+## Project Structure
+
+Key directories for contributors:
+
+| Directory | What it contains |
+|-----------|-----------------|
+| `src/vpp/optimization/` | Stochastic, real-time, distributed optimizers, plugin system |
+| `src/vpp/trading/` | Markets, orders, strategies, portfolio, risk management |
+| `src/vpp/protocols/` | OpenADR, OCPP, MQTT, Modbus, IEEE 2030.5 adapters |
+| `src/vpp/v2g/` | EV models, smart scheduling, fleet aggregation |
+| `src/vpp/grid/` | Grid-forming inverters, microgrid controller |
+| `src/vpp/research/` | ML/AI models (non-production) |
+| `src/vpp/api/` | FastAPI REST + WebSocket endpoints |
+| `benchmarks/` | Datasets, scenarios, metrics, benchmark runner |
+| `demos/` | Interactive demo applications |
+| `tests/` | Test suite (226 tests) |
+
+## Priority Contribution Areas
+
+- **New resource types**: fuel cells, pumped hydro, thermal storage
+- **Protocol adapters**: SunSpec, DNP3, IEC 61850
+- **Real grid data**: ISO API integrations, utility data feeds
+- **Optimization algorithms**: new solver plugins
+- **Documentation**: tutorials, case studies, and deployment guides
 
 ## Pull Request Process
 1. Update the README.md with details of changes if needed
@@ -71,8 +102,8 @@ pre-commit install
 ## Any contributions you make will be under the MIT Software License
 In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
 
-## Report bugs using Github's [issue tracker](https://github.com/username/virtual-power-plant/issues)
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/username/virtual-power-plant/issues/new).
+## Report bugs using Github's [issue tracker](https://github.com/vinerya/virtual-power-plant/issues)
+We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/vinerya/virtual-power-plant/issues/new).
 
 ## Write bug reports with detail, background, and sample code
 

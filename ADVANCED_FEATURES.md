@@ -259,12 +259,10 @@ economic_rule = RuleConfig(
 git clone https://github.com/vinerya/virtual-power-plant.git
 cd virtual-power-plant
 
-# Switch to advanced branch
-git checkout feature/advanced-stable-vpp
-
-# Install dependencies
-pip install -e .
-pip install pyyaml  # For YAML configuration support
+# Create virtual environment and install
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 ```
 
 ### Quick Start
