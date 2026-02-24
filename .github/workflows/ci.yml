@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install ruff mypy
+      - name: Ruff check
+        run: ruff check src/ tests/
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
+      - name: Mypy
+        run: mypy src/vpp --ignore-missing-imports
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package with dev dependencies
+        run: pip install -e ".[dev,api,db,cli]"
+      - name: Run tests with coverage
+        run: pytest tests/ --cov=src/vpp --cov-report=xml --cov-report=term-missing -x
+        env:
+          VPP_ENV: testing
+          VPP_DATABASE_URL: "sqlite+aiosqlite:///./test.db"
+          VPP_SECRET_KEY: "test-secret-key"
+      - name: Upload coverage
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
+        with:
+          file: coverage.xml
+          fail_ci_if_error: false
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install bandit
+        run: pip install bandit
+      - name: Security scan
+        run: bandit -r src/vpp -ll --skip B101
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: [lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t vpp:test .
+      - name: Verify image starts
+        run: |
+          docker run -d --name vpp-test -p 8000:8000 \
+            -e VPP_DATABASE_URL=sqlite+aiosqlite:///./test.db \
+            -e VPP_SECRET_KEY=test-key \
+            vpp:test
+          sleep 5
+          curl -f http://localhost:8000/health || exit 1
+          docker stop vpp-test

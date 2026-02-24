@@ -1,0 +1,25 @@
+version: "3.9"
+
+# Development overrides — run with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  vpp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ./src:/app/src:ro
+      - ./configs:/app/configs:ro
+    environment:
+      VPP_ENV: development
+      VPP_DEBUG: "true"
+      VPP_DATABASE_URL: sqlite+aiosqlite:///./vpp_dev.db
+      VPP_SECRET_KEY: dev-secret-key-not-for-production
+      VPP_LOG_LEVEL: DEBUG
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "vpp.api.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--factory", "--reload"]
+    depends_on: []
+    networks:
+      - vpp-network

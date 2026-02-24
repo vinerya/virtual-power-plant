@@ -1,29 +1,158 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=68.0", "wheel>=0.41.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.black]
-line-length = 88
-include = '\.pyi?$'
-exclude = '''
-/(
-    \.eggs
-  | \.git
-  | \.hg
-  | \.mypy_cache
-  | \.tox
-  | \.venv
-  | _build
-  | buck-out
-  | build
-  | dist
-)/
-'''
+[project]
+name = "virtual-power-plant"
+version = "2.0.0"
+description = "The world's first comprehensive open-source Virtual Power Plant platform — production-ready optimization, multi-market trading, V2G, and grid protocol integration"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Moudather Chelbi", email = "moudather.chelbi@gmail.com"},
+    {name = "Mariem Khemir"},
+]
+keywords = ["virtual-power-plant", "energy", "optimization", "trading", "v2g", "der", "grid", "microgrid"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Energy",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "pulp>=2.7.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0",
+    "structlog>=23.1.0",
+]
+
+[project.optional-dependencies]
+api = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.6",
+    "python-jose[cryptography]>=3.3.0",
+    "bcrypt>=4.0.0",
+    "websockets>=12.0",
+    "httpx>=0.26.0",
+]
+db = [
+    "sqlalchemy[asyncio]>=2.0.25",
+    "alembic>=1.13.0",
+    "aiosqlite>=0.19.0",
+    "asyncpg>=0.29.0",
+]
+protocols = [
+    "paho-mqtt>=1.6.0",
+    "pymodbus>=3.6.0",
+    "lxml>=5.0.0",
+]
+research = [
+    "matplotlib>=3.8.0",
+    "pandas>=2.1.0",
+    "scipy>=1.12.0",
+    "scikit-learn>=1.4.0",
+    "cvxpy>=1.4.0",
+]
+cli = [
+    "click>=8.1.0",
+    "rich>=13.7.0",
+]
+monitoring = [
+    "prometheus-client>=0.20.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.26.0",
+    "factory-boy>=3.3.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+    "bandit>=1.7.0",
+]
+all = [
+    "virtual-power-plant[api,db,protocols,research,cli,monitoring,dev]",
+]
+
+[project.urls]
+Homepage = "https://github.com/vinerya/virtual-power-plant"
+Documentation = "https://github.com/vinerya/virtual-power-plant/tree/main/docs"
+Repository = "https://github.com/vinerya/virtual-power-plant"
+Issues = "https://github.com/vinerya/virtual-power-plant/issues"
+Changelog = "https://github.com/vinerya/virtual-power-plant/blob/main/CHANGELOG.md"
+
+[project.scripts]
+vpp = "vpp.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vpp = ["py.typed"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 99
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "TCH",  # type-checking imports
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults (needed for FastAPI Depends)
+    "SIM108", # use ternary operator (readability preference)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vpp"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-minversion = "6.0"
-addopts = "-ra -q"
-testpaths = [
-    "tests",
+minversion = "7.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests",
+    "benchmark: marks benchmark tests",
 ]
-python_files = ["test_*.py", "*_test.py"]
+
+[tool.coverage.run]
+source = ["src/vpp"]
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 70

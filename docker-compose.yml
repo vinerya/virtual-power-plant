@@ -1,0 +1,63 @@
+version: "3.9"
+
+services:
+  vpp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${VPP_API_PORT:-8000}:8000"
+    environment:
+      VPP_ENV: production
+      VPP_DATABASE_URL: postgresql+asyncpg://vpp:${POSTGRES_PASSWORD:-vpppass}@postgres:5432/vpp
+      VPP_SECRET_KEY: ${VPP_SECRET_KEY:-change-me}
+      VPP_LOG_LEVEL: INFO
+      VPP_METRICS_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: vpp
+      POSTGRES_USER: vpp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpppass}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vpp"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+volumes:
+  postgres-data:
+  redis-data:
+
+networks:
+  vpp-network:
+    driver: bridge

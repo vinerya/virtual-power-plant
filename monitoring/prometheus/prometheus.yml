@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "vpp-api"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["vpp-api:8000"]
+        labels:
+          service: "vpp"
+          environment: "production"
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
