@@ -399,7 +399,7 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 <div align="center">
 
-Made with care by [Moudather Chelbi](https://github.com/vinerya) & [Mariem Khemir](https://github.com/mariemkhemir)
+Made with care by [Moudather Chelbi](https://www.linkedin.com/in/moudatherchelbi/) & [Mariem Khemir](https://www.linkedin.com/in/mariem-khemir/)
 
 [Star this repo](https://github.com/vinerya/virtual-power-plant) · [Report issues](https://github.com/vinerya/virtual-power-plant/issues) · [Request features](https://github.com/vinerya/virtual-power-plant/issues/new)
 
