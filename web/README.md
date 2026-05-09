@@ -150,9 +150,64 @@ seeds an `operator` user by default.
 | `GET /api/v1/config/schema` | Client-side validation | YAML-only checks |
 | `POST /api/v1/config/validate` (optional) | Server-side dry-run | Ajv only |
 
+### M4 additions
+
+- **Alerts feed** (`/alerts`). Live-tailed list backed by `GET /api/v1/alerts`
+  + WebSocket `alerts` channel. Severity filter chips, 24-hour stacked
+  sparkline of alert volume, per-row Acknowledge / Snooze (15m/1h/4h/24h)
+  / Open Source actions, bulk-ack via checkbox selection (Space toggles
+  the focused row). High-severity alerts continue to fire a `sonner`
+  toast through `live-updates.tsx`. WS-pushed alerts pulse briefly when
+  they appear at the top of the list. Empty state is "All clear".
+- **Sites map** (`/sites`). MapLibre GL JS via `react-map-gl/maplibre`,
+  lazy-loaded with `next/dynamic` (`ssr:false`). Tiles come from
+  [OpenFreeMap](https://openfreemap.org) (`tiles.openfreemap.org/styles/positron`)
+  — OSM-derived, no API key, free for unlimited use, recommended drop-in
+  for Mapbox. Falls back to a synthesized site list (group resources by
+  `metadata.site_id`, geocode by `metadata.location.{lat,lon}`, scatter
+  the rest on a deterministic continental-US grid) when
+  `GET /api/v1/sites` returns 404. Markers are color-coded by aggregate
+  health (green/yellow/red based on alert volume, SOH < 0.85, and
+  offline-resource count). Hover shows a popover; the synced
+  click-to-select sidebar list is the keyboard fallback for screen
+  readers (markers are buttons but the list is the canonical input
+  device for non-pointer users).
+- **Customer portal** (`/portal`, `/portal/bill`, `/portal/devices`,
+  `/portal/enroll`). Stripped-down layout under
+  `app/(customer)/layout.tsx` — minimal top bar, no operator nav,
+  lighter background. Uses the same shadcn primitives but with more
+  whitespace. The `/portal/bill` page reuses the operator's
+  `BillBreakdown` component in read-only mode.
+- **Customer audience JWT model.** We assume FastAPI mints tokens with
+  an `aud` claim of either `"operator"` or `"customer"`.
+  `middleware.ts` does an *advisory* base64 decode of the JWT payload
+  to redirect customers to `/portal` and keep operators out of the
+  customer routes; the authoritative check is `GET /api/auth/me` which
+  proxies to FastAPI for full signature + audience validation. If your
+  backend doesn't ship per-audience tokens yet, treat all logins as
+  operator and reach the portal directly via `/portal`.
+
+### M4 backend contracts (mocked at the proxy if 404)
+
+| Endpoint | Used by | Fallback |
+|---|---|---|
+| `GET /api/v1/alerts?since=…` | Alerts feed | Demo dataset in `lib/api/alerts.ts` |
+| `POST /api/v1/alerts/{id}/ack` | Ack | optimistic-only |
+| `POST /api/v1/alerts/{id}/snooze` | Snooze | optimistic-only |
+| `GET /api/v1/sites` | Sites map | Synthesized from `/resources` + grid |
+| `GET /api/v1/customer/me` | Portal layout | Demo customer |
+| `GET /api/v1/customer/me/bill` | Portal bill | Demo bill + baseline |
+| `GET /api/v1/customer/me/devices` | Portal devices | Demo devices |
+| `GET /api/v1/customer/programs` | Enrollment | Three demo programs |
+| `POST /api/v1/customer/enrollments` | Enrollment | Echoes request |
+| `GET /api/v1/auth/me` | Audience verify | 401 |
+
 ## Coming later
 
-- M4: alerts feed, multi-site overview map, customer-facing portal scaffold.
+- M5: per-site detail page (`/sites/[id]`), advanced alert-rules editor
+  (threshold/condition builder for SOH, latency, dispatch failures),
+  ML-driven savings forecasting on the customer portal, and a
+  customer-side device override / opt-out-of-event flow.
 
 ## Verification
 

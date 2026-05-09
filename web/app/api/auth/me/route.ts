@@ -1,0 +1,42 @@
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+import { AUTH_COOKIE_NAME, serverFetch } from "@/lib/api/client";
+
+interface MeResponse {
+  username?: string;
+  audience?: "operator" | "customer" | string;
+  scopes?: string[];
+}
+
+/**
+ * Verifies the audience claim of the current session by asking FastAPI to
+ * validate the JWT (signature + expiry + audience). The middleware does an
+ * advisory base64 decode for routing; this endpoint is the authoritative
+ * check whenever the UI needs to gate per-page behavior.
+ */
+export async function GET() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
+  if (!token) return NextResponse.json({ authenticated: false }, { status: 401 });
+
+  try {
+    const me = await serverFetch<MeResponse>("/api/v1/auth/me", {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    return NextResponse.json({
+      authenticated: true,
+      audience: me.audience ?? "operator",
+      username: me.username,
+      scopes: me.scopes,
+    });
+  } catch (err) {
+    const status =
+      typeof err === "object" && err && "status" in err
+        ? (err as { status: number }).status
+        : 500;
+    return NextResponse.json(
+      { authenticated: false },
+      { status: status === 401 ? 401 : 500 },
+    );
+  }
+}
