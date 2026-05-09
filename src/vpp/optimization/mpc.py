@@ -434,9 +434,269 @@ class MPCController:
             pass
 
 
+###############################################################################
+# Multi-resource MPC controller (Milestone 4)
+###############################################################################
+
+from .formulations.fleet_dispatch import (
+    FleetBattery,
+    FleetCoupling,
+    build_fleet_dispatch_model,
+)
+from .formulations.admm import admm_fleet_solve
+
+
+@dataclass
+class MultiResourceMPCConfig:
+    horizon_steps: int
+    interval_minutes: int
+    warm_start: bool = True
+    solver_timeout_ms: int = 10_000
+    fallback_on_failure: bool = True
+    # Auto-routing threshold: fleets with R > admm_threshold use ADMM.
+    admm_threshold: int = 10
+    force_admm: bool = False
+    force_monolithic: bool = False
+    # ADMM knobs
+    admm_rho: float = 1.0
+    admm_max_iters: int = 50
+    admm_tolerance: float = 1e-2
+    admm_subproblem_time_limit_s: float = 2.0
+
+
+@dataclass
+class MultiResourceMPCStep:
+    """Inputs to one multi-resource MPC tick.
+
+    ``soc_init_per_resource`` overrides the soc_init on each FleetBattery for
+    the next solve; if a resource id is missing the dataclass default is used.
+
+    ``forecast`` may carry ``prices`` (shared) and optionally per-resource
+    ``load_kw_<id>`` / ``solar_kw_<id>``; for the prototype we only consume
+    shared prices + shared load/solar.
+    """
+    timestamp: datetime
+    soc_init_per_resource: Dict[str, float] = field(default_factory=dict)
+    forecast: Dict[str, List[float]] = field(default_factory=dict)
+    additional_objective_terms: List[Callable] = field(default_factory=list)
+    additional_constraint_builders: List[Callable] = field(default_factory=list)
+
+
+@dataclass
+class MultiResourceMPCDecision:
+    timestamp: datetime
+    per_resource: Dict[str, Dict[str, float]]  # id -> {p_charge_kw, p_discharge_kw, is_charging}
+    aggregate_kw: float  # export-positive
+    expected_cost_remaining: float
+    solve_time_ms: float
+    method: str  # "monolithic" | "admm" | "fallback"
+    fallback_used: bool = False
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class MultiResourceMPCController:
+    """Receding-horizon MPC for a fleet of batteries with shared coupling."""
+
+    def __init__(
+        self,
+        config: MultiResourceMPCConfig,
+        batteries: List[FleetBattery],
+        coupling: Optional[FleetCoupling] = None,
+    ) -> None:
+        self.config = config
+        self.batteries = list(batteries)
+        self.coupling = coupling or FleetCoupling()
+        self._pyo, self._solver_factory = _try_import_pyomo()
+
+    def reset(self) -> None:
+        # No warm-start cache yet for monolithic fleet (M5 may add it).
+        pass
+
+    def _select_method(self) -> str:
+        if self.config.force_admm:
+            return "admm"
+        if self.config.force_monolithic:
+            return "monolithic"
+        if len(self.batteries) > self.config.admm_threshold:
+            return "admm"
+        return "monolithic"
+
+    def step(self, step_input: MultiResourceMPCStep) -> MultiResourceMPCDecision:
+        t_start = time.time()
+        cfg = self.config
+        H = cfg.horizon_steps
+        dt_h = cfg.interval_minutes / 60.0
+
+        prices = list(step_input.forecast.get("prices", []))
+        if not prices:
+            raise ValueError("forecast['prices'] required")
+        if len(prices) < H:
+            prices = prices + [prices[-1]] * (H - len(prices))
+        prices = prices[:H]
+        load = step_input.forecast.get("load_kw") or None
+        solar = step_input.forecast.get("solar_kw") or None
+
+        # Apply per-resource SOC overrides
+        batts = []
+        for b in self.batteries:
+            soc_init = step_input.soc_init_per_resource.get(b.id, b.soc_init)
+            batts.append(
+                FleetBattery(
+                    id=b.id,
+                    capacity_kwh=b.capacity_kwh,
+                    max_charge_kw=b.max_charge_kw,
+                    max_discharge_kw=b.max_discharge_kw,
+                    soc_init=soc_init,
+                    soc_min=b.soc_min,
+                    soc_max=b.soc_max,
+                    eta_charge=b.eta_charge,
+                    eta_discharge=b.eta_discharge,
+                    terminal_soc=b.terminal_soc,
+                )
+            )
+
+        method = self._select_method()
+
+        if method == "admm":
+            try:
+                result = admm_fleet_solve(
+                    batts,
+                    horizon_steps=H,
+                    dt_hours=dt_h,
+                    prices=prices,
+                    load_kw=load,
+                    solar_kw=solar,
+                    coupling=self.coupling,
+                    rho=cfg.admm_rho,
+                    max_iters=cfg.admm_max_iters,
+                    tolerance=cfg.admm_tolerance,
+                    subproblem_time_limit_s=cfg.admm_subproblem_time_limit_s,
+                )
+                per_resource = {
+                    rid: {
+                        "p_charge_kw": sol["p_charge"][0],
+                        "p_discharge_kw": sol["p_discharge"][0],
+                        "is_charging": bool(sol["is_charging"][0]),
+                    }
+                    for rid, sol in result["per_battery_solutions"].items()
+                }
+                return MultiResourceMPCDecision(
+                    timestamp=step_input.timestamp,
+                    per_resource=per_resource,
+                    aggregate_kw=result["aggregate"][0],
+                    expected_cost_remaining=result["objective"],
+                    solve_time_ms=(time.time() - t_start) * 1000.0,
+                    method="admm",
+                    fallback_used=False,
+                    metadata={
+                        "iterations": result["iterations"],
+                        "converged": result["converged"],
+                        "primal_residual": result["primal_residual"],
+                        "dual_residual": result["dual_residual"],
+                    },
+                )
+            except Exception as e:
+                if not cfg.fallback_on_failure:
+                    raise
+                return self._fallback_decision(
+                    step_input, t_start, reason=f"admm_failed:{e}"
+                )
+
+        # Monolithic
+        if self._pyo is None or self._solver_factory is None:
+            return self._fallback_decision(step_input, t_start, reason="no_pyomo")
+
+        try:
+            model = build_fleet_dispatch_model(
+                batteries=batts,
+                horizon_steps=H,
+                dt_hours=dt_h,
+                prices=prices,
+                load_kw=load,
+                solar_kw=solar,
+                coupling=self.coupling,
+                objective_terms=step_input.additional_objective_terms or None,
+                constraint_builders=step_input.additional_constraint_builders or None,
+            )
+        except Exception as e:
+            if not cfg.fallback_on_failure:
+                raise
+            return self._fallback_decision(
+                step_input, t_start, reason=f"build_failed:{e}"
+            )
+
+        try:
+            solver = self._solver_factory(cfg.solver_timeout_ms / 1000.0)
+            results = solver.solve(model)
+        except Exception as e:
+            if not cfg.fallback_on_failure:
+                raise
+            return self._fallback_decision(
+                step_input, t_start, reason=f"solve_exc:{e}"
+            )
+
+        from .solvers.pyomo_plugin import PyomoPlugin
+        status, _ = PyomoPlugin._extract_status(results)
+        if status != OptimizationStatus.SUCCESS:
+            return self._fallback_decision(
+                step_input, t_start, reason=f"status={status.value}"
+            )
+
+        pyo = self._pyo
+        per_resource: Dict[str, Dict[str, float]] = {}
+        for b in batts:
+            p_chg0 = float(pyo.value(model.p_charge[b.id, 0]))
+            p_dis0 = float(pyo.value(model.p_discharge[b.id, 0]))
+            is_chg0 = int(round(float(pyo.value(model.is_charging[b.id, 0]))))
+            per_resource[b.id] = {
+                "p_charge_kw": p_chg0,
+                "p_discharge_kw": p_dis0,
+                "is_charging": bool(is_chg0),
+            }
+        aggregate0 = float(pyo.value(model.p_aggregate[0]))
+        obj = float(pyo.value(model.cost))
+
+        return MultiResourceMPCDecision(
+            timestamp=step_input.timestamp,
+            per_resource=per_resource,
+            aggregate_kw=aggregate0,
+            expected_cost_remaining=obj,
+            solve_time_ms=(time.time() - t_start) * 1000.0,
+            method="monolithic",
+            fallback_used=False,
+            metadata={"horizon": H, "resources": len(batts)},
+        )
+
+    def _fallback_decision(
+        self,
+        step_input: "MultiResourceMPCStep",
+        t_start: float,
+        reason: str,
+    ) -> "MultiResourceMPCDecision":
+        # Trivial fallback: hold all resources idle.
+        per_resource = {
+            b.id: {"p_charge_kw": 0.0, "p_discharge_kw": 0.0, "is_charging": False}
+            for b in self.batteries
+        }
+        return MultiResourceMPCDecision(
+            timestamp=step_input.timestamp,
+            per_resource=per_resource,
+            aggregate_kw=0.0,
+            expected_cost_remaining=0.0,
+            solve_time_ms=(time.time() - t_start) * 1000.0,
+            method="fallback",
+            fallback_used=True,
+            metadata={"fallback_reason": reason},
+        )
+
+
 __all__ = [
     "MPCConfig",
     "MPCStep",
     "MPCDecision",
     "MPCController",
+    "MultiResourceMPCConfig",
+    "MultiResourceMPCStep",
+    "MultiResourceMPCDecision",
+    "MultiResourceMPCController",
 ]
