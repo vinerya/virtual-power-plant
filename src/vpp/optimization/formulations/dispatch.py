@@ -1,32 +1,49 @@
 """
-Deterministic battery dispatch MILP formulation (Milestone 1).
+Deterministic battery dispatch MILP formulation (Milestone 1 + Milestone 2 hooks).
 
 Single battery, finite horizon, perfect-foresight cost minimization against a
-known price vector. Variables / constraints:
+known price vector.
 
-    p_charge[t]      >= 0    (kW drawn from grid into battery)
-    p_discharge[t]   >= 0    (kW pushed to grid from battery)
-    soc[t]           in [soc_min*cap, soc_max*cap]   (kWh)
-    is_charging[t]   binary  (mutual-exclusion of charge/discharge)
+Stable Var/Param surface (M2 contract; downstream extensions may rely on these
+names):
 
-    SOC dynamics:
-        soc[t] = soc[t-1] + eta_charge*p_charge[t]*dt - p_discharge[t]*dt/eta_discharge
-        soc[0] = soc_init * capacity                 (initial)
-        soc[T-1] >= terminal_soc * capacity          (terminal SOC, defaults to soc_init)
+    Sets / Params:
+        m.T          : RangeSet(0, T-1) - time index
+        m.dt         : Param (mutable) - hours per step
+        m.price[t]   : Param (mutable)
+        m.cap, m.p_chg_max, m.p_dis_max, m.soc_min, m.soc_max
+        m.eta_c, m.eta_d, m.soc_0, m.soc_terminal
 
-    Big-M mutual exclusion:
-        p_charge[t]    <= M_c * is_charging[t]
-        p_discharge[t] <= M_d * (1 - is_charging[t])
+    Vars:
+        m.p_charge[t]    NonNegativeReals (kW)
+        m.p_discharge[t] NonNegativeReals (kW)
+        m.soc[t]         in [soc_min, soc_max] (kWh)
+        m.is_charging[t] Binary
 
-    Objective (minimize):
-        sum_t price[t] * (p_charge[t] - p_discharge[t]) * dt
+Hook API (M2):
+    objective_terms     : list of callables (model, params) -> Pyomo Expression.
+                          Each returned expression is added (summed) into the
+                          objective alongside the base energy-cost term.
+    constraint_builders : list of callables (model, params) -> None. Each
+                          callable mutates the model in-place (adding Vars,
+                          Constraints, Expressions, etc.) BEFORE the objective
+                          is declared, so it may introduce auxiliary vars that
+                          the objective hooks reference.
+
+Order of construction:
+    1. Validate params
+    2. Build sets / params / vars / base constraints (mutex, SOC, terminal)
+    3. Run constraint_builders (so they can add aux vars referenced later)
+    4. Build base energy-cost expression
+    5. Sum in objective_terms
+    6. Declare m.cost Objective (minimize)
 
 A negative objective therefore corresponds to net revenue (price arbitrage).
-Prices are ``Param(mutable=True)`` so the model can be rebuilt-free re-solved.
+Prices are ``Param(mutable=True)`` so the model can be re-solved without rebuild.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import pyomo.environ as pyo
 
@@ -43,6 +60,10 @@ REQUIRED_KEYS = (
     "prices",
     "dt_hours",
 )
+
+# Type alias for hook callables.
+ObjectiveTerm = Callable[[pyo.ConcreteModel, Dict[str, Any]], Any]
+ConstraintBuilder = Callable[[pyo.ConcreteModel, Dict[str, Any]], None]
 
 
 def _validate(params: Dict[str, Any]) -> None:
@@ -71,13 +92,22 @@ def _validate(params: Dict[str, Any]) -> None:
         raise ValueError(f"soc_init {s0} not in [soc_min, soc_max]")
 
 
-def build_battery_dispatch_model(params: Dict[str, Any]) -> pyo.ConcreteModel:
+def build_battery_dispatch_model(
+    params: Dict[str, Any],
+    objective_terms: Optional[Sequence[ObjectiveTerm]] = None,
+    constraint_builders: Optional[Sequence[ConstraintBuilder]] = None,
+) -> pyo.ConcreteModel:
     """Build a Pyomo ConcreteModel for deterministic battery dispatch.
 
     Args:
         params: dict with the keys listed in :data:`REQUIRED_KEYS`. ``prices``
             is a sequence of length T defining the horizon. Costs are charged
             at ``price[t] * net_grid_draw[t] * dt_hours``.
+        objective_terms: optional list of callables ``(model, params) -> Expression``;
+            each returned expression is summed into the objective.
+        constraint_builders: optional list of callables ``(model, params) -> None``
+            that mutate the model in-place to add constraints/aux vars. Run
+            BEFORE the objective is declared.
 
     Returns:
         A fully-built :class:`pyomo.environ.ConcreteModel` ready for solve.
@@ -98,7 +128,7 @@ def build_battery_dispatch_model(params: Dict[str, Any]) -> pyo.ConcreteModel:
     terminal_soc_frac = float(params.get("terminal_soc", params["soc_init"]))
     soc_terminal = terminal_soc_frac * cap
 
-    m = pyo.ConcreteModel(name="battery_dispatch_m1")
+    m = pyo.ConcreteModel(name="battery_dispatch_m2")
 
     # Sets
     m.T = pyo.RangeSet(0, T - 1)
@@ -107,7 +137,7 @@ def build_battery_dispatch_model(params: Dict[str, Any]) -> pyo.ConcreteModel:
     m.price = pyo.Param(m.T, initialize={t: prices[t] for t in range(T)}, mutable=True)
     m.dt = pyo.Param(initialize=dt, mutable=True)
 
-    # Static config params (kept as Param for transparency)
+    # Static config params
     m.cap = pyo.Param(initialize=cap)
     m.p_chg_max = pyo.Param(initialize=p_chg_max)
     m.p_dis_max = pyo.Param(initialize=p_dis_max)
@@ -155,13 +185,39 @@ def build_battery_dispatch_model(params: Dict[str, Any]) -> pyo.ConcreteModel:
 
     m.terminal_soc_con = pyo.Constraint(rule=_terminal)
 
-    # Objective: minimize energy cost (net grid draw priced at price[t])
-    def _obj(model):
-        return sum(
-            model.price[t] * (model.p_charge[t] - model.p_discharge[t]) * model.dt
-            for t in model.T
-        )
+    # ---- M2 hook: constraint_builders run before objective is declared ----
+    if constraint_builders:
+        for i, builder in enumerate(constraint_builders):
+            try:
+                builder(m, params)
+            except Exception as e:
+                raise RuntimeError(
+                    f"constraint_builder #{i} ({getattr(builder, '__name__', builder)}) failed: {e}"
+                ) from e
 
-    m.cost = pyo.Objective(rule=_obj, sense=pyo.minimize)
+    # Base objective term: energy cost (net grid draw priced at price[t]).
+    base_cost_expr = sum(
+        m.price[t] * (m.p_charge[t] - m.p_discharge[t]) * m.dt for t in m.T
+    )
+    # Expose as a named Expression for downstream introspection / hooks.
+    m.energy_cost = pyo.Expression(expr=base_cost_expr)
+
+    extra_terms = []
+    if objective_terms:
+        for i, term in enumerate(objective_terms):
+            try:
+                e = term(m, params)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"objective_term #{i} ({getattr(term, '__name__', term)}) failed: {exc}"
+                ) from exc
+            extra_terms.append(e)
+
+    if extra_terms:
+        m.cost = pyo.Objective(
+            expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize
+        )
+    else:
+        m.cost = pyo.Objective(expr=m.energy_cost, sense=pyo.minimize)
 
     return m

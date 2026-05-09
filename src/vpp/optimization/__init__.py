@@ -50,7 +50,7 @@ from .distributed import (
 # M1: deterministic battery dispatch via Pyomo + HiGHS.
 # Imported lazily-friendly: the module guards optional deps internally so
 # importing it never crashes when pyomo/highspy are missing.
-from .solvers import PyomoPlugin, SimpleBatteryDispatchRules
+from .solvers import PyomoPlugin, SimpleBatteryDispatchRules, StochasticCVaRPlugin
 
 # Version information
 __version__ = "1.0.0"
@@ -92,6 +92,7 @@ __all__ = [
     # Deterministic dispatch (M1)
     "PyomoPlugin",
     "SimpleBatteryDispatchRules",
+    "StochasticCVaRPlugin",
 ]
 
 
@@ -219,6 +220,22 @@ def solve_with_fallback(problem: OptimizationProblem,
                 pyomo_plugin = PyomoPlugin()
                 if pyomo_plugin.is_available():
                     engine.register_plugin(pyomo_plugin)
+            except Exception:
+                pass
+        elif ptype == "stochastic_dispatch":
+            # M2: extensive-form stochastic dispatch with CVaR.
+            try:
+                stoch_plugin = StochasticCVaRPlugin()
+                if stoch_plugin.is_available():
+                    engine.register_plugin(stoch_plugin)
+            except Exception:
+                pass
+            # Ensure a rule-based fallback is registered so a missing/unavailable
+            # solver still produces a result.
+            try:
+                from .stochastic import SimpleStochasticRules
+
+                engine.register_fallback(SimpleStochasticRules(), "stochastic_dispatch")
             except Exception:
                 pass
 
