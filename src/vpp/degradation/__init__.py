@@ -28,6 +28,7 @@ from .optimization import (
     add_dod_constraints,
     add_wear_cost_term,
 )
+from .telemetry import DegradationUpdater, SOHUpdate, TelemetryWindow
 
 __all__ = [
     "DegradationModel",
@@ -40,4 +41,7 @@ __all__ = [
     "add_wear_cost_term",
     "add_dod_constraints",
     "add_calendar_aging_bias",
+    "DegradationUpdater",
+    "SOHUpdate",
+    "TelemetryWindow",
 ]

@@ -62,6 +62,15 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return the global session factory.  Raises if DB not initialised."""
+    if _session_factory is None:
+        raise RuntimeError(
+            "Database not initialised. Call init_db() during application startup."
+        )
+    return _session_factory
+
+
 async def close_db() -> None:
     """Dispose of the engine connection pool."""
     global _engine, _session_factory
