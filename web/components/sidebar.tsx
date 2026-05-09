@@ -15,8 +15,8 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Fleet", icon: BarChart3, enabled: true },
-  { href: "/assets", label: "Assets", icon: Layers, enabled: false },
-  { href: "/trading", label: "Trading", icon: LineChart, enabled: false },
+  { href: "/assets", label: "Assets", icon: Layers, enabled: true },
+  { href: "/trading/dispatches", label: "Dispatches", icon: LineChart, enabled: true },
   { href: "/tariffs", label: "Tariffs", icon: Receipt, enabled: false },
   { href: "/alerts", label: "Alerts", icon: AlertTriangle, enabled: false },
   { href: "/settings", label: "Settings", icon: Cog, enabled: false },

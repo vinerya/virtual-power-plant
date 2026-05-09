@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp } from "lucide-react";
@@ -203,7 +204,14 @@ function ResourceTable({
               key={r.id}
               className="border-b last:border-b-0 hover:bg-muted/30"
             >
-              <td className="px-6 py-3 font-medium">{r.name}</td>
+              <td className="px-6 py-3 font-medium">
+                <Link
+                  href={`/assets/${r.id}`}
+                  className="hover:text-primary hover:underline focus-visible:underline focus-visible:outline-none"
+                >
+                  {r.name}
+                </Link>
+              </td>
               <td className="px-6 py-3 text-muted-foreground">
                 {r.resource_type.replace("_", " ")}
               </td>

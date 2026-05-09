@@ -71,10 +71,50 @@ seeds an `operator` user by default.
 - Playwright smoke test that mocks the proxy and exercises login + fleet
   render.
 
+## What's implemented (M2)
+
+- **Asset detail** at `/assets/[id]` — header (name, type, online pill),
+  stats (rated, current, efficiency, last update), 24h time-series chart
+  (lazy-loaded Recharts), and subtype-specific panels (battery SOC gauge,
+  solar irradiance + DC/AC capacity, wind speed + cut-in/out, default
+  key/value table).
+- **Dispatch history** at `/trading/dispatches` — date-range filter
+  (24h/7d/30d/custom), multi-resource filter, paginated table, and a
+  side sheet with Inputs / Solution / Diagnostics / Counterfactual tabs.
+  The sheet is keyboard-accessible (Esc closes, focus trap, focus
+  restoration on close).
+- **Live updates** via the WebSocket at `/ws`. The singleton client in
+  `lib/ws/client.ts` subscribes to `resource_updates`,
+  `optimization_events`, and `alerts`; messages invalidate TanStack
+  Query caches and pop toasts via `sonner`. Mounted at the operator
+  layout level so all child pages benefit.
+- shadcn primitives: `sheet`, `tabs`, `select` (hand-authored, no extra
+  Radix deps).
+
+### Stubs / fallbacks documented for M3
+
+- **Resource metrics endpoint** (`GET /api/v1/resources/{id}/metrics`) —
+  not yet exposed by the backend. The asset page falls back to building a
+  rolling 24h client-side buffer from the polled `/resources/{id}`
+  snapshot (one point per 10s). When the backend lands the endpoint,
+  delete the buffer in `components/asset/asset-detail.tsx`.
+- **Dispatch history endpoint** — `GET /api/v1/optimization/history`
+  exists upstream but does *not* yet return per-run inputs/solution
+  payloads needed by the side sheet. When the response is missing or
+  404s, the page reads from a small `localStorage`-backed log
+  (`lib/dispatch/local-log.ts`) populated by UI-driven submissions.
+  This is a temporary stub awaiting the M3 backend work.
+- **WebSocket auth.** The current FastAPI `/ws` endpoint is open. The
+  Next.js JWT cookie is `httpOnly` and not readable from the client, so
+  if/when the backend adds auth the recommended exchange is a one-shot
+  ticket route under `app/api/auth/ws-ticket` (server reads the cookie
+  and returns a short-lived signed token), then
+  `new WebSocket('/ws?ticket=...')`. Tracked for M3.
+
 ## Coming later
 
-- M2: asset detail page, dispatch history view, charts.
-- Customer portal, dispatch explainer, trading, settings.
+- M3: dispatch explainer (counterfactuals), tariff bill simulator UI,
+  settings YAML editor, customer portal.
 
 ## Verification
 
