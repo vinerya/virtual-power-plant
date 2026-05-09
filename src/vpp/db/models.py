@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Float,
     ForeignKey,
@@ -170,6 +171,23 @@ class APIKeyModel(TimestampMixin, Base):
 # ---------------------------------------------------------------------------
 # Events
 # ---------------------------------------------------------------------------
+
+class TariffRow(TimestampMixin, Base):
+    """Persisted utility tariff (URDB-shaped JSON payload)."""
+
+    __tablename__ = "tariffs"
+    __table_args__ = (
+        Index("ix_tariffs_utility", "utility"),
+        Index("ix_tariffs_urdb_label", "urdb_label"),
+    )
+
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    utility: Mapped[str] = mapped_column(String(255), default="")
+    urdb_label: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    urdb_json: Mapped[str] = mapped_column(Text, default="{}")  # JSON-serialized URDB payload
+    effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
 
 class EventLogModel(TimestampMixin, Base):
     """Persisted event log for auditing and replay."""

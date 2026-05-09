@@ -8,6 +8,8 @@ from typing import Any, Optional
 from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from datetime import date as _date, datetime as _datetime, timezone as _tz
+
 from .models import (
     ResourceModel,
     BatteryStateModel,
@@ -17,6 +19,7 @@ from .models import (
     UserModel,
     APIKeyModel,
     EventLogModel,
+    TariffRow,
 )
 
 
@@ -283,6 +286,90 @@ class UserRepository:
             select(APIKeyModel).where(APIKeyModel.hashed_key == hashed_key)
         )
         return result.scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Tariffs
+# ---------------------------------------------------------------------------
+
+
+class TariffRepository:
+    """CRUD for persisted utility tariffs."""
+
+    @staticmethod
+    async def create(session: AsyncSession, *, name: str, utility: str,
+                     urdb_json: dict, effective_date: _date | None = None,
+                     urdb_label: str | None = None) -> TariffRow:
+        obj = TariffRow(
+            name=name,
+            utility=utility,
+            urdb_label=urdb_label,
+            urdb_json=json.dumps(urdb_json),
+            effective_date=effective_date,
+        )
+        session.add(obj)
+        await session.flush()
+        return obj
+
+    @staticmethod
+    async def get(session: AsyncSession, tariff_id: str) -> Optional[TariffRow]:
+        obj = await session.get(TariffRow, tariff_id)
+        if obj is None or obj.deleted_at is not None:
+            return None
+        return obj
+
+    @staticmethod
+    async def get_by_urdb_label(session: AsyncSession, label: str) -> Optional[TariffRow]:
+        result = await session.execute(
+            select(TariffRow).where(TariffRow.urdb_label == label, TariffRow.deleted_at.is_(None))
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list(session: AsyncSession, *, skip: int = 0, limit: int = 50,
+                   utility: str | None = None) -> list[TariffRow]:
+        stmt = (
+            select(TariffRow)
+            .where(TariffRow.deleted_at.is_(None))
+            .offset(skip).limit(limit)
+            .order_by(TariffRow.created_at.desc())
+        )
+        if utility:
+            stmt = stmt.where(TariffRow.utility == utility)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def update(session: AsyncSession, tariff_id: str, **fields: Any) -> Optional[TariffRow]:
+        obj = await session.get(TariffRow, tariff_id)
+        if obj is None or obj.deleted_at is not None:
+            return None
+        for key, value in fields.items():
+            if value is None:
+                continue
+            if key == "urdb_json" and isinstance(value, dict):
+                obj.urdb_json = json.dumps(value)
+            elif hasattr(obj, key):
+                setattr(obj, key, value)
+        await session.flush()
+        return obj
+
+    @staticmethod
+    async def delete(session: AsyncSession, tariff_id: str, *, soft: bool = True) -> bool:
+        """Soft-delete by default — sets ``deleted_at``. Pass ``soft=False`` for hard delete.
+
+        We chose soft-delete to preserve audit trail for billing simulations
+        and to allow safe recovery of mis-deleted tariffs.
+        """
+        obj = await session.get(TariffRow, tariff_id)
+        if obj is None or obj.deleted_at is not None:
+            return False
+        if soft:
+            obj.deleted_at = _datetime.now(_tz.utc)
+        else:
+            await session.delete(obj)
+        await session.flush()
+        return True
 
 
 # ---------------------------------------------------------------------------
