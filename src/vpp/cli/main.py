@@ -255,6 +255,72 @@ def benchmark_report(scenario: str | None, seeds: str) -> None:
 # ---------------------------------------------------------------------------
 
 @cli.command()
+@click.option("--horizon", default=24, type=int, help="MPC look-ahead steps")
+@click.option("--ticks", default=24, type=int, help="Number of MPC ticks to run")
+@click.option("--interval", default=60, type=int, help="Tick interval in minutes")
+@click.option("--no-warm-start", is_flag=True, help="Disable warm-starting the solver")
+def mpc(horizon: int, ticks: int, interval: int, no_warm_start: bool) -> None:
+    """Run a quick MPC demo over a synthetic CAISO-style price profile."""
+    import math
+    from datetime import datetime, timedelta
+
+    from vpp.optimization.backtest import BacktestConfig, run_backtest
+    from vpp.optimization.mpc import MPCConfig, MPCController
+
+    battery = {
+        "battery_capacity_kwh": 100.0,
+        "max_charge_kw": 50.0,
+        "max_discharge_kw": 50.0,
+        "soc_init": 0.5,
+        "soc_min": 0.1,
+        "soc_max": 0.9,
+        "eta_charge": 0.95,
+        "eta_discharge": 0.95,
+    }
+    prices = [
+        50.0 + 30.0 * math.sin(2 * math.pi * ((k % 24) - 4) / 24.0)
+        for k in range(ticks + horizon)
+    ]
+    cfg = MPCConfig(
+        horizon_steps=horizon,
+        interval_minutes=interval,
+        warm_start=not no_warm_start,
+    )
+    ctrl = MPCController(cfg, battery)
+    start = datetime(2025, 1, 1)
+    bt_cfg = BacktestConfig(
+        start=start,
+        end=start + timedelta(minutes=interval * ticks),
+        interval_minutes=interval,
+    )
+
+    def perfect(now: datetime, H: int):
+        k = int((now - start).total_seconds() // (interval * 60))
+        sl = prices[k : k + H]
+        if len(sl) < H:
+            sl = sl + [sl[-1]] * (H - len(sl))
+        return {"prices": sl}
+
+    res = run_backtest(
+        ctrl, bt_cfg, prices[:ticks], [0.0] * ticks, [0.0] * ticks, perfect
+    )
+    click.echo(json.dumps(
+        {
+            "ticks": ticks,
+            "horizon": horizon,
+            "interval_minutes": interval,
+            "warm_start": not no_warm_start,
+            "realized_cost": round(res.realized_cost, 4),
+            "wall_time_s": round(res.wall_time_s, 3),
+            "avg_solve_ms": round(res.cumulative_solve_time_ms / max(ticks, 1), 2),
+            "fallback_count": res.fallback_count,
+            "final_soc_kwh": round(res.soc_trajectory[-1], 3) if res.soc_trajectory else None,
+        },
+        indent=2,
+    ))
+
+
+@cli.command()
 @click.argument("demo_name", required=False, default=None)
 def demo(demo_name: str | None) -> None:
     """Run a demo application. Without arguments, lists available demos."""
