@@ -9,6 +9,7 @@ import {
   Cog,
   Layers,
   LineChart,
+  MapPin,
   Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -16,9 +17,10 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { href: "/", label: "Fleet", icon: BarChart3, enabled: true },
   { href: "/assets", label: "Assets", icon: Layers, enabled: true },
+  { href: "/sites", label: "Sites", icon: MapPin, enabled: true },
   { href: "/trading/dispatches", label: "Dispatches", icon: LineChart, enabled: true },
   { href: "/tariffs", label: "Tariffs", icon: Receipt, enabled: true },
-  { href: "/alerts", label: "Alerts", icon: AlertTriangle, enabled: false },
+  { href: "/alerts", label: "Alerts", icon: AlertTriangle, enabled: true },
   { href: "/settings", label: "Settings", icon: Cog, enabled: true },
 ] as const;
 
