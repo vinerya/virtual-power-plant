@@ -100,3 +100,8 @@ wheels/
 # Operating System
 .DS_Store
 Thumbs.db
+
+# web/lib is a JS source directory, not a Python build artifact
+!web/lib/
+!web/lib/**
+
