@@ -61,6 +61,14 @@ REQUIRED_KEYS = (
     "dt_hours",
 )
 
+# Optional params (M2 tariff integration):
+#   load        : sequence[float] length T, kW load (default zeros)
+#   solar       : sequence[float] length T, kW PV (default zeros)
+#   disable_base_energy_cost : bool, if True the base m.energy_cost expression
+#                              is forced to 0 so callers can replace energy
+#                              pricing with a tariff-based objective term
+#                              (see vpp.tariffs.optimization.add_tariff_energy_term).
+
 # Type alias for hook callables.
 ObjectiveTerm = Callable[[pyo.ConcreteModel, Dict[str, Any]], Any]
 ConstraintBuilder = Callable[[pyo.ConcreteModel, Dict[str, Any]], None]
@@ -148,6 +156,21 @@ def build_battery_dispatch_model(
     m.soc_0 = pyo.Param(initialize=soc_0)
     m.soc_terminal = pyo.Param(initialize=soc_terminal)
 
+    # Optional load/solar parameters (default zero) for tariff-driven dispatch.
+    load = list(params.get("load") or [0.0] * T)
+    solar = list(params.get("solar") or [0.0] * T)
+    if len(load) != T:
+        raise ValueError(f"load length {len(load)} != horizon {T}")
+    if len(solar) != T:
+        raise ValueError(f"solar length {len(solar)} != horizon {T}")
+    # Note: 'load' is a reserved attribute name on Pyomo Blocks; use load_kw.
+    m.load_kw = pyo.Param(
+        m.T, initialize={t: load[t] for t in range(T)}, mutable=True
+    )
+    m.solar_kw = pyo.Param(
+        m.T, initialize={t: solar[t] for t in range(T)}, mutable=True
+    )
+
     # Variables
     m.p_charge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, p_chg_max))
     m.p_discharge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, p_dis_max))
@@ -196,9 +219,12 @@ def build_battery_dispatch_model(
                 ) from e
 
     # Base objective term: energy cost (net grid draw priced at price[t]).
-    base_cost_expr = sum(
-        m.price[t] * (m.p_charge[t] - m.p_discharge[t]) * m.dt for t in m.T
-    )
+    if params.get("disable_base_energy_cost", False):
+        base_cost_expr = 0.0
+    else:
+        base_cost_expr = sum(
+            m.price[t] * (m.p_charge[t] - m.p_discharge[t]) * m.dt for t in m.T
+        )
     # Expose as a named Expression for downstream introspection / hooks.
     m.energy_cost = pyo.Expression(expr=base_cost_expr)
 
