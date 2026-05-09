@@ -352,6 +352,10 @@ class TariffRepository:
             elif hasattr(obj, key):
                 setattr(obj, key, value)
         await session.flush()
+        # ``updated_at`` is set by ``onupdate=func.now()`` and is not in the
+        # session attributes after flush — refresh so callers can read it
+        # outside the SQLAlchemy greenlet (e.g. after a yield in event publish).
+        await session.refresh(obj)
         return obj
 
     @staticmethod

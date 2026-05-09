@@ -45,5 +45,12 @@
 
   "fixedchargefirstmeter": 0.0,
   "fixedchargeunits": "$/month",
-  "mincharge": 10.55
+  "mincharge": 10.55,
+
+  "adders": [
+    {"name": "California climate credit", "rate": 0.005, "basis": "percent", "applies_to": "subtotal"}
+  ],
+  "taxes": [
+    {"name": "Utility users tax", "rate": 0.015, "jurisdiction": "CA", "applies_to": "subtotal"}
+  ]
 }

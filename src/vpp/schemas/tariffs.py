@@ -61,13 +61,21 @@ class MeterTraceDTO(BaseModel):
 
 
 class BillSimulationRequest(BaseModel):
-    """Bill simulation: provide either a stored tariff_id OR an inline urdb_json."""
+    """Bill simulation: provide either a stored tariff_id OR an inline urdb_json.
+
+    Optional NEM parameters (M4)
+    ----------------------------
+    * ``nem`` — 'none' | 'nem2' | 'nem3'. Default 'none'.
+    * ``nem3_avoided_cost`` — 24-element hourly $/kWh vector for nem3.
+    """
 
     tariff_id: Optional[str] = None
     urdb_json: Optional[dict[str, Any]] = None
     meter_trace: MeterTraceDTO
     billing_period_start: datetime
     billing_period_end: datetime
+    nem: Optional[str] = None
+    nem3_avoided_cost: Optional[list[float]] = None
 
     @model_validator(mode="after")
     def _xor(self) -> "BillSimulationRequest":

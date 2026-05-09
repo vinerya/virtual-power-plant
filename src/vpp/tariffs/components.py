@@ -23,7 +23,7 @@ from .meter import MeterTrace
 class BillLineItem:
     """One row of a bill: kind, label, quantity, unit, rate, amount."""
 
-    kind: str  # 'energy' | 'demand' | 'fixed' | 'minimum' | 'tier'
+    kind: str  # 'energy' | 'demand' | 'fixed' | 'minimum' | 'tier' | 'adder' | 'tax' | 'credit'
     label: str
     quantity: float
     unit: str  # 'kWh' | 'kW' | 'day' | 'month' | '$'
@@ -337,6 +337,78 @@ class FixedCharge:
                 amount=round(qty * self.amount, 4),
             )
         ]
+
+
+@dataclass
+class AdderRate:
+    """Surcharge / adder line item driven off a primary subtotal.
+
+    Examples include state climate-credit surcharges, public-purpose
+    program fees, franchise fees, and per-kWh non-bypassable charges.
+
+    Parameters
+    ----------
+    name : str
+        Line-item label.
+    rate : float
+        ``percent`` basis: fraction (0.015 == 1.5%).
+        ``per_kwh`` basis: $/kWh.
+    basis : 'percent' | 'per_kwh'
+        How ``rate`` is interpreted.
+    applies_to : 'subtotal' | 'energy' | 'demand'
+        Which running total to multiply against. ``subtotal`` = sum of all
+        primary line-items computed BEFORE adders/taxes run.
+
+    Note
+    ----
+    Adders run AFTER all primary components (energy, demand, fixed,
+    tier, minimum) inside :meth:`Tariff.bill`. They do NOT compound with
+    each other — every adder is computed against the same primary
+    subtotal/energy/demand snapshot. Taxes then run after all adders.
+    """
+
+    name: str
+    rate: float
+    basis: Literal["percent", "per_kwh"] = "percent"
+    applies_to: Literal["subtotal", "energy", "demand"] = "subtotal"
+
+    def compute(
+        self, trace: MeterTrace, period: BillingPeriod
+    ) -> list[BillLineItem]:  # pragma: no cover - marker
+        # Marker only; Tariff applies adders against running subtotal.
+        return []
+
+
+@dataclass
+class TaxRate:
+    """Sales / use / utility tax line item.
+
+    Multiple ``TaxRate`` instances stack ADDITIVELY against the SAME
+    pre-tax base — they do not compound. This matches how state and local
+    sales taxes typically appear on US utility bills.
+
+    Parameters
+    ----------
+    name : str
+        Line-item label, e.g. "California sales tax".
+    rate : float
+        Fractional rate (0.05 == 5%).
+    jurisdiction : str
+        Free-form identifier (state, county, city).
+    applies_to : 'subtotal' | 'energy'
+        Whether the tax is on the post-adder subtotal or only on energy
+        line items. ``subtotal`` is the most common.
+    """
+
+    name: str
+    rate: float
+    jurisdiction: str = ""
+    applies_to: Literal["subtotal", "energy"] = "subtotal"
+
+    def compute(
+        self, trace: MeterTrace, period: BillingPeriod
+    ) -> list[BillLineItem]:  # pragma: no cover - marker
+        return []
 
 
 @dataclass
