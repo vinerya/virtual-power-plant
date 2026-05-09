@@ -51,11 +51,13 @@ export function AssetDetail({ id }: { id: string }) {
     const snap = resourceQuery.data;
     if (!snap) return;
     const last = bufferRef.current[bufferRef.current.length - 1];
-    if (last && last.timestamp === snap.updated_at) return;
+    const ts = snap.updated_at;
+    if (!ts) return;
+    if (last && last.timestamp === ts) return;
     bufferRef.current = [
       ...bufferRef.current,
       {
-        timestamp: snap.updated_at,
+        timestamp: ts,
         power: snap.current_power,
         state_of_charge:
           typeof snap.state_of_charge === "number"
@@ -70,14 +72,18 @@ export function AssetDetail({ id }: { id: string }) {
     const points: ResourceMetricsPoint[] =
       metricsQuery.data?.points ?? bufferRef.current;
     const isBattery = resourceQuery.data?.resource_type === "battery";
-    return points.map((p) => ({
-      timestamp: p.timestamp,
-      value: isBattery
-        ? typeof p.state_of_charge === "number"
-          ? p.state_of_charge * 100
-          : p.power
-        : p.power,
-    }));
+    return points
+      .map((p) => ({
+        timestamp: p.timestamp,
+        value: isBattery
+          ? typeof p.state_of_charge === "number"
+            ? p.state_of_charge * 100
+            : p.power
+          : p.power,
+      }))
+      .filter((p): p is { timestamp: string; value: number } =>
+        typeof p.value === "number",
+      );
   }, [metricsQuery.data, resourceQuery.data, resourceQuery.dataUpdatedAt]);
 
   if (resourceQuery.isLoading) return <DetailSkeleton />;

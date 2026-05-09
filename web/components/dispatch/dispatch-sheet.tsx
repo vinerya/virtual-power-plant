@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AreaScheduleChart } from "@/components/charts/lazy-line-chart";
+import { ExplainerTab } from "./explainer-tab";
 import type { DispatchRun } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/utils";
 
@@ -113,10 +114,13 @@ export function DispatchSheet({
               </TabsContent>
 
               <TabsContent value="counterfactual">
-                <section className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                  Coming with M3 — the dispatch explainer will compare this run
-                  against a no-action and a price-naive baseline.
-                </section>
+                <ExplainerTab
+                  runId={run.id}
+                  rationaleFallback={
+                    (run.metadata as { rationale?: string } | undefined)
+                      ?.rationale
+                  }
+                />
               </TabsContent>
             </Tabs>
           </>

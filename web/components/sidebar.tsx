@@ -17,9 +17,9 @@ const NAV = [
   { href: "/", label: "Fleet", icon: BarChart3, enabled: true },
   { href: "/assets", label: "Assets", icon: Layers, enabled: true },
   { href: "/trading/dispatches", label: "Dispatches", icon: LineChart, enabled: true },
-  { href: "/tariffs", label: "Tariffs", icon: Receipt, enabled: false },
+  { href: "/tariffs", label: "Tariffs", icon: Receipt, enabled: true },
   { href: "/alerts", label: "Alerts", icon: AlertTriangle, enabled: false },
-  { href: "/settings", label: "Settings", icon: Cog, enabled: false },
+  { href: "/settings", label: "Settings", icon: Cog, enabled: true },
 ] as const;
 
 export function Sidebar() {
@@ -32,7 +32,9 @@ export function Sidebar() {
       </div>
       <nav aria-label="Primary" className="space-y-1 p-2">
         {NAV.map((item) => {
-          const active = pathname === item.href;
+          const active =
+            pathname === item.href ||
+            (item.href !== "/" && pathname?.startsWith(item.href + "/"));
           const Icon = item.icon;
           return (
             <Link

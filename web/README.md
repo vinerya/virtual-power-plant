@@ -111,10 +111,48 @@ seeds an `operator` user by default.
   and returns a short-lived signed token), then
   `new WebSocket('/ws?ticket=...')`. Tracked for M3.
 
+## What's implemented (M3)
+
+- **Dispatch explainer** wired into the existing dispatch side-sheet
+  ("Counterfactual" tab). Side-by-side cost bar, per-step net-power
+  overlay, free-text rationale, and a binding-constraints list. Calls
+  `GET /api/v1/optimization/explain/{run_id}`; on 404, shows a clear
+  empty state.
+- **Tariffs page** (`/tariffs` and `/tariffs/[id]`). Left list with
+  search and utility filter; detail panel with three tabs:
+  - **Schedule**: 12 × 24 calendar heatmap of TOU rates (hand-rendered
+    with CSS grid).
+  - **Components**: list of energy/demand/fixed/min-bill components.
+  - **Simulate**: file upload (CSV `timestamp,kw`) or "Use synthetic
+    30-day load" toggle, with optional "compare to" picker. Renders a
+    horizontal stacked bar of line items via Recharts plus a
+    copy-to-clipboard JSON button.
+  Falls back to `app/api/tariff-presets` (bundled demo tariffs in
+  `lib/tariffs/presets.ts`) when `/api/v1/tariffs` is unavailable.
+- **Settings YAML editor** (`/settings`). Monaco lazy-loaded via
+  `next/dynamic` (`ssr:false`). Schema-driven client-side validation
+  (Ajv against `/api/v1/config/schema`); falls back to YAML-syntax-only
+  checks when the schema endpoint 404s. "Validate" surfaces errors
+  inline; "Apply" requires a confirmation modal and shows a sonner
+  toast. Hand-rolled line-by-line LCS diff (no `react-diff-view`
+  dependency) for unsaved changes.
+
+### Backend contracts assumed (mock at the proxy if not yet shipped)
+
+| Endpoint | Used by | Fallback |
+|---|---|---|
+| `GET /api/v1/optimization/explain/{run_id}` | Explainer tab | Empty state |
+| `GET /api/v1/tariffs` | Tariff list | `/api/tariff-presets` (bundled) |
+| `GET /api/v1/tariffs/{id}` | Tariff detail | bundled preset |
+| `POST /api/v1/tariffs/{id}/simulate` | Bill simulator | Toast error |
+| `GET /api/v1/config` | Settings live config | hard error |
+| `PUT /api/v1/config` | Apply config | hard error |
+| `GET /api/v1/config/schema` | Client-side validation | YAML-only checks |
+| `POST /api/v1/config/validate` (optional) | Server-side dry-run | Ajv only |
+
 ## Coming later
 
-- M3: dispatch explainer (counterfactuals), tariff bill simulator UI,
-  settings YAML editor, customer portal.
+- M4: alerts feed, multi-site overview map, customer-facing portal scaffold.
 
 ## Verification
 
