@@ -58,6 +58,10 @@ class EventType(str, Enum):
     GRID_RECONNECTED = "grid_reconnected"
     LOAD_SHED = "load_shed"
 
+    # Tariffs
+    TARIFF_UPDATED = "tariff_updated"
+    TARIFF_DELETED = "tariff_deleted"
+
     # System
     ALERT_TRIGGERED = "alert_triggered"
     CONFIG_CHANGED = "config_changed"

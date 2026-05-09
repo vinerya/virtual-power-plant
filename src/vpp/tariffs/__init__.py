@@ -13,11 +13,13 @@ deferred to M2.
 """
 from .calendar import SeasonConfig, is_us_holiday
 from .components import (
+    AdderRate,
     BillingPeriod,
     BillLineItem,
     DemandCharge,
     FixedCharge,
     MinimumBill,
+    TaxRate,
     TieredEnergyRate,
     TimeOfUseRate,
     TOUSchedule,
@@ -37,6 +39,8 @@ __all__ = [
     "DemandCharge",
     "FixedCharge",
     "MinimumBill",
+    "AdderRate",
+    "TaxRate",
     "BillingPeriod",
     "SeasonConfig",
     "is_us_holiday",

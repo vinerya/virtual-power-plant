@@ -114,6 +114,7 @@ def tariff_to_opt_params(
     nem3_avoided_cost: Optional[List[float]] = None,
     prior_demand_max_kw: float = 0.0,
     tz: timezone = timezone.utc,
+    live_price_overrides: Optional[List[Any]] = None,
 ) -> TariffOptParams:
     """Project a :class:`Tariff` onto a discrete optimization horizon.
 
@@ -194,6 +195,23 @@ def tariff_to_opt_params(
         if rate == 0.0 and tier0_rate is not None:
             rate = tier0_rate
         energy_buy.append(rate)
+
+    # ---- Live-price overrides (M4) -------------------------------------
+    # Precedence: live > TOU > tier-0 fallback > 0.0.
+    # A live override matches a horizon step when its timestamp falls within
+    # the half-open interval [step_start, step_start + interval).
+    if live_price_overrides:
+        for t in range(T):
+            step_start = (horizon_start + t * step).astimezone(tz)
+            step_end = step_start + step
+            for pp in live_price_overrides:
+                pp_ts = pp.timestamp
+                if pp_ts.tzinfo is None:
+                    pp_ts = pp_ts.replace(tzinfo=timezone.utc)
+                pp_ts = pp_ts.astimezone(tz)
+                if step_start <= pp_ts < step_end:
+                    energy_buy[t] = float(pp.price_per_kwh)
+                    break
 
     # Sell prices.
     if nem == "nem2":

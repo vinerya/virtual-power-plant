@@ -29,9 +29,11 @@ from pathlib import Path
 from typing import Any
 
 from .components import (
+    AdderRate,
     DemandCharge,
     FixedCharge,
     MinimumBill,
+    TaxRate,
     TieredEnergyRate,
     TimeOfUseRate,
     TOUSchedule,
@@ -223,6 +225,68 @@ def load_urdb_json(path_or_dict: str | Path | dict) -> Tariff:
     minc = data.get("mincharge")
     if minc:
         components.append(MinimumBill(amount=float(minc)))
+
+    # --- Energy minimum (per-kWh floor) ---
+    e_min = data.get("caenergyminratestructure")
+    if e_min:
+        # Map the first non-zero rate as a per-kWh adder. URDB shape varies;
+        # accept either a list-of-list-of-{rate} or a flat list.
+        try:
+            if isinstance(e_min, list) and e_min and isinstance(e_min[0], list):
+                rate = float(e_min[0][0].get("rate", 0.0))
+            elif isinstance(e_min, list) and e_min:
+                rate = float(e_min[0].get("rate", 0.0))
+            else:
+                rate = 0.0
+        except (TypeError, ValueError, AttributeError, IndexError):
+            rate = 0.0
+        if rate > 0:
+            components.append(
+                AdderRate(
+                    name="Energy minimum charge",
+                    rate=rate,
+                    basis="per_kwh",
+                    applies_to="energy",
+                )
+            )
+
+    # --- Taxes (URDB 'taxes' is a free-form list of {name, rate, jurisdiction?}) ---
+    taxes = data.get("taxes")
+    if isinstance(taxes, list):
+        for t in taxes:
+            try:
+                rate = float(t.get("rate", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if rate <= 0:
+                continue
+            components.append(
+                TaxRate(
+                    name=str(t.get("name", "Tax")),
+                    rate=rate,
+                    jurisdiction=str(t.get("jurisdiction", "")),
+                    applies_to=t.get("applies_to", "subtotal"),
+                )
+            )
+
+    # --- Adders (custom 'adders' list in extended URDB JSON) ---
+    adders = data.get("adders")
+    if isinstance(adders, list):
+        for a in adders:
+            try:
+                rate = float(a.get("rate", 0.0))
+            except (TypeError, ValueError):
+                continue
+            if rate == 0:
+                continue
+            components.append(
+                AdderRate(
+                    name=str(a.get("name", "Adder")),
+                    rate=rate,
+                    basis=a.get("basis", "percent"),
+                    applies_to=a.get("applies_to", "subtotal"),
+                )
+            )
 
     return Tariff(
         name=name,

@@ -31,6 +31,7 @@ from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import UserModel
 from vpp.db.repositories import TariffRepository
+from vpp.events import Event, EventType, get_event_bus
 from vpp.schemas.auth import UserRole
 from vpp.schemas.tariffs import (
     BillLineItemDTO,
@@ -145,7 +146,22 @@ async def update_tariff(
     row = await TariffRepository.update(session, tariff_id, **fields)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tariff not found")
-    return _row_to_read(row)
+    # Realize the response BEFORE publishing — publishing yields the loop
+    # and would otherwise re-enter SQLAlchemy lazy-load on a closed session.
+    response = _row_to_read(row)
+    # Broadcast TariffUpdated for downstream invalidation (cached optimizer
+    # params, web UI). Failure to publish is logged but does not fail the API.
+    try:
+        await get_event_bus().publish(
+            Event(
+                event_type=EventType.TARIFF_UPDATED,
+                data={"tariff_id": tariff_id, "fields": list(fields.keys())},
+                source="tariffs.update",
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return response
 
 
 @router.delete("/{tariff_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -159,6 +175,16 @@ async def delete_tariff(
     ok = await TariffRepository.delete(session, tariff_id, soft=not hard)
     if not ok:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tariff not found")
+    try:
+        await get_event_bus().publish(
+            Event(
+                event_type=EventType.TARIFF_DELETED,
+                data={"tariff_id": tariff_id, "hard": hard},
+                source="tariffs.delete",
+            )
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -250,20 +276,74 @@ async def _do_simulate(
     period = BillingPeriod(start=start, end=end)
     bill = tariff.bill(trace, period)
 
+    # ---- NEM-aware export credit (M4) -----------------------------------
+    # When the meter trace includes export_kwh > 0, compute an export credit
+    # at:
+    #   * NEM 2.0  -> retail rate proxy (avg $/kWh of energy line items).
+    #   * NEM 3.0  -> hourly avoided-cost vector (24 entries, repeats).
+    #   * none     -> no credit.
+    nem = (body.nem or "none").lower()
+    line_items_out = list(bill.line_items)
+    total = bill.total
+    if nem in {"nem2", "nem3"}:
+        total_export = sum(trace.export_kwh)
+        if total_export > 0:
+            credit_amount = 0.0
+            if nem == "nem2":
+                # Retail-rate proxy: total energy $ / total energy kWh.
+                e_amt = sum(
+                    li.amount for li in bill.line_items if li.kind in {"energy", "tier"}
+                )
+                e_kwh = sum(
+                    li.quantity for li in bill.line_items if li.kind in {"energy", "tier"}
+                )
+                avg_rate = (e_amt / e_kwh) if e_kwh > 0 else 0.0
+                credit_amount = round(total_export * avg_rate, 4)
+            else:  # nem3
+                acc = list(body.nem3_avoided_cost or [])
+                if not acc:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="nem='nem3' requires nem3_avoided_cost",
+                    )
+                credit = 0.0
+                for ts, exp in zip(trace.timestamps, trace.export_kwh):
+                    if exp <= 0:
+                        continue
+                    if not (start <= ts < end):
+                        continue
+                    hour_idx = ts.astimezone(timezone.utc).hour
+                    rate = float(acc[hour_idx % len(acc)])
+                    credit += exp * rate
+                credit_amount = round(credit, 4)
+            if credit_amount > 0:
+                from vpp.tariffs import BillLineItem  # local import OK
+                line_items_out.append(
+                    BillLineItem(
+                        kind="credit",
+                        label=f"{nem.upper()} export credit",
+                        quantity=round(total_export, 4),
+                        unit="kWh",
+                        rate=round(credit_amount / total_export, 6),
+                        amount=-credit_amount,
+                        meta={"nem": nem},
+                    )
+                )
+                total = round(total - credit_amount, 4)
+
     return BillResponse(
-        total=bill.total,
+        total=total,
         tariff_name=bill.tariff_name,
         line_items=[
             BillLineItemDTO(
                 kind=li.kind, label=li.label, quantity=li.quantity,
                 unit=li.unit, rate=li.rate, amount=li.amount,
             )
-            for li in bill.line_items
+            for li in line_items_out
         ],
         period_start=start,
         period_end=end,
     )
-
 
 # ---------------------------------------------------------------------------
 # URDB import
