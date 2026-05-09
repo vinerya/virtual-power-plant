@@ -90,6 +90,7 @@ async def test_apply_window_decreases_soh(db_session, app):
     battery.chemistry = "lfp"
     battery.state_of_health = 1.0
     battery.cumulative_throughput_kwh = 0.0
+    battery.nominal_energy_kwh = 100.0  # M4: explicit kWh capacity
     await db_session.commit()
 
     base = datetime.now(timezone.utc)
@@ -111,7 +112,7 @@ async def test_apply_window_decreases_soh(db_session, app):
     # Throughput must reflect total |dSOC| * capacity_kwh
     expected_throughput = sum(
         abs(soc_trace[i] - soc_trace[i - 1]) for i in range(1, len(soc_trace))
-    ) * battery.rated_power
+    ) * battery.nominal_energy_kwh
     assert update.cumulative_throughput_kwh == pytest.approx(expected_throughput)
 
 

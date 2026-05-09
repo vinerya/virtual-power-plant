@@ -68,6 +68,28 @@ class SOHUpdate:
     timestamp: datetime
 
 
+# Heuristic C-rate for residential storage when nominal_energy_kwh is missing.
+# A C/4 system has nominal_energy_kwh ~= rated_power_kw * 4.0 hours.
+DEFAULT_C_RATE_HOURS = 4.0
+
+
+def _capacity_kwh(obj) -> float:
+    """Return the battery's nominal energy capacity in kWh.
+
+    Prefers ``nominal_energy_kwh`` when present.  Falls back to a documented
+    C/4 heuristic (``rated_power * 4.0``) for residential-storage-shaped
+    fixtures that pre-date the M4 column.  Returns 1.0 only if both values
+    are absent or zero, to avoid divide-by-zero downstream.
+    """
+    nominal = getattr(obj, "nominal_energy_kwh", None)
+    if nominal is not None and float(nominal) > 0:
+        return float(nominal)
+    rated = float(getattr(obj, "rated_power", 0.0) or 0.0)
+    if rated > 0:
+        return rated * DEFAULT_C_RATE_HOURS
+    return 1.0
+
+
 def _preset_for(chemistry: Optional[str]) -> dict:
     if chemistry and chemistry.lower() == "nmc":
         return NMC_PRESET
@@ -132,17 +154,12 @@ class DegradationUpdater:
             previous_soh = float(obj.state_of_health)
             new_soh = max(0.0, previous_soh - loss)
 
-            # Throughput in kWh: |dSOC| * rated_power-ish capacity.
-            # We don't have explicit kWh capacity on ResourceModel; the SOC
-            # trace is in fractional [0,1] so we report fractional throughput
-            # as fraction-of-capacity.  Callers with kWh data can scale later.
+            # Throughput in kWh: |dSOC| * nominal_energy_kwh (true capacity).
             throughput_frac = sum(
                 abs(window.soc_trace[i] - window.soc_trace[i - 1])
                 for i in range(1, len(window.soc_trace))
             )
-            # Use `rated_power` as a proxy for nominal energy when not stored
-            # separately.  Most existing fixtures keep rated_power == capacity.
-            capacity_kwh = float(obj.rated_power) or 1.0
+            capacity_kwh = _capacity_kwh(obj)
             new_throughput_kwh = float(obj.cumulative_throughput_kwh) + (
                 throughput_frac * capacity_kwh
             )

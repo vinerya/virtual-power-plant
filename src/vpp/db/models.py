@@ -53,6 +53,12 @@ class ResourceModel(TimestampMixin, Base):
     )
     chemistry: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
+    # M4 -- Nominal energy capacity (kWh) for accurate throughput accounting.
+    # Nullable for non-battery resources.  When NULL on a battery the
+    # DegradationUpdater falls back to a documented C/4 heuristic
+    # (rated_power * 4.0).  Migration: 0003_add_nominal_energy.py.
+    nominal_energy_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     # Relationships
     battery_states: Mapped[list["BatteryStateModel"]] = relationship(
         back_populates="resource", cascade="all, delete-orphan"

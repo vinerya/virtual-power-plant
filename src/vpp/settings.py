@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     metrics_enabled: bool = True
     metrics_prefix: str = "vpp"
 
+    # Migrations / database init
+    use_alembic: bool = False  # VPP_USE_ALEMBIC=1 -> run alembic upgrade head instead of create_all
+
+    # Battery degradation periodic updater (M4)
+    degradation_updater_enabled: bool = True
+    degradation_updater_interval_minutes: int = 60
+
     # VPP Config
     config_path: Optional[str] = None
     default_timezone: str = "UTC"
