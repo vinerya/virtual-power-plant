@@ -22,6 +22,12 @@ from .models import (
     RainflowDegradation,
     ThroughputDegradation,
 )
+from .optimization import (
+    WearCost,
+    add_calendar_aging_bias,
+    add_dod_constraints,
+    add_wear_cost_term,
+)
 
 __all__ = [
     "DegradationModel",
@@ -30,4 +36,8 @@ __all__ = [
     "RainflowDegradation",
     "LFP_PRESET",
     "NMC_PRESET",
+    "WearCost",
+    "add_wear_cost_term",
+    "add_dod_constraints",
+    "add_calendar_aging_bias",
 ]

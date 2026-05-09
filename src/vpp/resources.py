@@ -119,7 +119,63 @@ class Battery(EnergyResource):
         self.nominal_voltage = nominal_voltage  # V
         self.charge_efficiency = 0.95
         self.discharge_efficiency = 0.95
-    
+        # Degradation tracking (M2). Defaults preserve the legacy behaviour
+        # for any caller that never invokes update_soh / apply_realized_dispatch.
+        self.state_of_health: float = 1.0
+        self.cumulative_throughput_kwh: float = 0.0
+
+    def update_soh(self, loss_fraction: float) -> None:
+        """Decrement SOH by a fractional capacity-loss amount, clamped at 0.
+
+        ``loss_fraction`` is the fractional capacity loss in [0, 1] -- the
+        same scale returned by :class:`vpp.degradation.DegradationModel`.
+        """
+        if loss_fraction < 0:
+            raise ResourceError("loss_fraction must be non-negative")
+        self.state_of_health = max(0.0, self.state_of_health - float(loss_fraction))
+
+    def apply_realized_dispatch(
+        self,
+        soc_trace: List[float],
+        dt_hours: float,
+        degradation_model: Any = None,
+        temperature_c: float = 25.0,
+    ) -> float:
+        """Run a degradation model over a SOC trace and update SOH.
+
+        Parameters
+        ----------
+        soc_trace
+            SOC values in [0, 1].
+        dt_hours
+            Sampling interval, hours.
+        degradation_model
+            Optional :class:`DegradationModel`. Defaults to
+            :class:`RainflowDegradation` with the LFP rainflow preset.
+        temperature_c
+            Average cell temperature for calendar/Arrhenius models.
+
+        Returns the predicted fractional capacity loss applied to SOH.
+        Also accumulates throughput (in kWh) into
+        :attr:`cumulative_throughput_kwh`.
+        """
+        if degradation_model is None:
+            from .degradation import LFP_PRESET, RainflowDegradation
+            degradation_model = RainflowDegradation(**LFP_PRESET["rainflow"])
+
+        loss = float(
+            degradation_model.predict_capacity_loss(
+                soc_trace, dt_hours, temperature_c=temperature_c
+            )
+        )
+        self.update_soh(loss)
+        # Accumulate throughput (kWh) from |dSOC| * capacity.
+        throughput_frac = sum(
+            abs(soc_trace[i] - soc_trace[i - 1]) for i in range(1, len(soc_trace))
+        )
+        self.cumulative_throughput_kwh += throughput_frac * self.capacity
+        return loss
+
     def get_metrics(self) -> Dict[str, Any]:
         """Get battery-specific metrics."""
         metrics = super().get_metrics()
@@ -129,7 +185,9 @@ class Battery(EnergyResource):
             "state_of_charge": self.current_charge / self.capacity * 100,
             "nominal_voltage": self.nominal_voltage,
             "charge_efficiency": self.charge_efficiency,
-            "discharge_efficiency": self.discharge_efficiency
+            "discharge_efficiency": self.discharge_efficiency,
+            "state_of_health": self.state_of_health,
+            "cumulative_throughput_kwh": self.cumulative_throughput_kwh,
         })
         return metrics
     
