@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select, func, delete
+from sqlalchemy import select, func, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from datetime import date as _date, datetime as _datetime, timezone as _tz
@@ -13,6 +14,7 @@ from datetime import date as _date, datetime as _datetime, timezone as _tz
 from .models import (
     ResourceModel,
     BatteryStateModel,
+    BatterySOHSampleModel,
     OptimizationRunModel,
     OrderModel,
     TradeModel,
@@ -122,6 +124,81 @@ class BatteryStateRepository:
             .order_by(BatteryStateModel.timestamp.desc())
             .limit(limit)
         )
+        return list(result.scalars().all())
+
+
+# ---------------------------------------------------------------------------
+# Battery degradation (M3)
+# ---------------------------------------------------------------------------
+
+
+class BatteryDegradationRepository:
+    """SOH/throughput persistence for battery resources."""
+
+    @staticmethod
+    async def update_battery_soh(
+        session: AsyncSession,
+        battery_id: str,
+        soh: float,
+        cum_throughput_kwh: float,
+        ts: datetime,
+        loss_fraction: float = 0.0,
+        record_sample: bool = True,
+    ) -> Optional[ResourceModel]:
+        """Persist new SOH/throughput on the resource and append a history sample."""
+        obj = await session.get(ResourceModel, battery_id)
+        if obj is None:
+            return None
+        obj.state_of_health = float(soh)
+        obj.cumulative_throughput_kwh = float(cum_throughput_kwh)
+        obj.last_degradation_update = ts
+        if record_sample:
+            session.add(
+                BatterySOHSampleModel(
+                    resource_id=battery_id,
+                    state_of_health=float(soh),
+                    cumulative_throughput_kwh=float(cum_throughput_kwh),
+                    loss_fraction=float(loss_fraction),
+                    timestamp=ts,
+                )
+            )
+        await session.flush()
+        return obj
+
+    @staticmethod
+    async def get_batteries_due_for_degradation_update(
+        session: AsyncSession, stale_after_minutes: int
+    ) -> list[ResourceModel]:
+        """Return battery resources whose SOH update is older than ``stale_after_minutes``."""
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_after_minutes)
+        stmt = select(ResourceModel).where(
+            ResourceModel.resource_type == "battery",
+            or_(
+                ResourceModel.last_degradation_update.is_(None),
+                ResourceModel.last_degradation_update < cutoff,
+            ),
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_soh_history(
+        session: AsyncSession,
+        battery_id: str,
+        days: int = 30,
+        limit: int = 1000,
+    ) -> list[BatterySOHSampleModel]:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        stmt = (
+            select(BatterySOHSampleModel)
+            .where(
+                BatterySOHSampleModel.resource_id == battery_id,
+                BatterySOHSampleModel.timestamp >= cutoff,
+            )
+            .order_by(BatterySOHSampleModel.timestamp.desc())
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
         return list(result.scalars().all())
 
 
