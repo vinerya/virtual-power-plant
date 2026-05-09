@@ -35,15 +35,47 @@ def create_engine_from_settings(database_url: str, echo: bool = False) -> AsyncE
     )
 
 
-async def init_db(database_url: str, echo: bool = False) -> None:
-    """Initialise the global engine, session factory, and create tables."""
+async def init_db(
+    database_url: str,
+    echo: bool = False,
+    use_alembic: bool = False,
+) -> None:
+    """Initialise the global engine, session factory, and create tables.
+
+    By default schemas are bootstrapped via ``Base.metadata.create_all``
+    (backwards compatible with pre-M4 dev workflows).  Set
+    ``use_alembic=True`` (or ``VPP_USE_ALEMBIC=1`` in the environment) to
+    run ``alembic upgrade head`` against the configured database instead.
+    """
     global _engine, _session_factory
 
     _engine = create_engine_from_settings(database_url, echo=echo)
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    if use_alembic:
+        await _run_alembic_upgrade(database_url)
+    else:
+        async with _engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+
+async def _run_alembic_upgrade(database_url: str) -> None:
+    """Run ``alembic upgrade head`` synchronously off the event loop."""
+    import asyncio
+    from pathlib import Path
+
+    def _upgrade() -> None:
+        from alembic import command
+        from alembic.config import Config
+
+        # Locate alembic.ini at the repo root.
+        ini = Path(__file__).resolve().parents[3] / "alembic.ini"
+        cfg = Config(str(ini))
+        # Pass the runtime URL via -x so env.py's _resolve_url picks it up.
+        cfg.cmd_opts = type("X", (), {"x": [f"url={database_url}"]})()
+        command.upgrade(cfg, "head")
+
+    await asyncio.get_event_loop().run_in_executor(None, _upgrade)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
