@@ -47,6 +47,11 @@ from .distributed import (
     DistributedOptimizationManager
 )
 
+# M1: deterministic battery dispatch via Pyomo + HiGHS.
+# Imported lazily-friendly: the module guards optional deps internally so
+# importing it never crashes when pyomo/highspy are missing.
+from .solvers import PyomoPlugin, SimpleBatteryDispatchRules
+
 # Version information
 __version__ = "1.0.0"
 __author__ = "VPP Development Team"
@@ -83,6 +88,10 @@ __all__ = [
     "SimpleConsensusRules",
     "ADMMDistributedPlugin",
     "DistributedOptimizationManager",
+
+    # Deterministic dispatch (M1)
+    "PyomoPlugin",
+    "SimpleBatteryDispatchRules",
 ]
 
 
@@ -197,10 +206,22 @@ def solve_with_fallback(problem: OptimizationProblem,
         >>> result = solve_with_fallback(problem, plugin, timeout_ms=1000)
     """
     engine = create_optimization_engine("standard")
-    
+
     if plugin:
         engine.register_plugin(plugin)
-    
+    else:
+        # M1: auto-register PyomoPlugin for deterministic battery dispatch
+        # problems. is_available() handles the missing-deps case cleanly so
+        # the engine still falls back to rule-based solvers.
+        ptype = problem.metadata.get("type", "")
+        if ptype in ("battery_dispatch", "deterministic"):
+            try:
+                pyomo_plugin = PyomoPlugin()
+                if pyomo_plugin.is_available():
+                    engine.register_plugin(pyomo_plugin)
+            except Exception:
+                pass
+
     return engine.solve(problem, timeout_ms=timeout_ms)
 
 

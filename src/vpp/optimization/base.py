@@ -361,6 +361,18 @@ class OptimizationFactory:
             engine.register_fallback(SimpleStochasticRules(), "stochastic")
             engine.register_fallback(FastDispatchRules(), "realtime")
             engine.register_fallback(SimpleConsensusRules(), "distributed")
+
+            # M1: deterministic battery dispatch fallback (greedy threshold).
+            # Imported here to keep the engine importable even if the
+            # optional solver subpackage fails to load.
+            try:
+                from .solvers import SimpleBatteryDispatchRules
+
+                rules = SimpleBatteryDispatchRules()
+                engine.register_fallback(rules, "battery_dispatch")
+                engine.register_fallback(rules, "deterministic")
+            except Exception:  # pragma: no cover - defensive
+                pass
         
         return engine
     
