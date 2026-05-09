@@ -404,8 +404,151 @@ def add_demand_charge_terms(
     return _term, _builder
 
 
+def add_tiered_energy_term(
+    tier_thresholds_kwh: List[float],
+    tier_rates_per_kwh: List[float],
+    use_native_sos2: bool = False,
+) -> Tuple[Callable, Callable]:
+    """SOS2 piecewise-linear tier-aware energy cost.
+
+    Replaces the M2 "lowest-tier" approximation. The piecewise-linear total
+    energy cost ``C(cum_import)`` is encoded as a convex combination of
+    breakpoint values selected by SOS2-constrained ``lambda`` weights.
+
+    Mechanics
+    ---------
+    Let breakpoints be ``b_0 = 0 < b_1 < ... < b_K`` where ``b_1 .. b_{K-1}``
+    are the supplied tier thresholds (the upper bound of each finite tier)
+    and ``b_K`` is a finite cap derived from the horizon (since the last
+    tier's threshold is conventionally ``+inf``). The cumulative cost
+    ``c_k = sum_{i=1..k} (b_i - b_{i-1}) * rate_i`` is precomputed.
+
+    For each step the model carries:
+
+    * ``cum_import_kwh`` — scalar ``= sum_t p_import[t] * dt``.
+    * ``lambda_b[k]`` ∈ [0, 1] for each breakpoint, with
+      ``sum_k lambda_b[k] == 1``.
+    * ``cum_import_kwh == sum_k b_k * lambda_b[k]``.
+    * ``SOSConstraint(sos=2)`` over ``lambda_b`` so at most two adjacent
+      ``lambda_b[k]`` may be nonzero — that is exactly the convex
+      combination of two adjacent breakpoints, which traces the
+      piecewise-linear curve.
+
+    Energy contribution to the objective:
+        ``sum_k c_k * lambda_b[k]``
+
+    Horizon assumption
+    ------------------
+    The cumulative variable spans the WHOLE optimization horizon — so the
+    SOS2 path is correct only when the horizon covers (approximately) one
+    URDB billing month. For sub-month horizons callers should fall back to
+    a fixed-tier rate via :func:`tariff_to_opt_params`.
+
+    Returns
+    -------
+    (objective_term, constraint_builder)
+    """
+    import pyomo.environ as pyo
+
+    if not tier_thresholds_kwh or not tier_rates_per_kwh:
+        raise ValueError("tier_thresholds_kwh and tier_rates_per_kwh must be non-empty")
+    if len(tier_thresholds_kwh) != len(tier_rates_per_kwh):
+        raise ValueError("tier_thresholds_kwh / tier_rates_per_kwh length mismatch")
+
+    # Build finite breakpoints. The last threshold is conventionally +inf;
+    # replace with a generous cap = 2 * (next-to-last threshold or 1000).
+    finite_thresholds: List[float] = []
+    for th in tier_thresholds_kwh:
+        if th == float("inf"):
+            break
+        finite_thresholds.append(float(th))
+
+    # Determine cap for the last (open) tier. Heuristic: 2x the highest
+    # finite threshold; if none, default to 10_000 kWh.
+    if finite_thresholds:
+        cap = max(2.0 * finite_thresholds[-1], finite_thresholds[-1] + 1000.0)
+    else:
+        cap = 10_000.0
+
+    # Breakpoints: b_0 = 0, then each finite threshold, then cap.
+    breakpoints: List[float] = [0.0] + list(finite_thresholds)
+    if breakpoints[-1] < cap:
+        breakpoints.append(cap)
+
+    # Costs at each breakpoint via cumulative integral.
+    costs: List[float] = [0.0]
+    for k in range(1, len(breakpoints)):
+        rate_k = float(tier_rates_per_kwh[min(k - 1, len(tier_rates_per_kwh) - 1)])
+        costs.append(costs[-1] + (breakpoints[k] - breakpoints[k - 1]) * rate_k)
+
+    K = len(breakpoints)
+
+    def _builder(model, params: Dict[str, Any]) -> None:
+        # cum_import = sum_t p_import[t] * dt
+        model.cum_import_kwh = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0.0, breakpoints[-1]))
+        model.tier_lambda = pyo.Var(range(K), domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
+
+        def _cum(mm):
+            return mm.cum_import_kwh == sum(mm.p_import[t] * mm.dt for t in mm.T)
+
+        model.tier_cum_def = pyo.Constraint(rule=_cum)
+
+        def _convex(mm):
+            return sum(mm.tier_lambda[k] for k in range(K)) == 1.0
+
+        model.tier_convex = pyo.Constraint(rule=_convex)
+
+        def _bp(mm):
+            return mm.cum_import_kwh == sum(breakpoints[k] * mm.tier_lambda[k] for k in range(K))
+
+        model.tier_breakpoint = pyo.Constraint(rule=_bp)
+
+        # SOS2 — at most two adjacent lambdas nonzero.
+        # Two equivalent encodings are available; pick one based on solver
+        # capability:
+        #   * Native pyomo.SOSConstraint(sos=2) (Gurobi/CPLEX/SCIP).
+        #   * Binary-segment "adjacent indicator" reformulation that
+        #     enforces the same SOS2 property purely with MILP variables —
+        #     this works with HiGHS, CBC, GLPK, etc.
+        # Default is the binary encoding (broadly compatible). Pass
+        # ``use_native_sos2=True`` for SOS-aware solvers.
+        if use_native_sos2:
+            model.tier_sos2 = pyo.SOSConstraint(
+                var=model.tier_lambda,
+                index=list(range(K)),
+                sos=2,
+            )
+        # Binary z[s] = 1 iff cum_import lies in segment s = [b_s, b_{s+1}].
+        n_seg = K - 1
+        if n_seg > 0:
+            model.tier_seg = pyo.Var(range(n_seg), domain=pyo.Binary)
+
+            def _one_seg(mm):
+                return sum(mm.tier_seg[s] for s in range(n_seg)) == 1
+            model.tier_one_seg = pyo.Constraint(rule=_one_seg)
+
+            def _lambda_bound(mm, k):
+                # lambda[k] is allowed only if segment k-1 or k is active.
+                left = mm.tier_seg[k - 1] if k - 1 >= 0 else 0
+                right = mm.tier_seg[k] if k < n_seg else 0
+                return mm.tier_lambda[k] <= left + right
+            model.tier_lambda_bound = pyo.Constraint(range(K), rule=_lambda_bound)
+
+    _builder.__name__ = "add_tiered_energy_constraints"
+
+    def _term(model, _params):
+        return sum(costs[k] * model.tier_lambda[k] for k in range(K))
+
+    _term.__name__ = "add_tiered_energy_term"
+    # Stash breakpoint metadata so callers/tests can introspect.
+    _term.breakpoints = breakpoints  # type: ignore[attr-defined]
+    _term.costs = costs  # type: ignore[attr-defined]
+    return _term, _builder
+
+
 def build_tariff_hooks(
     opt_params: TariffOptParams,
+    tariff: Optional[Tariff] = None,
 ) -> Tuple[List[Callable], List[Callable]]:
     """Convenience: build (objective_terms, constraint_builders) ready to pass
     to :func:`vpp.optimization.formulations.dispatch.build_battery_dispatch_model`.
@@ -413,11 +556,50 @@ def build_tariff_hooks(
     Includes tariff energy term, tariff balance/mutex builder, demand charge
     term + builder. Caller still needs to set
     ``params['disable_base_energy_cost'] = True`` to avoid double-counting.
+
+    SOS2 tier hook (M3)
+    -------------------
+    If ``tariff`` is supplied AND it carries a :class:`TieredEnergyRate`,
+    a tier-aware SOS2 piecewise-linear term is appended (replacing the
+    tier-0 fallback in :func:`tariff_to_opt_params`). The SOS2 path is
+    intended for horizons that span (approximately) one billing month;
+    for shorter horizons the fixed tier-0 rate inside ``opt_params`` is
+    a reasonable approximation.
     """
     energy_term = add_tariff_energy_term(opt_params)
     tariff_builder = add_tariff_constraints(opt_params)
     demand_term, demand_builder = add_demand_charge_terms(opt_params)
-    return [energy_term, demand_term], [tariff_builder, demand_builder]
+    obj_terms: List[Callable] = [energy_term, demand_term]
+    builders: List[Callable] = [tariff_builder, demand_builder]
+
+    if tariff is not None:
+        tier_components = [c for c in tariff.components if isinstance(c, TieredEnergyRate)]
+        tou_present = any(isinstance(c, TimeOfUseRate) for c in tariff.components)
+        if tier_components and not tou_present:
+            # The standard energy_term currently prices p_import at the
+            # tier-0 fallback. Replace it with the SOS2 piecewise term and
+            # rebuild the standard term against export-only (sell side).
+            tiers = tier_components[0].tiers
+            thresholds = [t for t, _ in tiers]
+            rates = [r for _, r in tiers]
+            tier_term, tier_builder = add_tiered_energy_term(thresholds, rates)
+            # Replace the buy-side energy term with an export-only one.
+            zeroed = TariffOptParams(
+                energy_buy_per_kwh=[0.0] * opt_params.horizon_steps,
+                energy_sell_per_kwh=list(opt_params.energy_sell_per_kwh),
+                demand_charge_per_kw=opt_params.demand_charge_per_kw,
+                demand_charge_window=opt_params.demand_charge_window,
+                demand_ratchet_floor_kw=opt_params.demand_ratchet_floor_kw,
+                fixed_charges=0.0,  # carried by demand_term already
+                min_bill=opt_params.min_bill,
+                interval_hours=opt_params.interval_hours,
+                horizon_steps=opt_params.horizon_steps,
+            )
+            obj_terms[0] = add_tariff_energy_term(zeroed)
+            obj_terms.append(tier_term)
+            builders.append(tier_builder)
+
+    return obj_terms, builders
 
 
 # ---------------------------------------------------------------------------

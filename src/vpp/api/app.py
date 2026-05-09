@@ -47,7 +47,7 @@ def create_app() -> FastAPI:
     )
 
     # -- Routes -------------------------------------------------------------
-    from .routes import health, resources, optimization, trading, auth, config, protocols, v2g
+    from .routes import health, resources, optimization, trading, auth, config, protocols, v2g, tariffs
 
     app.include_router(health.router)
     app.include_router(auth.router)
@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(config.router)
     app.include_router(protocols.router)
     app.include_router(v2g.router)
+    app.include_router(tariffs.router)
 
     # -- WebSocket ----------------------------------------------------------
     from .websocket import websocket_endpoint
