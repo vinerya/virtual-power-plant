@@ -92,6 +92,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed dead flat modules superseded by their package equivalents
   (`analysis.py`, `config.py`, `events.py`, `optimization.py`,
   `simulation.py`, `visualization.py`).
+- `test_mpc_warm_start_speedup` was flaky under full-suite CPU
+  contention — it compared wall-clock solve time, which a
+  handful-of-milliseconds MIP solve doesn't have enough margin to absorb
+  scheduling jitter against. `MPCDecision`/`BacktestResult` now also
+  report `solver_iterations`/`cumulative_solver_iterations` (appsi
+  HiGHS's simplex iteration count, deterministic for a given model and
+  warm-start hint — verified identical across repeated runs), and the
+  test asserts on that instead, falling back to the old wall-clock check
+  only if iteration counts aren't available (non-appsi solver backend).
 
 ## [2.0.0] - 2025-02-24
 

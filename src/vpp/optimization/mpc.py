@@ -80,6 +80,12 @@ class MPCDecision:
     expected_cost_remaining: float
     solve_time_ms: float
     fallback_used: bool
+    solver_iterations: Optional[int] = None
+    """Simplex iterations the solver reported for this solve (appsi HiGHS
+    only; ``None`` for other backends, fallback decisions, or the
+    stochastic/ADMM paths). Deterministic given the same model and warm
+    start -- unlike ``solve_time_ms``, safe to compare across runs without
+    being sensitive to system load."""
     full_horizon_plan: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -185,6 +191,8 @@ class MPCController:
         except Exception:
             return self._do_fallback(mpc_step, params, t_start, reason="solve_exc")
 
+        solver_iterations = self._extract_solver_iterations(solver)
+
         # Status check
         from .solvers.pyomo_plugin import PyomoPlugin
         status, _ = PyomoPlugin._extract_status(results)
@@ -231,6 +239,7 @@ class MPCController:
             expected_cost_remaining=obj,
             solve_time_ms=(time.time() - t_start) * 1000.0,
             fallback_used=False,
+            solver_iterations=solver_iterations,
             full_horizon_plan={
                 "p_charge": p_chg,
                 "p_discharge": p_dis,
@@ -240,6 +249,20 @@ class MPCController:
                 "horizon": T,
             },
         )
+
+    @staticmethod
+    def _extract_solver_iterations(solver: Any) -> Optional[int]:
+        """Best-effort simplex iteration count from an appsi HiGHS solver.
+
+        Only the appsi ``Highs`` interface (the preferred path in
+        ``_try_import_pyomo``) exposes the underlying ``highspy`` model;
+        the classic ``SolverFactory("appsi_highs"/"highs")`` fallback
+        objects don't, so this returns ``None`` there rather than raising.
+        """
+        try:
+            return int(solver._solver_model.getInfo().simplex_iteration_count)
+        except Exception:
+            return None
 
     def _step_stochastic(
         self,

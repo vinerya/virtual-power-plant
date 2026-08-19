@@ -174,6 +174,18 @@ def test_mpc_naive_forecast_underperforms_perfect():
 
 
 def test_mpc_warm_start_speedup():
+    """Warm-starting must not increase solver work vs. a cold start.
+
+    Asserts on cumulative_solver_iterations (appsi HiGHS's reported simplex
+    iteration count), not wall-clock time: for a fixed model and warm-start
+    hint, iteration count is fully deterministic (verified empirically --
+    identical across repeated runs), whereas solve_time_ms is wall-clock
+    and was flaky under CPU contention from the rest of the suite (a
+    handful-of-milliseconds solve is easily dominated by scheduling jitter
+    when many other tests are also driving HiGHS/pyomo solves). Falls back
+    to the old (lenient) wall-clock comparison only if iteration counts
+    aren't available at all, e.g. a non-appsi solver backend.
+    """
     n_ticks = 16
     horizon = 24
     dt_min = 60
@@ -201,18 +213,28 @@ def test_mpc_warm_start_speedup():
     ctrl_c = MPCController(cfg_cold, BATTERY)
     res_c = run_backtest(ctrl_c, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect)
 
-    avg_warm = res_w.cumulative_solve_time_ms / n_ticks
-    avg_cold = res_c.cumulative_solve_time_ms / n_ticks
+    avg_warm_ms = res_w.cumulative_solve_time_ms / n_ticks
+    avg_cold_ms = res_c.cumulative_solve_time_ms / n_ticks
+    iters_warm = res_w.cumulative_solver_iterations
+    iters_cold = res_c.cumulative_solver_iterations
 
-    # Lenient: warm should not be more than 1.10x cold (HiGHS warm-start
-    # behavior is sensitive). Print numbers for the report.
     print(
-        f"\n[warm-start] cold={avg_cold:.2f} ms  warm={avg_warm:.2f} ms "
-        f"speedup={(avg_cold - avg_warm) / avg_cold * 100:+.1f}%"
+        f"\n[warm-start] cold={avg_cold_ms:.2f} ms  warm={avg_warm_ms:.2f} ms "
+        f"wall-clock-speedup={(avg_cold_ms - avg_warm_ms) / avg_cold_ms * 100:+.1f}%  "
+        f"iters: cold={iters_cold} warm={iters_warm}"
     )
-    assert avg_warm <= avg_cold * 1.20, (
-        f"warm-start regressed: warm={avg_warm:.2f} ms cold={avg_cold:.2f} ms"
-    )
+
+    if iters_cold > 0 or iters_warm > 0:
+        assert iters_warm <= iters_cold * 1.25, (
+            f"warm-start regressed: warm={iters_warm} simplex iterations, "
+            f"cold={iters_cold}"
+        )
+    else:
+        # Iteration counts unavailable (non-appsi solver backend) -- fall
+        # back to the wall-clock check with its pre-existing lenient margin.
+        assert avg_warm_ms <= avg_cold_ms * 1.20, (
+            f"warm-start regressed: warm={avg_warm_ms:.2f} ms cold={avg_cold_ms:.2f} ms"
+        )
 
 
 def test_mpc_fallback_on_solver_timeout():

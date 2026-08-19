@@ -36,6 +36,11 @@ class BacktestResult:
     soc_trajectory: List[float] = field(default_factory=list)
     realized_cost: float = 0.0
     cumulative_solve_time_ms: float = 0.0
+    cumulative_solver_iterations: int = 0
+    """Sum of MPCDecision.solver_iterations across ticks where it was
+    reported (appsi HiGHS only). Deterministic given the same inputs --
+    unlike cumulative_solve_time_ms, safe to compare across runs without
+    being sensitive to system load."""
     fallback_count: int = 0
     wall_time_s: float = 0.0
 
@@ -107,6 +112,8 @@ def run_backtest(
         if decision.fallback_used:
             result.fallback_count += 1
         result.cumulative_solve_time_ms += decision.solve_time_ms
+        if decision.solver_iterations is not None:
+            result.cumulative_solver_iterations += decision.solver_iterations
 
         # Apply first-step decision against ground-truth, integrate SOC.
         p_chg = max(0.0, decision.p_charge_kw)
