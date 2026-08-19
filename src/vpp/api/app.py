@@ -155,6 +155,112 @@ async def _mqtt_ingestion_loop(settings, *, retry_delay_seconds: float = 30.0) -
             await adapter.disconnect()
 
 
+async def _modbus_device_loop(
+    resource_id: str,
+    config: dict,
+    *,
+    retry_delay_seconds: float = 30.0,
+    health_check_interval_seconds: float = 5.0,
+) -> None:
+    """Connect one Modbus-configured resource's adapter and keep it connected.
+
+    ModbusAdapter.connect() starts its own internal polling task once
+    connected, which already dispatches to subscribers -- this loop's only
+    job is: connect (retrying on failure, e.g. device unreachable at
+    startup), subscribe the persister, register into the shared protocol
+    registry under a name unique to this resource (ModbusAdapter always
+    constructs with name="modbus", which would collide across multiple
+    devices in the same registry), and reconnect if the adapter ever drops.
+    """
+    from vpp.protocols.modbus import ModbusAdapter
+    from vpp.protocols.modbus_ingestion import DEFAULT_POWER_REGISTER, ModbusResourcePersister
+    from vpp.api.routes.protocols import get_registry
+
+    adapter_config = {k: v for k, v in config.items() if k != "power_register"}
+    power_register = config.get("power_register", DEFAULT_POWER_REGISTER)
+
+    adapter = ModbusAdapter()
+    adapter.name = f"modbus:{resource_id}"
+    adapter.configure(**adapter_config)
+
+    persister = ModbusResourcePersister(resource_id, get_session_factory(), power_register)
+    adapter.subscribe("*", persister.handle_message)
+
+    registry = get_registry()
+    try:
+        registry.register(adapter)
+    except ValueError:
+        pass  # already registered (e.g. lifespan re-entered within one process, as in tests)
+
+    try:
+        connected = False
+        while True:
+            try:
+                if not connected:
+                    await adapter.connect()
+                    connected = True
+                await asyncio.sleep(health_check_interval_seconds)
+                if not adapter.is_connected:
+                    connected = False
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Modbus connect failed for resource %s; retrying in %.0fs",
+                    resource_id,
+                    retry_delay_seconds,
+                )
+                connected = False
+                await asyncio.sleep(retry_delay_seconds)
+    finally:
+        registry.unregister(adapter.name)
+        if adapter.is_connected:
+            await adapter.disconnect()
+
+
+async def _modbus_ingestion_loop(settings) -> None:
+    """Discover Modbus-configured resources and connect each one.
+
+    Resources opt in via their own `metadata["modbus"]` -- see
+    vpp.protocols.modbus_ingestion's module docstring. Discovery runs once
+    at startup; a resource's Modbus config added after startup requires a
+    restart to take effect (physical device fleets rarely change at
+    runtime the way MQTT clients do, so this keeps the v1 simple).
+    """
+    import json
+
+    from vpp.db.models import ResourceModel
+    from vpp.protocols.modbus_ingestion import modbus_config_for_resource
+
+    factory = get_session_factory()
+    async with factory() as session:
+        rows = list((await session.execute(select(ResourceModel))).scalars().all())
+
+    device_tasks: list[asyncio.Task] = []
+    for row in rows:
+        metadata = json.loads(row.metadata_json) if row.metadata_json else {}
+        config = modbus_config_for_resource(metadata)
+        if config is None:
+            continue
+        device_tasks.append(
+            asyncio.create_task(
+                _modbus_device_loop(row.id, config),
+                name=f"vpp-modbus-{row.id}",
+            )
+        )
+
+    if not device_tasks:
+        return
+
+    try:
+        await asyncio.gather(*device_tasks)
+    except asyncio.CancelledError:
+        for t in device_tasks:
+            t.cancel()
+        await asyncio.gather(*device_tasks, return_exceptions=True)
+        raise
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application startup / shutdown lifecycle."""
@@ -189,6 +295,16 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.mqtt_ingestion_task = None
 
+    modbus_task: Optional[asyncio.Task] = None
+    if settings.modbus_ingestion_enabled:
+        modbus_task = asyncio.create_task(
+            _modbus_ingestion_loop(settings),
+            name="vpp-modbus-telemetry-ingestion",
+        )
+        app.state.modbus_ingestion_task = modbus_task
+    else:
+        app.state.modbus_ingestion_task = None
+
     try:
         yield
     finally:
@@ -208,6 +324,14 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
             except Exception:
                 logger.exception("MQTT ingestion task raised during shutdown")
+        if modbus_task is not None:
+            modbus_task.cancel()
+            try:
+                await modbus_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Modbus ingestion task raised during shutdown")
         get_event_bus().unsubscribe(event_bridge_sub_id)
         await close_db()
 

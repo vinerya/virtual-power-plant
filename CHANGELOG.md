@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Modbus inverter/meter telemetry ingestion**
+- `ModbusResourcePersister` bridges `ModbusAdapter` polls into live
+  resource state — before this, `ModbusAdapter` (register maps, polling
+  loop, correct pub-sub dispatch) was fully built but nothing in
+  production ever instantiated or connected one to a real device.
+- A resource opts in via its own free-form `metadata["modbus"]` (host/
+  port/mode/device_profile/poll_interval_s/power_register) — no schema
+  migration needed. Each configured resource gets its own `ModbusAdapter`
+  instance, connected and supervised independently, so one device being
+  offline doesn't block the others.
+- Polled values update `ResourceModel.current_power` (converted W → kW
+  from the configured `power_register`, default `"ac_power"`) and publish
+  `RESOURCE_UPDATED` on the event bus.
+- New setting: `VPP_MODBUS_INGESTION_ENABLED` (default off). Resource
+  discovery runs once at startup.
+- Adapters register into the shared protocol registry under a
+  per-resource name (`modbus:{resource_id}`), since `ModbusAdapter`
+  always constructs with the same literal name and the registry requires
+  uniqueness.
+
 **Combined tiered + TOU rate structures**
 - `TimeOfUseRate` gains `period_tiers`: an optional inclining-block tier
   schedule scoped to an individual TOU period, keyed by that period's

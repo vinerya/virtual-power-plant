@@ -71,6 +71,12 @@ class Settings(BaseSettings):
     mqtt_username: Optional[str] = None
     mqtt_password: Optional[str] = None
 
+    # Modbus inverter/meter telemetry ingestion. Disabled by default --
+    # dials out to physical devices. Per-device connection config (host,
+    # port, device_profile, ...) lives on each resource's own `metadata`
+    # under a "modbus" key, not here -- see protocols/modbus_ingestion.py.
+    modbus_ingestion_enabled: bool = False
+
     # VPP Config
     config_path: Optional[str] = None
     default_timezone: str = "UTC"
