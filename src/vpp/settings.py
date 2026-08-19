@@ -61,6 +61,16 @@ class Settings(BaseSettings):
     degradation_updater_enabled: bool = True
     degradation_updater_interval_minutes: int = 60
 
+    # MQTT battery telemetry ingestion (M5). Disabled by default -- unlike
+    # the degradation updater (DB-only), this dials out to an external
+    # broker, so it must be an explicit opt-in.
+    mqtt_ingestion_enabled: bool = False
+    mqtt_broker_host: str = "localhost"
+    mqtt_broker_port: int = 1883
+    mqtt_topic_prefix: str = "vpp/#"
+    mqtt_username: Optional[str] = None
+    mqtt_password: Optional[str] = None
+
     # VPP Config
     config_path: Optional[str] = None
     default_timezone: str = "UTC"

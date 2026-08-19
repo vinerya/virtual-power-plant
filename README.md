@@ -6,7 +6,7 @@ The world's first comprehensive, open-source Virtual Power Plant platform.
 Production-ready optimization, multi-protocol DER control, V2G-native, with a reproducible benchmarking suite.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 226 passed](https://img.shields.io/badge/tests-226%20passed-brightgreen.svg)]()
+[![Tests: 359 passed](https://img.shields.io/badge/tests-359%20passed-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 [![Status: Production Ready](https://img.shields.io/badge/status-production%20ready-green.svg)]()
@@ -142,7 +142,7 @@ pip install -e ".[dev]"
 ### Run Tests
 
 ```bash
-pytest tests/ -v    # 226 tests
+pytest tests/ -v    # 359 tests
 ```
 
 ### Run a Demo
@@ -334,7 +334,7 @@ virtual-power-plant/
 │   └── resources.py         # Battery, Solar, Wind physics models
 ├── benchmarks/              # Datasets, scenarios, metrics, runner
 ├── demos/                   # 6 interactive demo applications
-├── tests/                   # 226 tests (pytest)
+├── tests/                   # 359 tests (pytest)
 ├── monitoring/              # Prometheus + Grafana configs
 ├── Dockerfile               # Multi-stage production build
 ├── docker-compose.yml       # Production deployment
@@ -347,7 +347,7 @@ virtual-power-plant/
 ## Testing
 
 ```bash
-# Run all 226 tests
+# Run all 359 tests
 pytest tests/ -v
 
 # Run specific test modules

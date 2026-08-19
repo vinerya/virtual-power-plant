@@ -22,17 +22,15 @@ logger = logging.getLogger(__name__)
 
 
 async def _placeholder_fetch_telemetry(battery_id: str):
-    """Placeholder telemetry fetcher used by the periodic loop.
+    """Assemble a SOC window from the two most recent ``battery_states`` rows.
 
-    Returns the most recent SOC observation as a single-point window so the
-    updater can roll forward without crashing when no fresh telemetry has
-    arrived.  Returns ``None`` for batteries that have never reported.
-
-    TODO M5: real telemetry ingestion via MQTT subscriber writes to a
-    ``battery_soc_telemetry`` table; ``fetch_telemetry`` then pulls the
-    rows newer than ``last_degradation_update`` and assembles a window.
-    The current placeholder is a no-op for production but lets the loop
-    exercise its happy-path bookkeeping in development.
+    Returns ``None`` for batteries with fewer than two recorded samples
+    (never reported, or reported only once since the last tick). As of M5,
+    ``battery_states`` is populated in production by
+    :class:`~vpp.protocols.telemetry_ingestion.MQTTTelemetryIngestor` when
+    MQTT ingestion is enabled (``VPP_MQTT_INGESTION_ENABLED``); with it
+    disabled, this still degrades gracefully to a no-op, exercising the
+    periodic loop's happy-path bookkeeping in development without crashing.
     """
     from vpp.db.models import BatteryStateModel
     from vpp.degradation.telemetry import TelemetryWindow
@@ -101,6 +99,62 @@ async def _degradation_periodic_loop(interval_minutes: int) -> None:
         await asyncio.sleep(max(1, interval_minutes) * 60)
 
 
+def _build_mqtt_adapter(settings):
+    from vpp.protocols.mqtt import MQTTAdapter
+
+    adapter = MQTTAdapter()
+    adapter.configure(
+        broker_host=settings.mqtt_broker_host,
+        broker_port=settings.mqtt_broker_port,
+        topic_prefix=settings.mqtt_topic_prefix,
+        username=settings.mqtt_username,
+        password=settings.mqtt_password,
+    )
+    return adapter
+
+
+async def _mqtt_ingestion_loop(settings, *, retry_delay_seconds: float = 30.0) -> None:
+    """Connect the MQTT adapter and ingest battery telemetry forever.
+
+    Registers the adapter into the shared protocol registry (``GET
+    /api/v1/protocols`` picks it up automatically). A failed initial
+    connect (broker unreachable) is logged and retried on a fixed delay
+    rather than crashing app startup -- the broker may come up after the
+    API does. Once connected, paho's own background thread handles
+    transport-level reconnection, so this outer loop only needs to cover
+    the "never connected yet" case.
+    """
+    from vpp.api.routes.protocols import get_registry
+    from vpp.protocols.telemetry_ingestion import MQTTTelemetryIngestor
+
+    adapter = _build_mqtt_adapter(settings)
+    registry = get_registry()
+    try:
+        registry.register(adapter)
+    except ValueError:
+        pass  # already registered (e.g. lifespan re-entered within one process, as in tests)
+
+    ingestor = MQTTTelemetryIngestor(adapter, get_session_factory())
+
+    try:
+        while True:
+            try:
+                if not adapter.is_connected:
+                    await adapter.connect()
+                await ingestor.run()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception(
+                    "MQTT ingestion loop error; retrying in %.0fs", retry_delay_seconds
+                )
+                await asyncio.sleep(retry_delay_seconds)
+    finally:
+        registry.unregister(adapter.name)
+        if adapter.is_connected:
+            await adapter.disconnect()
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application startup / shutdown lifecycle."""
@@ -125,6 +179,16 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.degradation_task = None
 
+    mqtt_task: Optional[asyncio.Task] = None
+    if settings.mqtt_ingestion_enabled:
+        mqtt_task = asyncio.create_task(
+            _mqtt_ingestion_loop(settings),
+            name="vpp-mqtt-telemetry-ingestion",
+        )
+        app.state.mqtt_ingestion_task = mqtt_task
+    else:
+        app.state.mqtt_ingestion_task = None
+
     try:
         yield
     finally:
@@ -136,6 +200,14 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
             except Exception:
                 logger.exception("Degradation updater raised during shutdown")
+        if mqtt_task is not None:
+            mqtt_task.cancel()
+            try:
+                await mqtt_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("MQTT ingestion task raised during shutdown")
         get_event_bus().unsubscribe(event_bridge_sub_id)
         await close_db()
 

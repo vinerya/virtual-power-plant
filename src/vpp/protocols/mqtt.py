@@ -11,7 +11,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, AsyncIterator
 
 from vpp.protocols.base import (
     ProtocolAdapter,
@@ -119,6 +119,17 @@ class MQTTAdapter(ProtocolAdapter):
             return self._message_queue.get_nowait()
         except asyncio.QueueEmpty:
             return None
+
+    async def receive_forever(self) -> AsyncIterator[ProtocolMessage]:
+        """Yield inbound messages as they arrive.
+
+        Unlike :meth:`receive` (single message, non-blocking), this blocks
+        on the internal queue between messages -- the right primitive for a
+        long-running ingestion loop, which would otherwise have to busy-poll
+        ``receive()``.
+        """
+        while True:
+            yield await self._message_queue.get()
 
     # -- MQTT-specific -------------------------------------------------------
 

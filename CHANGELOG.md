@@ -5,6 +5,46 @@ All notable changes to the Virtual Power Plant platform are documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+**MQTT Battery Telemetry Ingestion (M5)**
+- `MQTTTelemetryIngestor` bridges `MQTTAdapter` messages on
+  `vpp/{site_id}/{resource_type}/{resource_id}/{metric}` topics into
+  `battery_states` rows — closes the gap where the degradation updater's
+  DB-backed telemetry fetch had a correct read path but nothing ever wrote
+  to that table in production.
+- `MQTTAdapter.receive_forever()` — async generator draining the adapter's
+  message queue without busy-polling.
+- Ingested telemetry publishes `RESOURCE_UPDATED` on the event bus, so
+  connected WebSocket clients on `resource_updates` see live updates.
+- New settings: `VPP_MQTT_INGESTION_ENABLED` (default off — dials out to an
+  external broker), `VPP_MQTT_BROKER_HOST`, `VPP_MQTT_BROKER_PORT`,
+  `VPP_MQTT_TOPIC_PREFIX`, `VPP_MQTT_USERNAME`, `VPP_MQTT_PASSWORD`.
+- Ingestion runs as a lifespan-managed background task; a failed initial
+  broker connection is retried on a fixed delay instead of crashing
+  startup, and the adapter registers into the shared protocol registry so
+  `GET /api/v1/protocols` reflects its status.
+
+### Fixed
+
+- EventBus publishes now reach connected WebSocket clients — previously
+  two disconnected pub/sub systems.
+- Rate limiting middleware (opt-in via `VPP_RATE_LIMIT_ENABLED`, on by
+  default) wired into `create_app()`.
+- Non-admins can no longer mint an API key with a role higher than their
+  own.
+- `RiskManager.check_limits()` now checks VaR and position concentration
+  in addition to position/loss/drawdown limits, pricing positions from
+  live market data when available.
+- `wear_cost_hooks_for_telemetry_consistency()` keeps a live dispatch
+  model's wear-cost term consistent with the Rainflow + calendar-aging
+  model the telemetry updater actually persists as SOH.
+- Removed dead flat modules superseded by their package equivalents
+  (`analysis.py`, `config.py`, `events.py`, `optimization.py`,
+  `simulation.py`, `visualization.py`).
+
 ## [2.0.0] - 2025-02-24
 
 ### Added
