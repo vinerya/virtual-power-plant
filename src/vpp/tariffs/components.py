@@ -86,6 +86,10 @@ class TOUSchedule:
     season_mask: set of months in which this row applies.
     rate: $/kWh.
     priority: higher number wins on overlap (default 0).
+    sell_rate: $/kWh export compensation, from URDB
+        ``energyratestructure[..].sell``. ``None`` when the source tariff
+        doesn't define a distinct export rate for this period -- see
+        :meth:`TimeOfUseRate.export_rate` for the same-as-import fallback.
     """
 
     weekday_mask: tuple[bool, ...]
@@ -93,6 +97,7 @@ class TOUSchedule:
     season_mask: frozenset[int]
     rate: float
     priority: int = 0
+    sell_rate: float | None = None
 
 
 @dataclass
@@ -131,6 +136,23 @@ class TimeOfUseRate:
                 if best is None or sch.priority > best[0]:
                     best = (sch.priority, label)
         return best[1] if best else None
+
+    def export_rate(self, dt_local: datetime) -> float | None:
+        """Return the $/kWh export (sell) rate in effect at ``dt_local``.
+
+        Falls back to the period's import ``rate`` when the source tariff
+        doesn't define a distinct ``sell_rate`` for that period -- this
+        matches NEM 2.0's definition ("exports earn the same per-kWh price
+        as imports") used throughout this codebase as the default. Returns
+        ``None`` only when ``dt_local`` doesn't match any scheduled period.
+        """
+        label = self._classify(dt_local)
+        if label is None:
+            return None
+        for sch in self.periods[label]:
+            if dt_local.month in sch.season_mask:
+                return sch.sell_rate if sch.sell_rate is not None else sch.rate
+        return None
 
     def compute(self, trace: MeterTrace, period: BillingPeriod) -> list[BillLineItem]:
         totals_kwh: dict[str, float] = {}

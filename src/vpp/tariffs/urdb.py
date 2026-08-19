@@ -16,8 +16,7 @@ Supported fields (M1):
     - mincharge                  : float
     - utility, name, sector, startdate, source
 
-Deferred to M2 (TODO):
-    - energyratestructure[..].sell  -> NEM/export compensation.
+Deferred (TODO):
     - tiered + TOU combined (we treat tiers only when schedules collapse to one period).
     - lookback-window fields, demandwindow.
     - non-USD currencies, taxes.
@@ -97,6 +96,8 @@ def _build_tou_schedules(
             continue
         # Tier 0 rate (period rate); tiered handling done separately.
         rate = float(tiers[0].get("rate", 0.0)) + float(tiers[0].get("adj", 0.0))
+        sell = tiers[0].get("sell")
+        sell_rate = float(sell) if sell is not None else None
         label = f"period_{p}"
         scheds: list[TOUSchedule] = []
         # Group by (mask_kind, month) -> hour runs
@@ -120,6 +121,7 @@ def _build_tou_schedules(
                             hour_range=hr,
                             season_mask=season,
                             rate=rate,
+                            sell_rate=sell_rate,
                         )
                     )
         periods[label] = scheds

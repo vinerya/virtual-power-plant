@@ -24,6 +24,7 @@ from vpp.tariffs.calendar import SeasonConfig
 PRESETS = Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets"
 
 ALL_DAYS = (True,) * 7
+WEEKDAYS = (True, True, True, True, True, False, False)
 ALL_MONTHS = frozenset(range(1, 13))
 SUMMER = frozenset({6, 7, 8, 9})
 WINTER = frozenset(set(range(1, 13)) - SUMMER)
@@ -210,3 +211,77 @@ def test_load_sce_preset():
     assert bill.total > 0
     # daily fixed charge expected
     assert any(li.kind == "fixed" for li in bill.line_items)
+
+
+# ---------------------------------------------------------------------------
+# NEM export rate (sell)
+# ---------------------------------------------------------------------------
+
+
+def test_tou_schedule_sell_rate_defaults_to_none():
+    sch = TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)
+    assert sch.sell_rate is None
+
+
+def test_export_rate_falls_back_to_import_rate_when_sell_unset():
+    tou = TimeOfUseRate(
+        periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]}
+    )
+    dt = datetime(2024, 7, 15, 10, tzinfo=timezone.utc)
+    assert tou.export_rate(dt) == pytest.approx(0.20)
+
+
+def test_export_rate_prefers_explicit_sell_rate():
+    tou = TimeOfUseRate(
+        periods={
+            "off": [TOUSchedule(ALL_DAYS, (0, 12), ALL_MONTHS, 0.10, sell_rate=0.08)],
+            "on": [TOUSchedule(ALL_DAYS, (12, 24), ALL_MONTHS, 0.40, sell_rate=0.35)],
+        }
+    )
+    off_dt = datetime(2024, 7, 15, 5, tzinfo=timezone.utc)
+    on_dt = datetime(2024, 7, 15, 18, tzinfo=timezone.utc)
+    assert tou.export_rate(off_dt) == pytest.approx(0.08)
+    assert tou.export_rate(on_dt) == pytest.approx(0.35)
+
+
+def test_export_rate_none_outside_any_period():
+    tou = TimeOfUseRate(
+        periods={"business_hours": [TOUSchedule(WEEKDAYS, (9, 17), ALL_MONTHS, 0.20)]}
+    )
+    saturday_evening = datetime(2024, 7, 20, 20, tzinfo=timezone.utc)  # 2024-07-20 is a Sat
+    assert tou.export_rate(saturday_evening) is None
+
+
+def test_urdb_parses_sell_field_into_tou_schedule():
+    """energyratestructure[..].sell must populate TOUSchedule.sell_rate."""
+    weekday_row = [1 if 16 <= h < 20 else 0 for h in range(24)]
+    urdb_json = {
+        "name": "Test URDB sell parsing",
+        "energyratestructure": [
+            [{"rate": 0.10, "sell": 0.08}],
+            [{"rate": 0.30, "sell": 0.25}],
+        ],
+        "energyweekdayschedule": [weekday_row] * 12,
+        "energyweekendschedule": [weekday_row] * 12,
+    }
+    tariff = load_urdb_json(urdb_json)
+    tou = next(c for c in tariff.components if isinstance(c, TimeOfUseRate))
+
+    off_peak = datetime(2024, 7, 15, 5, tzinfo=timezone.utc)  # Monday, off-peak
+    peak = datetime(2024, 7, 15, 17, tzinfo=timezone.utc)  # Monday, peak (16-20)
+    assert tou.export_rate(off_peak) == pytest.approx(0.08)
+    assert tou.export_rate(peak) == pytest.approx(0.25)
+
+
+def test_urdb_without_sell_field_export_rate_matches_import_rate():
+    """No `sell` in the source JSON -> export_rate falls back to `rate`
+    per period (not a single tariff-wide value)."""
+    tariff = load_urdb_json(PRESETS / "pge_etouc.json")
+    tou = next(c for c in tariff.components if isinstance(c, TimeOfUseRate))
+    for scheds in tou.periods.values():
+        for sch in scheds:
+            assert sch.sell_rate is None
+    dt = datetime(2024, 7, 15, 18, tzinfo=timezone.utc)
+    label = tou._classify(dt)
+    assert label is not None
+    assert tou.export_rate(dt) == pytest.approx(tou.periods[label][0].rate)

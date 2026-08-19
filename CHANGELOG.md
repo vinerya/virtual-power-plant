@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**NEM 2.0 TOU-period-aware export credit**
+- URDB `energyratestructure[..].sell` is now parsed into
+  `TOUSchedule.sell_rate` and exposed via `TimeOfUseRate.export_rate()`,
+  which falls back to the period's import rate when the source tariff
+  doesn't define a distinct sell rate.
+- Bill simulation's NEM 2.0 export credit now prices each exported
+  interval at *its own* TOU period rate (URDB `sell` if defined, else the
+  same as import) instead of a single bill-wide blended average — the old
+  proxy mis-credited any customer whose export TOU mix differed from
+  their import mix. Tariffs without a TOU component (flat or tiered-only)
+  still fall back to the blended average, which has no period to be more
+  accurate about.
+- The dispatch-side optimizer (`tariff_to_opt_params`, `nem="nem2"`) now
+  prefers the same explicit `sell_rate` per step, while still deferring to
+  a live price-feed override when one is active for that step.
+
 **MQTT Battery Telemetry Ingestion (M5)**
 - `MQTTTelemetryIngestor` bridges `MQTTAdapter` messages on
   `vpp/{site_id}/{resource_type}/{resource_id}/{metric}` topics into

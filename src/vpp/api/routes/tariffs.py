@@ -19,6 +19,7 @@ historical bills replayable. Pass ``hard=true`` query param for hard delete.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -45,11 +46,13 @@ from vpp.schemas.tariffs import (
 from vpp.tariffs import (
     BillingPeriod,
     MeterTrace,
+    TimeOfUseRate,
     load_urdb_json,
 )
 
 
 router = APIRouter(prefix="/api/v1/tariffs", tags=["Tariffs"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +282,12 @@ async def _do_simulate(
     # ---- NEM-aware export credit (M4) -----------------------------------
     # When the meter trace includes export_kwh > 0, compute an export credit
     # at:
-    #   * NEM 2.0  -> retail rate proxy (avg $/kWh of energy line items).
+    #   * NEM 2.0  -> per-interval TOU-period rate (URDB `sell` if the
+    #                 tariff defines one for that period, else the same
+    #                 rate as import) when the tariff has TOU periods;
+    #                 falls back to a blended retail-rate proxy otherwise
+    #                 (flat/tiered-only tariffs have no period to be
+    #                 accurate about).
     #   * NEM 3.0  -> hourly avoided-cost vector (24 entries, repeats).
     #   * none     -> no credit.
     nem = (body.nem or "none").lower()
@@ -290,15 +298,44 @@ async def _do_simulate(
         if total_export > 0:
             credit_amount = 0.0
             if nem == "nem2":
-                # Retail-rate proxy: total energy $ / total energy kWh.
-                e_amt = sum(
-                    li.amount for li in bill.line_items if li.kind in {"energy", "tier"}
-                )
-                e_kwh = sum(
-                    li.quantity for li in bill.line_items if li.kind in {"energy", "tier"}
-                )
-                avg_rate = (e_amt / e_kwh) if e_kwh > 0 else 0.0
-                credit_amount = round(total_export * avg_rate, 4)
+                tou_components = [
+                    c for c in tariff.components if isinstance(c, TimeOfUseRate)
+                ]
+                if tou_components:
+                    credit = 0.0
+                    uncredited_kwh = 0.0
+                    for _i, dt_local, _imp, exp in trace.iter_with_local():
+                        ts_utc = dt_local.astimezone(timezone.utc)
+                        if exp <= 0 or not (start <= ts_utc < end):
+                            continue
+                        rate = None
+                        for tou in tou_components:
+                            rate = tou.export_rate(dt_local)
+                            if rate is not None:
+                                break
+                        if rate is None:
+                            uncredited_kwh += exp
+                            continue
+                        credit += exp * rate
+                    credit_amount = round(credit, 4)
+                    if uncredited_kwh > 0:
+                        logger.warning(
+                            "NEM 2.0 export credit: %.3f kWh exported outside any "
+                            "TOU period for tariff %r; left uncredited",
+                            uncredited_kwh,
+                            tariff.name,
+                        )
+                else:
+                    # No TOU periods to be period-accurate about (flat or
+                    # tiered-only tariff) -- blended retail-rate proxy.
+                    e_amt = sum(
+                        li.amount for li in bill.line_items if li.kind in {"energy", "tier"}
+                    )
+                    e_kwh = sum(
+                        li.quantity for li in bill.line_items if li.kind in {"energy", "tier"}
+                    )
+                    avg_rate = (e_amt / e_kwh) if e_kwh > 0 else 0.0
+                    credit_amount = round(total_export * avg_rate, 4)
             else:  # nem3
                 acc = list(body.nem3_avoided_cost or [])
                 if not acc:

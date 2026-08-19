@@ -133,7 +133,9 @@ def tariff_to_opt_params(
         Discretization step (typical 15 or 60).
     nem : {'none','nem2','nem3'}
         Export compensation regime.
-        * ``nem2`` : exports earn the same per-kWh price as imports.
+        * ``nem2`` : exports earn the same per-kWh price as imports, unless
+          the tariff's TOU schedule defines an explicit URDB ``sell`` rate
+          for that period, in which case that rate is used instead.
         * ``nem3`` : exports earn ``nem3_avoided_cost[t mod len]``
           (must be supplied).
         * ``none`` : exports earn $0/kWh.
@@ -200,6 +202,7 @@ def tariff_to_opt_params(
     # Precedence: live > TOU > tier-0 fallback > 0.0.
     # A live override matches a horizon step when its timestamp falls within
     # the half-open interval [step_start, step_start + interval).
+    live_override_steps: set = set()
     if live_price_overrides:
         for t in range(T):
             step_start = (horizon_start + t * step).astimezone(tz)
@@ -211,11 +214,27 @@ def tariff_to_opt_params(
                 pp_ts = pp_ts.astimezone(tz)
                 if step_start <= pp_ts < step_end:
                     energy_buy[t] = float(pp.price_per_kwh)
+                    live_override_steps.add(t)
                     break
 
     # Sell prices.
     if nem == "nem2":
+        # Same-as-buy is the default -- and the only option for a step with
+        # no TOU component, or one a live override already claimed (which
+        # supersedes the static schedule for both buy and sell). When a TOU
+        # period defines an explicit URDB `sell` rate that differs from
+        # `rate`, prefer it: real NEM 2.0 per-period export compensation,
+        # not a uniform buy-price proxy.
         energy_sell = list(energy_buy)
+        for t in range(T):
+            if t in live_override_steps:
+                continue
+            ts = (horizon_start + t * step).astimezone(tz)
+            for tou in tou_components:
+                r = tou.export_rate(ts)
+                if r is not None:
+                    energy_sell[t] = r
+                    break
     elif nem == "nem3":
         if not nem3_avoided_cost:
             raise ValueError("nem='nem3' requires a nem3_avoided_cost vector")

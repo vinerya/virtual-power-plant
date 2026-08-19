@@ -292,6 +292,29 @@ def test_nem2_export_credited_at_buy_price():
     assert pyo.value(m.cost) == pytest.approx(energy_term_value, abs=1e-3)
 
 
+def test_nem2_uses_explicit_urdb_sell_rate_when_present():
+    """When a TOU period defines a distinct sell rate, NEM 2.0 must use it
+    instead of assuming exports earn the same as imports."""
+    T = 24
+    horizon_start = datetime(2024, 7, 17, 0, 0, tzinfo=timezone.utc)
+    tou = TimeOfUseRate(
+        periods={
+            "off": [TOUSchedule(ALL_DAYS, (0, 16), ALL_MONTHS, 0.10, sell_rate=0.08)],
+            "peak": [TOUSchedule(ALL_DAYS, (16, 21), ALL_MONTHS, 0.30, sell_rate=0.25)],
+            "off2": [TOUSchedule(ALL_DAYS, (21, 24), ALL_MONTHS, 0.10, sell_rate=0.08)],
+        }
+    )
+    tariff = Tariff(name="sell-aware", components=[tou])
+    opt = tariff_to_opt_params(tariff, horizon_start, T, 60, nem="nem2")
+
+    assert opt.energy_sell_per_kwh != opt.energy_buy_per_kwh
+    for h in range(T):
+        expected_sell = 0.25 if 16 <= h < 21 else 0.08
+        expected_buy = 0.30 if 16 <= h < 21 else 0.10
+        assert opt.energy_buy_per_kwh[h] == pytest.approx(expected_buy)
+        assert opt.energy_sell_per_kwh[h] == pytest.approx(expected_sell)
+
+
 # ---------------------------------------------------------------------------
 # 6. NEM 3.0 avoided cost shifts behavior to self-consumption
 # ---------------------------------------------------------------------------

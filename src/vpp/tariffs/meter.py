@@ -17,7 +17,9 @@ class MeterTrace:
     import_kwh : list[float]
         kWh consumed from grid in each interval.
     export_kwh : list[float]
-        kWh exported to grid in each interval (M1 ignores compensation; see TODO).
+        kWh exported to grid in each interval. NEM export compensation is
+        computed by callers (e.g. the bill simulator's `nem` parameter,
+        tariffs.optimization's `nem` mode), not by MeterTrace itself.
     interval_minutes : int
         Length of each interval in minutes (e.g. 15, 60).
     tz : timezone
