@@ -148,6 +148,14 @@ def add_wear_cost_term(
     ``dod_pwl`` mode: piecewise-linear in per-step |dSOC|. Requires the
     matching :func:`add_dod_constraints` hook to be installed in
     ``constraint_builders`` since it introduces ``model.delta_in_bin``.
+
+    Note: :meth:`vpp.degradation.telemetry.DegradationUpdater.apply_window`
+    persists SOH using Rainflow + Calendar degradation, never
+    ``ThroughputDegradation``. If wiring wear cost into a *live* dispatch
+    model that runs alongside the telemetry-tracked SOH, prefer
+    :func:`wear_cost_hooks_for_telemetry_consistency` (``dod_pwl`` +
+    calendar bias) over this function's ``throughput`` default so both
+    stay consistent.
     """
     if mode not in ("throughput", "dod_pwl"):
         raise ValueError(f"mode must be 'throughput' or 'dod_pwl', got {mode!r}")
@@ -289,6 +297,33 @@ def add_dod_constraints(
 
     _builder.__name__ = "add_dod_constraints"
     return _builder
+
+
+def wear_cost_hooks_for_telemetry_consistency(
+    wear: WearCost,
+    calendar_weight: float,
+    soc_neutral: float = 0.5,
+    num_bins: int = 4,
+    bin_edges: Optional[List[float]] = None,
+) -> tuple[List[ObjectiveTerm], List[ConstraintBuilder]]:
+    """Return (objective_terms, constraint_builders) for wiring degradation
+    wear cost into live dispatch, using the *same* physical model that
+    :meth:`vpp.degradation.telemetry.DegradationUpdater.apply_window`
+    persists as SOH: Rainflow cycle-depth cost (``dod_pwl``) + calendar
+    aging -- never ``ThroughputDegradation``/``mode="throughput"``.
+
+    ``add_wear_cost_term``'s default (``mode="throughput"``) does not match
+    what the telemetry updater tracks. Wiring that default into a live
+    dispatch model would optimize dispatch against a different physical
+    model than the one used to persist battery health. Use this helper
+    instead so the optimizer's cost assumptions and the persisted SOH agree.
+    """
+    constraint_builders = [add_dod_constraints(wear, num_bins=num_bins, bin_edges=bin_edges)]
+    objective_terms = [
+        add_wear_cost_term(wear, mode="dod_pwl"),
+        add_calendar_aging_bias(calendar_weight, soc_neutral=soc_neutral),
+    ]
+    return objective_terms, constraint_builders
 
 
 def _interp_cycle_cost(curve: Dict[float, float], dod: float) -> float:

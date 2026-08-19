@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
     api_key_header: str = "X-API-Key"
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 120
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./vpp.db"

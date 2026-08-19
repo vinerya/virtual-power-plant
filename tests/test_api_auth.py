@@ -27,3 +27,38 @@ async def test_invalid_token_rejected(client: AsyncClient):
         headers={"Authorization": "Bearer invalid.token.here"},
     )
     assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_self_issue_admin_api_key(client: AsyncClient, viewer_headers: dict):
+    """A non-admin user must not be able to mint an API key with a higher role."""
+    resp = await client.post(
+        "/api/v1/auth/api-key",
+        json={"name": "escalation-attempt", "role": "admin"},
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_viewer_can_self_issue_own_role_api_key(client: AsyncClient, viewer_headers: dict):
+    """A non-admin user can still mint a key scoped to their own role."""
+    resp = await client.post(
+        "/api/v1/auth/api-key",
+        json={"name": "own-role-key", "role": "viewer"},
+        headers=viewer_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["role"] == "viewer"
+
+
+@pytest.mark.asyncio
+async def test_admin_can_issue_lower_role_api_key(client: AsyncClient, auth_headers: dict):
+    """Admins are unrestricted — they can still mint a key with any role."""
+    resp = await client.post(
+        "/api/v1/auth/api-key",
+        json={"name": "scoped-down-key", "role": "viewer"},
+        headers=auth_headers,
+    )
+    assert resp.status_code == 201
+    assert resp.json()["role"] == "viewer"

@@ -77,7 +77,17 @@ async def create_api_key(
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(get_current_user),
 ):
-    """Generate a new API key for programmatic access."""
+    """Generate a new API key for programmatic access.
+
+    Non-admins may only mint a key scoped to their own role — otherwise any
+    authenticated user could self-issue an admin-role key.
+    """
+    if user.role != UserRole.ADMIN.value and body.role.value != user.role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot create an API key with a role higher than your own",
+        )
+
     raw_key = generate_api_key()
     key_obj = await UserRepository.create_api_key(
         session,

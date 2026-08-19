@@ -195,6 +195,43 @@ def test_dod_pwl_prefers_shallow_cycles():
 
 
 # ---------------------------------------------------------------------------
+# C2. Telemetry-consistent wear cost hooks (dod_pwl + calendar, not throughput)
+# ---------------------------------------------------------------------------
+
+
+def test_wear_cost_hooks_for_telemetry_consistency_builds_and_solves():
+    """DegradationUpdater.apply_window() (telemetry.py) persists SOH using
+    Rainflow (cycle-depth) + Calendar aging -- never ThroughputDegradation.
+    Wiring add_wear_cost_term's default mode="throughput" into live dispatch
+    would optimize against a different physical model than the one actually
+    tracked as SOH. This helper returns the matching (dod_pwl + calendar)
+    hook pair so the two stay consistent, and must build/solve without the
+    "requires add_dod_constraints()" RuntimeError."""
+    from vpp.degradation import wear_cost_hooks_for_telemetry_consistency
+
+    wear = WearCost(
+        throughput_cost_per_kwh=0.001,
+        cycle_cost_curve={0.1: 0.5, 0.3: 2.0, 0.6: 10.0, 1.0: 50.0},
+    )
+    objective_terms, constraint_builders = wear_cost_hooks_for_telemetry_consistency(
+        wear, calendar_weight=0.01,
+    )
+    params = _params(_two_peak_prices())
+    model = build_battery_dispatch_model(
+        params,
+        constraint_builders=constraint_builders,
+        objective_terms=objective_terms,
+    )
+    result = _solve(model)
+
+    assert str(result.termination_condition) == "TerminationCondition.optimal"
+    # Sanity: the model actually has a usable dispatch plan (soc trace
+    # includes the initial SOC point, so 24 steps -> 25 values).
+    soc = _soc_trace(model)
+    assert len(soc) == 25
+
+
+# ---------------------------------------------------------------------------
 # D. Calendar aging biases idle SOC toward 0.5
 # ---------------------------------------------------------------------------
 

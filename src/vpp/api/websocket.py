@@ -10,6 +10,8 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from vpp.events.bus import Event, EventBus, EventType
+
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +74,46 @@ VALID_CHANNELS = {
     "alerts",
     "*",
 }
+
+
+# Maps EventBus event types to the WebSocket channel operators subscribe to.
+# Anything not listed here falls through to "alerts" so it's never silently
+# dropped — see event_to_channel().
+_EVENT_CHANNEL_MAP: dict[EventType, str] = {
+    EventType.RESOURCE_ADDED: "resource_updates",
+    EventType.RESOURCE_REMOVED: "resource_updates",
+    EventType.RESOURCE_UPDATED: "resource_updates",
+    EventType.RESOURCE_FAULT: "resource_updates",
+    EventType.OPTIMIZATION_STARTED: "optimization_events",
+    EventType.OPTIMIZATION_COMPLETED: "optimization_events",
+    EventType.OPTIMIZATION_FAILED: "optimization_events",
+    EventType.DISPATCH_EXECUTED: "optimization_events",
+    EventType.ORDER_SUBMITTED: "market_data",
+    EventType.ORDER_FILLED: "market_data",
+    EventType.ORDER_CANCELLED: "market_data",
+    EventType.TRADE_EXECUTED: "market_data",
+    EventType.MARKET_DATA: "market_data",
+}
+
+
+def event_to_channel(event_type: EventType) -> str:
+    """Map an EventBus event type to a WebSocket broadcast channel."""
+    return _EVENT_CHANNEL_MAP.get(event_type, "alerts")
+
+
+def subscribe_event_bus_to_websocket(bus: EventBus, mgr: ConnectionManager) -> str:
+    """Bridge EventBus publishes to WebSocket broadcasts.
+
+    Without this bridge, events published to the EventBus never reach
+    connected WebSocket clients — the two pub/sub systems are otherwise
+    entirely disconnected. Returns the EventBus subscription id so callers
+    can unsubscribe on shutdown.
+    """
+
+    async def _forward(event: Event) -> None:
+        await mgr.broadcast(event_to_channel(event.event_type), event.to_dict())
+
+    return bus.subscribe(_forward)
 
 
 async def websocket_endpoint(ws: WebSocket) -> None:

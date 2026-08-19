@@ -15,6 +15,8 @@ from sqlalchemy import select
 
 from vpp.settings import get_settings
 from vpp.db.engine import init_db, close_db, get_session_factory
+from vpp.events import get_event_bus
+from vpp.api.websocket import manager as websocket_manager, subscribe_event_bus_to_websocket
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         use_alembic=settings.use_alembic,
     )
 
+    event_bridge_sub_id = subscribe_event_bus_to_websocket(get_event_bus(), websocket_manager)
+
     task: Optional[asyncio.Task] = None
     if settings.degradation_updater_enabled:
         task = asyncio.create_task(
@@ -132,11 +136,21 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
             except Exception:
                 logger.exception("Degradation updater raised during shutdown")
+        get_event_bus().unsubscribe(event_bridge_sub_id)
         await close_db()
 
 
-def create_app() -> FastAPI:
-    """Build and return the configured FastAPI application."""
+def create_app(
+    *,
+    rate_limit_enabled: Optional[bool] = None,
+    rate_limit_requests_per_minute: Optional[int] = None,
+) -> FastAPI:
+    """Build and return the configured FastAPI application.
+
+    ``rate_limit_enabled``/``rate_limit_requests_per_minute`` override the
+    corresponding settings values; pass explicitly in tests to avoid mutating
+    the global cached ``Settings`` singleton.
+    """
     settings = get_settings()
 
     app = FastAPI(
@@ -159,6 +173,21 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    enable_rate_limit = (
+        settings.rate_limit_enabled if rate_limit_enabled is None else rate_limit_enabled
+    )
+    if enable_rate_limit:
+        from vpp.auth.middleware import RateLimitMiddleware
+
+        app.add_middleware(
+            RateLimitMiddleware,
+            requests_per_minute=(
+                rate_limit_requests_per_minute
+                if rate_limit_requests_per_minute is not None
+                else settings.rate_limit_requests_per_minute
+            ),
+        )
 
     # -- Routes -------------------------------------------------------------
     from .routes import (

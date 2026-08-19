@@ -17,7 +17,7 @@ import uuid
 
 from .orders import Order, OrderStatus, OrderType, OrderBook
 from .markets import Market, MarketType
-from .portfolio import Portfolio, Position, Trade
+from .portfolio import Portfolio, Position, RiskMetrics, Trade
 from .data import MarketDataProvider, MarketData
 
 
@@ -353,8 +353,16 @@ class TradingEngine:
         """Monitor risk limits continuously."""
         while not self._stop_event.is_set():
             try:
-                # Check risk limits
-                risk_status = self.risk_manager.check_limits(self.portfolio_manager.portfolio)
+                # Check risk limits, using live prices where available
+                # (falls back to each position's average price otherwise).
+                market_prices = {
+                    market: data.last_price
+                    for market, data in self.market_data_manager.get_latest_data().items()
+                    if data.last_price is not None
+                }
+                risk_status = self.risk_manager.check_limits(
+                    self.portfolio_manager.portfolio, market_prices or None
+                )
                 
                 if risk_status.get("breach", False):
                     self.logger.warning(f"Risk limit breach: {risk_status}")
@@ -556,30 +564,58 @@ class RiskManager:
         
         return True
     
-    def check_limits(self, portfolio: Portfolio) -> Dict[str, Any]:
-        """Check all risk limits."""
+    def check_limits(self, portfolio: Portfolio, market_prices: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """Check all risk limits.
+
+        ``market_prices`` defaults to each position's own average price
+        (consistent with ``Portfolio.get_equity``/``get_total_notional``)
+        when not supplied, so this works even without a live price feed.
+        """
         breaches = []
-        
+
+        if market_prices is None:
+            market_prices = {
+                market: position.average_price
+                for market, position in portfolio.positions.items()
+            }
+
         # Check position limits
         for market, position in portfolio.positions.items():
             if abs(position.quantity) > self.limits.max_position:
                 breaches.append(f"Position limit exceeded in {market}: {abs(position.quantity)} > {self.limits.max_position}")
-        
+
         # Check daily loss
         daily_pnl = portfolio.calculate_daily_pnl()
         if daily_pnl < -self.limits.max_daily_loss:
             breaches.append(f"Daily loss limit exceeded: {daily_pnl} < {-self.limits.max_daily_loss}")
-        
+
         # Check drawdown
-        max_drawdown = portfolio.calculate_max_drawdown()
+        max_drawdown = portfolio.calculate_max_drawdown(market_prices)
         if max_drawdown > self.limits.max_drawdown:
             breaches.append(f"Drawdown limit exceeded: {max_drawdown} > {self.limits.max_drawdown}")
-        
+
+        # Check Value at Risk
+        risk_metrics = RiskMetrics(portfolio)
+        var_1d = risk_metrics.calculate_portfolio_var(market_prices)
+        if var_1d > self.limits.var_limit:
+            breaches.append(f"VaR limit exceeded: {var_1d:.2f} > {self.limits.var_limit:.2f}")
+
+        # Check position concentration
+        concentrations = risk_metrics.calculate_position_concentration(market_prices)
+        for market, concentration in concentrations.items():
+            if concentration > self.limits.concentration_limit:
+                breaches.append(
+                    f"Concentration limit exceeded in {market}: "
+                    f"{concentration:.1%} > {self.limits.concentration_limit:.1%}"
+                )
+
         return {
             "breach": len(breaches) > 0,
             "breaches": breaches,
             "daily_pnl": daily_pnl,
-            "max_drawdown": max_drawdown
+            "max_drawdown": max_drawdown,
+            "var_1d": var_1d,
+            "concentrations": concentrations,
         }
 
 

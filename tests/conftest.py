@@ -80,6 +80,32 @@ async def auth_headers(admin_user) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest_asyncio.fixture
+async def viewer_user(db_session: AsyncSession):
+    """Create a low-privilege (viewer) user for auth tests."""
+    user = await UserRepository.get_by_username(db_session, "testviewer")
+    if user is None:
+        user = await UserRepository.create_user(
+            db_session,
+            username="testviewer",
+            hashed_password=get_password_hash("viewerpassword123"),
+            role="viewer",
+        )
+        await db_session.commit()
+    return user
+
+
+@pytest_asyncio.fixture
+async def viewer_headers(viewer_user) -> dict[str, str]:
+    """JWT auth headers for a viewer (non-admin) user."""
+    token = create_access_token({
+        "sub": viewer_user.id,
+        "username": viewer_user.username,
+        "role": viewer_user.role,
+    })
+    return {"Authorization": f"Bearer {token}"}
+
+
 # ---------------------------------------------------------------------------
 # Resource fixtures
 # ---------------------------------------------------------------------------

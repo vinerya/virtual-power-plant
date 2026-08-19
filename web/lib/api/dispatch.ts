@@ -22,6 +22,6 @@ export function listDispatches(
   }
   const qs = q.toString();
   return api.get<DispatchRun[]>(
-    `/api/v1/dispatches${qs ? `?${qs}` : ""}`,
+    `/api/v1/optimization/history${qs ? `?${qs}` : ""}`,
   );
 }
