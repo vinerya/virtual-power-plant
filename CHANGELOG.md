@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+**Combined tiered + TOU rate structures**
+- `TimeOfUseRate` gains `period_tiers`: an optional inclining-block tier
+  schedule scoped to an individual TOU period, keyed by that period's
+  label. When a URDB `energyratestructure` has more than one TOU period
+  AND at least one of them also has more than one usage tier, that period
+  now bills correctly against its own cumulative kWh for the billing
+  cycle (URDB's per-period tier convention) instead of silently using
+  only its first (lowest) tier's rate for all usage.
+- `urdb.py`'s existing single-period-multiple-tiers shortcut (folds into
+  `TieredEnergyRate`) is unchanged and still used when it applies — the
+  new machinery only engages for the genuinely multi-period case.
+
 **NEM 2.0 TOU-period-aware export credit**
 - URDB `energyratestructure[..].sell` is now parsed into
   `TOUSchedule.sell_rate` and exposed via `TimeOfUseRate.export_rate()`,

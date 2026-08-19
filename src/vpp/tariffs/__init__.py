@@ -7,9 +7,6 @@ Public API:
     - load_urdb_json
 
 Reference: https://openei.org/services/doc/rest/util_rates/?version=8
-
-Combined tiered+TOU structures (a period with multiple usage tiers) are
-still deferred -- see urdb.py's module docstring.
 """
 from .calendar import SeasonConfig, is_us_holiday
 from .components import (

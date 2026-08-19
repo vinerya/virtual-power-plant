@@ -107,9 +107,20 @@ class TimeOfUseRate:
     Maps to URDB ``energyratestructure`` + ``energyweekdayschedule`` /
     ``energyweekendschedule``. Period labels (e.g. 'peak', 'off-peak') are
     arbitrary keys carried into line items.
+
+    period_tiers: optional inclining-block tiers *within* a period, keyed
+        by the same period label -- ``label -> [(threshold_kwh, rate), ...]``
+        ascending, sentinel ``float('inf')`` for the last tier (same shape
+        as :class:`TieredEnergyRate.tiers`). Maps to URDB
+        ``energyratestructure`` periods with more than one tier. Tier
+        thresholds are tracked against *that period's own* cumulative kWh
+        for the billing cycle (URDB's per-period tier convention), not
+        whole-bill usage. A label absent from this dict bills flat at its
+        ``TOUSchedule.rate``, same as before this field existed.
     """
 
     periods: dict[str, list[TOUSchedule]]
+    period_tiers: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
 
     def _classify(self, dt_local: datetime) -> str | None:
         """Return the highest-priority matching period label for `dt_local`."""
@@ -175,17 +186,49 @@ class TimeOfUseRate:
                         break
         items: list[BillLineItem] = []
         for label, kwh in totals_kwh.items():
-            rate = rates_seen.get(label, 0.0)
-            items.append(
-                BillLineItem(
-                    kind="energy",
-                    label=f"TOU {label}",
-                    quantity=kwh,
-                    unit="kWh",
-                    rate=rate,
-                    amount=round(kwh * rate, 4),
+            tiers = self.period_tiers.get(label)
+            if tiers:
+                # Tiered billing scoped to THIS period's own cumulative kWh
+                # (not whole-bill usage) -- identical split logic to
+                # TieredEnergyRate.compute(), just per TOU period. Tier
+                # order within a period doesn't depend on which interval
+                # contributed which kWh, only the period's total, so a
+                # single pass over the period total is exact.
+                remaining = kwh
+                prev_threshold = 0.0
+                for tier_idx, (threshold, rate) in enumerate(tiers):
+                    tier_size = threshold - prev_threshold
+                    consumed = (
+                        min(remaining, tier_size) if tier_size != float("inf") else remaining
+                    )
+                    if consumed <= 0:
+                        break
+                    items.append(
+                        BillLineItem(
+                            kind="energy",
+                            label=f"TOU {label} tier {tier_idx + 1} (<= {threshold} kWh)",
+                            quantity=round(consumed, 4),
+                            unit="kWh",
+                            rate=rate,
+                            amount=round(consumed * rate, 4),
+                        )
+                    )
+                    remaining -= consumed
+                    prev_threshold = threshold
+                    if remaining <= 0:
+                        break
+            else:
+                rate = rates_seen.get(label, 0.0)
+                items.append(
+                    BillLineItem(
+                        kind="energy",
+                        label=f"TOU {label}",
+                        quantity=kwh,
+                        unit="kWh",
+                        rate=rate,
+                        amount=round(kwh * rate, 4),
+                    )
                 )
-            )
         return items
 
 

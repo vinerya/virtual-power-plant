@@ -273,6 +273,114 @@ def test_urdb_parses_sell_field_into_tou_schedule():
     assert tou.export_rate(peak) == pytest.approx(0.25)
 
 
+# ---------------------------------------------------------------------------
+# Combined tiered + TOU
+# ---------------------------------------------------------------------------
+
+
+def test_tou_period_tiers_defaults_to_empty():
+    tou = TimeOfUseRate(
+        periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]}
+    )
+    assert tou.period_tiers == {}
+
+
+def test_tou_compute_applies_per_period_tiers_independently():
+    """Off-peak stays flat; peak is tiered against ITS OWN cumulative kWh
+    for the billing period, not whole-bill usage."""
+    tou = TimeOfUseRate(
+        periods={
+            "off": [TOUSchedule(ALL_DAYS, (0, 16), ALL_MONTHS, 0.10)],
+            "peak": [TOUSchedule(ALL_DAYS, (16, 24), ALL_MONTHS, 0.20)],
+        },
+        period_tiers={"peak": [(5.0, 0.20), (float("inf"), 0.35)]},
+    )
+    tariff = Tariff(name="tiered-tou", components=[tou])
+    trace = MeterTrace.constant_load(
+        kw=1.0, start=datetime(2024, 7, 1, tzinfo=timezone.utc), days=1, interval_minutes=60
+    )
+    bill = tariff.bill(trace, _period(trace))
+
+    # off: 16 kWh @ 0.10 flat = 1.60
+    off_items = [li for li in bill.line_items if li.label == "TOU off"]
+    assert len(off_items) == 1
+    assert off_items[0].amount == pytest.approx(1.60)
+
+    # peak: 8 kWh total -> tier1 5 kWh @ 0.20 + tier2 3 kWh @ 0.35
+    tier_items = sorted(
+        (li for li in bill.line_items if li.label.startswith("TOU peak tier")),
+        key=lambda li: li.label,
+    )
+    assert len(tier_items) == 2
+    assert tier_items[0].quantity == pytest.approx(5.0)
+    assert tier_items[0].amount == pytest.approx(1.0)
+    assert tier_items[1].quantity == pytest.approx(3.0)
+    assert tier_items[1].amount == pytest.approx(1.05)
+
+    assert bill.total == pytest.approx(1.60 + 1.0 + 1.05)
+
+
+def test_tou_compute_tiered_period_stays_flat_when_under_first_threshold():
+    """When a tiered period's usage never crosses the first threshold, only
+    one tier line item appears (no phantom zero-kWh tier rows)."""
+    tou = TimeOfUseRate(
+        periods={"peak": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]},
+        period_tiers={"peak": [(100.0, 0.20), (float("inf"), 0.35)]},
+    )
+    tariff = Tariff(name="under-threshold", components=[tou])
+    trace = MeterTrace.constant_load(
+        kw=1.0, start=datetime(2024, 7, 1, tzinfo=timezone.utc), days=1, interval_minutes=60
+    )
+    bill = tariff.bill(trace, _period(trace))
+    tier_items = [li for li in bill.line_items if li.label.startswith("TOU peak tier")]
+    assert len(tier_items) == 1
+    assert tier_items[0].quantity == pytest.approx(24.0)
+    assert tier_items[0].amount == pytest.approx(24.0 * 0.20)
+
+
+def test_urdb_parses_combined_tiered_tou():
+    """>1 TOU period referenced AND >1 tier in one of them must produce a
+    TimeOfUseRate with period_tiers populated -- not silently collapse to
+    just that period's tier-0 rate."""
+    weekday_row = [1 if 16 <= h < 24 else 0 for h in range(24)]
+    urdb_json = {
+        "name": "Test tiered TOU",
+        "energyratestructure": [
+            [{"rate": 0.10}],  # period 0 ("off"): flat
+            [{"rate": 0.20, "max": 5}, {"rate": 0.35}],  # period 1 ("peak"): tiered
+        ],
+        "energyweekdayschedule": [weekday_row] * 12,
+        "energyweekendschedule": [weekday_row] * 12,
+    }
+    tariff = load_urdb_json(urdb_json)
+    tou_components = [c for c in tariff.components if isinstance(c, TimeOfUseRate)]
+    assert len(tou_components) == 1
+    tou = tou_components[0]
+    # No TieredEnergyRate should be added for the multi-period case.
+    assert not any(isinstance(c, TieredEnergyRate) for c in tariff.components)
+
+    assert "period_1" in tou.period_tiers
+    assert tou.period_tiers["period_1"] == [(5.0, 0.20), (float("inf"), 0.35)]
+    assert "period_0" not in tou.period_tiers  # single-tier period stays flat
+
+
+def test_urdb_single_period_multi_tier_still_uses_tiered_energy_rate():
+    """Regression guard: exactly one referenced period with multiple tiers
+    must still take the simpler TieredEnergyRate shortcut, unaffected by
+    the new per-period-tiers machinery."""
+    urdb_json = {
+        "name": "Test single-period tiered",
+        "energyratestructure": [
+            [{"rate": 0.15, "max": 500}, {"rate": 0.25}],
+        ],
+        "energyweekdayschedule": [[0] * 24] * 12,
+        "energyweekendschedule": [[0] * 24] * 12,
+    }
+    tariff = load_urdb_json(urdb_json)
+    assert any(isinstance(c, TieredEnergyRate) for c in tariff.components)
+    assert not any(isinstance(c, TimeOfUseRate) for c in tariff.components)
+
+
 def test_urdb_without_sell_field_export_rate_matches_import_rate():
     """No `sell` in the source JSON -> export_rate falls back to `rate`
     per period (not a single tariff-wide value)."""

@@ -17,7 +17,6 @@ Supported fields (M1):
     - utility, name, sector, startdate, source
 
 Deferred (TODO):
-    - tiered + TOU combined (we treat tiers only when schedules collapse to one period).
     - lookback-window fields, demandwindow.
     - non-USD currencies, taxes.
 """
@@ -63,16 +62,33 @@ def _hour_runs(hours: list[int]) -> list[tuple[int, int]]:
     return runs
 
 
+def _parse_tier_list(tiers_in: list[dict[str, Any]]) -> list[tuple[float, float]]:
+    """Parse a URDB tier list (``[{rate, max?, adj?}, ...]``) into
+    ``[(threshold_kwh, rate), ...]`` ascending, with the last threshold
+    normalized to ``+inf``."""
+    tiers: list[tuple[float, float]] = []
+    for t in tiers_in:
+        threshold = t.get("max")
+        rate = float(t.get("rate", 0.0)) + float(t.get("adj", 0.0))
+        tiers.append((float(threshold) if threshold is not None else float("inf"), rate))
+    if tiers and tiers[-1][0] != float("inf"):
+        tiers.append((float("inf"), tiers[-1][1]))
+    return tiers
+
+
 def _build_tou_schedules(
     rate_structure: list[list[dict[str, Any]]],
     weekday_sched: list[list[int]],
     weekend_sched: list[list[int]],
-) -> tuple[dict[str, list[TOUSchedule]], bool]:
+) -> tuple[dict[str, list[TOUSchedule]], dict[str, list[tuple[float, float]]], bool]:
     """Walk the URDB schedule matrices and group into per-period TOUSchedule lists.
 
-    Returns (periods_dict, is_tiered_only).
+    Returns (periods_dict, period_tiers_dict, is_tiered_only).
     is_tiered_only is True when there is exactly 1 period referenced and that
-    period has multiple tiers — caller may fold into TieredEnergyRate.
+    period has multiple tiers — caller may fold into TieredEnergyRate instead
+    of using period_tiers (simpler, equivalent result for that single-period
+    case). period_tiers has an entry for every OTHER referenced period that
+    has more than one tier -- see TimeOfUseRate.period_tiers.
     """
     n_periods = len(rate_structure)
     # period_idx -> { (mask_kind, month) : list[hour] }
@@ -88,7 +104,12 @@ def _build_tou_schedules(
             bucket[we_p].setdefault(("we", month_idx + 1), []).append(hour)
 
     periods: dict[str, list[TOUSchedule]] = {}
+    period_tiers: dict[str, list[tuple[float, float]]] = {}
     referenced_periods = {p for p, b in bucket.items() if b}
+    single_period_tiered = (
+        len(referenced_periods) == 1
+        and len(rate_structure[next(iter(referenced_periods))]) > 1
+    )
 
     for p in referenced_periods:
         tiers = rate_structure[p]
@@ -99,6 +120,8 @@ def _build_tou_schedules(
         sell = tiers[0].get("sell")
         sell_rate = float(sell) if sell is not None else None
         label = f"period_{p}"
+        if len(tiers) > 1 and not single_period_tiered:
+            period_tiers[label] = _parse_tier_list(tiers)
         scheds: list[TOUSchedule] = []
         # Group by (mask_kind, month) -> hour runs
         # Then merge contiguous months with identical hour-run sets.
@@ -126,11 +149,7 @@ def _build_tou_schedules(
                     )
         periods[label] = scheds
 
-    is_tiered_only = (
-        len(referenced_periods) == 1
-        and len(rate_structure[next(iter(referenced_periods))]) > 1
-    )
-    return periods, is_tiered_only
+    return periods, period_tiers, single_period_tiered
 
 
 def load_urdb_json(path_or_dict: str | Path | dict) -> Tariff:
@@ -155,21 +174,17 @@ def load_urdb_json(path_or_dict: str | Path | dict) -> Tariff:
     e_wd = data.get("energyweekdayschedule")
     e_we = data.get("energyweekendschedule")
     if e_struct and e_wd and e_we:
-        periods, tiered_only = _build_tou_schedules(e_struct, e_wd, e_we)
+        periods, period_tiers, tiered_only = _build_tou_schedules(e_struct, e_wd, e_we)
         if tiered_only:
             # Single period with multiple tiers => TieredEnergyRate
-            tiers_in = e_struct[0]
-            tiers: list[tuple[float, float]] = []
-            for t in tiers_in:
-                threshold = t.get("max")
-                rate = float(t.get("rate", 0.0)) + float(t.get("adj", 0.0))
-                tiers.append((float(threshold) if threshold is not None else float("inf"), rate))
-            # ensure last tier has +inf threshold
-            if tiers and tiers[-1][0] != float("inf"):
-                tiers.append((float("inf"), tiers[-1][1]))
-            components.append(TieredEnergyRate(tiers=tiers))
+            components.append(TieredEnergyRate(tiers=_parse_tier_list(e_struct[0])))
         elif periods:
-            components.append(TimeOfUseRate(periods=periods))
+            # period_tiers is non-empty when >1 TOU period is referenced
+            # AND at least one of them also has >1 tier -- each such
+            # period bills tiered against its own cumulative kWh (see
+            # TimeOfUseRate.period_tiers). Empty dict for the common case
+            # of flat-rate-per-period TOU, unchanged from before.
+            components.append(TimeOfUseRate(periods=periods, period_tiers=period_tiers))
 
     # --- TOU Demand ---
     d_struct = data.get("demandratestructure")
