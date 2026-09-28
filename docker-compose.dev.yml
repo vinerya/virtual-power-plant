@@ -2,8 +2,8 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 #
-# - API runs with --reload against the mounted ./src (the image installs the
-#   package in editable mode from /app/src) and DEBUG logging.
+# - API runs with --reload against the mounted ./src (PYTHONPATH=/app/src
+#   shadows the installed wheel, migrations included) and DEBUG logging.
 # - PostgreSQL is published on 127.0.0.1:5432 for local tools.
 # - VPP_SECRET_KEY must still be exported (the base file requires it), e.g.
 #   `export VPP_SECRET_KEY=dev-only-secret`. Never use this overlay for
@@ -21,8 +21,8 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./configs:/app/configs:ro
-      - ./alembic:/app/alembic:ro
     environment:
+      PYTHONPATH: /app/src
       VPP_ENV: development
       VPP_DEBUG: "true"
       VPP_LOG_LEVEL: DEBUG

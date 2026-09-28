@@ -119,11 +119,22 @@ vpp = "vpp.cli.main:cli"
 where = ["src"]
 
 [tool.setuptools.package-data]
-vpp = ["py.typed", "tariffs/presets/*.json"]
+vpp = [
+    "py.typed",
+    "tariffs/presets/*.json",
+    # alembic environment + revisions, so ``vpp migrate`` works from a wheel.
+    "migrations/README.md",
+    "migrations/env.py",
+    "migrations/script.py.mako",
+    "migrations/versions/*.py",
+]
 
 [tool.ruff]
 target-version = "py310"
 line-length = 99
+# Alembic revision scripts are generated from script.py.mako and are
+# historical records; keep them byte-stable rather than re-linting them.
+extend-exclude = ["src/vpp/migrations/versions"]
 
 [tool.ruff.lint]
 select = [
@@ -181,8 +192,7 @@ runtime-evaluated-base-classes = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["vpp"]
-# The repo-root ``alembic/`` migrations directory would otherwise make ruff
-# classify the installed ``alembic`` library as first-party.
+# Keep the installed ``alembic`` library classified as third-party.
 known-third-party = ["alembic"]
 
 [tool.mypy]
@@ -197,17 +207,12 @@ check_untyped_defs = true
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# benchmarks/ is the repo-root benchmark harness, imported lazily by the
-# ``vpp benchmark`` CLI.  It is not part of the shipped package: mypy follows
-# it for types but its own findings are out of scope for ``mypy src/vpp``.
-module = ["benchmarks", "benchmarks.*"]
-ignore_errors = true
-
-[[tool.mypy.overrides]]
-# vpp.research is non-production numerical exploration code.  NumPy ufuncs and
-# reductions are typed as returning ``Any``, so ``warn_return_any`` would force
-# a cast on nearly every function; every other check still applies.
-module = ["vpp.research.*"]
+# vpp.research (numerical exploration) and vpp.benchmarks / vpp.demos
+# (synthetic datasets, scenario harness and demo scripts behind ``vpp
+# benchmark`` / ``vpp demo``) are NumPy-heavy.  NumPy ufuncs and reductions
+# are typed as returning ``Any``, so ``warn_return_any`` would force a cast on
+# nearly every function; every other check still applies.
+module = ["vpp.research.*", "vpp.benchmarks.*", "vpp.demos.*"]
 warn_return_any = false
 
 [tool.pytest.ini_options]

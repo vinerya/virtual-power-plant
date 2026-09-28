@@ -256,6 +256,15 @@ changes** before upgrading.
   writable `/app`.
 - README and docs rewritten to describe maturity honestly (production-grade
   / beta / simulated / research).
+- Alembic migrations moved from `alembic/` into the package
+  (`src/vpp/migrations/`) and ship in the wheel; `vpp migrate` works from any
+  directory and from an installed wheel. `alembic.ini` at the repo root
+  points at the new location. The API image now installs the wheel instead
+  of an editable source checkout.
+- Demos and benchmarks moved into the package as `vpp.demos` and
+  `vpp.benchmarks`, so `vpp demo` / `vpp benchmark` work from an installed
+  command. The repo-root `demos/` and `benchmarks/` remain as deprecated
+  import aliases.
 
 ### Deprecated
 

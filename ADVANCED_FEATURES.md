@@ -168,9 +168,9 @@ liquidity; there is no connection to a real exchange or ISO market.
   operational path depends on it. There is no Gaussian-process,
   reinforcement-learning, federated-learning or digital-twin code, despite
   what older release notes said.
-- `benchmarks/` (**research**): synthetic datasets (residential, CAISO-like,
+- `vpp.benchmarks` (**research**): synthetic datasets (residential, CAISO-like,
   EU multi-zone, EV fleet), scenarios, metrics and a runner
-  (`PYTHONPATH=. vpp benchmark run PEAK_SHAVING` from the repository root).
+  (`vpp benchmark run PEAK_SHAVING`).
 
 ## Not implemented
 

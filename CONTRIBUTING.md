@@ -111,7 +111,7 @@ already running app), `E2E_NO_SERVER=1`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE`
 ## Database migrations
 
 The ORM models (`src/vpp/db/models.py`) and the alembic migrations
-(`alembic/versions/`) must stay in sync; `tests/test_alembic_drift.py`
+(`src/vpp/migrations/versions/`) must stay in sync; `tests/test_alembic_drift.py`
 fails when they differ or when there is more than one head.
 
 When you change a model:
@@ -121,7 +121,8 @@ When you change a model:
 export VPP_DATABASE_URL=sqlite+aiosqlite:///./migrate-dev.db
 rm -f migrate-dev.db && vpp migrate
 
-# 2. Generate a revision (run from the repository root)
+# 2. Generate a revision (run from the repository root; alembic.ini points
+#    at src/vpp/migrations)
 alembic revision --autogenerate -m "add widgets" --rev-id 0008_add_widgets
 #    alembic names the file 0008_add_widgets_add_widgets.py; rename it to
 #    0008_add_widgets.py so file name and revision id match the others.
@@ -168,7 +169,7 @@ add a new one.
 | `src/vpp/trading/` | simulated venue, portfolio, risk, strategies |
 | `src/vpp/research/` | non-operational ML experiments |
 | `web/` | Next.js console and customer portal |
-| `alembic/` | migrations |
+| `src/vpp/migrations/` | alembic environment and migrations (`alembic.ini` at the root points here) |
 | `docs/` | user and operator documentation |
 | `tests/` | pytest suite |
 

@@ -99,14 +99,13 @@ pip install psycopg2-binary            # only for migrating PostgreSQL
 
 export VPP_DATABASE_URL=postgresql+asyncpg://vpp:<password>@db-host:5432/vpp
 export VPP_SECRET_KEY=...
-vpp migrate                            # run from the repository root
+vpp migrate                            # works from any directory
 uvicorn vpp.api.app:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
-- `vpp migrate` needs the source checkout: it locates `alembic.ini` in the
-  repository and resolves `alembic/` relative to the **current directory**,
-  so run it from the repository root. An installed wheel alone cannot
-  migrate.
+- `vpp migrate` uses the migrations packaged in `vpp/migrations`, so an
+  installed wheel can migrate from any working directory; no source
+  checkout or `alembic.ini` is needed.
 - Migrations rewrite `postgresql+asyncpg` to `postgresql+psycopg2`, hence the
   extra `psycopg2-binary`.
 - For a quick SQLite setup, skip `vpp migrate`: with the default
@@ -133,7 +132,7 @@ API_BASE_URL=http://127.0.0.1:8000 WS_PUBLIC_URL=wss://vpp.example.com/api/v1/ws
 
 - PostgreSQL 14+ is recommended for production (compose uses 16); SQLite
   is fine for development and demos.
-- Schema changes ship as alembic migrations in `alembic/versions/`. Upgrade
+- Schema changes ship as alembic migrations in `src/vpp/migrations/versions/`. Upgrade
   procedure: back up, deploy the new image, let `vpp migrate` run (compose
   does it on every start; it is idempotent), check the logs.
 - `alembic downgrade` is available from the repository root

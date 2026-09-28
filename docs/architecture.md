@@ -83,9 +83,12 @@ per-process (see [Process model](#process-model)).
 | `metrics.py`, `logging.py` | Prometheus metrics, structlog configuration |
 | `cli/` | `vpp` command (serve, init, migrate, dispatch, status, config, benchmark, mpc, demo) |
 
-Outside the package: `benchmarks/` (datasets, scenarios, metrics, runner),
-`demos/` and `examples/` (scripts), `alembic/` (migrations), `monitoring/`
-(Prometheus and Grafana), `web/` (console).
+Also in the package: `migrations/` (alembic environment and revisions, run
+by `vpp migrate`), `benchmarks/` (datasets, scenarios, metrics, runner) and
+`demos/` (`vpp demo`). Outside the package: `examples/` (scripts),
+`monitoring/` (Prometheus and Grafana), `web/` (console). The repo-root
+`demos/` and `benchmarks/` directories are deprecated import aliases for
+`vpp.demos` / `vpp.benchmarks`.
 
 ## Key flows
 
@@ -176,6 +179,7 @@ Tables: `users`, `api_keys`, `resources`, `battery_states`,
 `alerts`, `config_documents`, `event_log`, `v2g_vehicles`,
 `v2g_charging_sessions`, `v2g_schedules`, `dr_event_responses`.
 
-Migrations live in `alembic/versions/` (0001-0007).
+Migrations live in `src/vpp/migrations/versions/` (0001-0008) and ship in
+the wheel.
 `tests/test_alembic_drift.py` upgrades a fresh database to head and fails if
 the models and migrations differ, and checks there is a single head.

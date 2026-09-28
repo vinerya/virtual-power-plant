@@ -199,8 +199,8 @@ def benchmark_group() -> None:
 @benchmark_group.command("list")
 def benchmark_list() -> None:
     """List available benchmark scenarios and datasets."""
-    from benchmarks.datasets import DatasetRegistry
-    from benchmarks.scenarios import ScenarioRegistry
+    from vpp.benchmarks.datasets import DatasetRegistry
+    from vpp.benchmarks.scenarios import ScenarioRegistry
 
     click.echo("=== Datasets ===")
     for name in DatasetRegistry.list_all():
@@ -222,14 +222,14 @@ def benchmark_list() -> None:
 @click.option("--seed", default=42, type=int, help="Random seed for reproducibility")
 def benchmark_run(scenario_name: str, seed: int) -> None:
     """Run a benchmark scenario with all built-in methods."""
-    from benchmarks.runner import (
+    from vpp.benchmarks.runner import (
         BenchmarkMethod,
         BenchmarkRunner,
         NoOpMethod,
         RuleBasedPeakShaving,
         SimpleV2GScheduler,
     )
-    from benchmarks.scenarios import ScenarioRegistry
+    from vpp.benchmarks.scenarios import ScenarioRegistry
 
     scenario = ScenarioRegistry.get(scenario_name)
     click.echo(f"Running scenario: {scenario_name}")
@@ -255,14 +255,14 @@ def benchmark_run(scenario_name: str, seed: int) -> None:
 @click.option("--seeds", default="42", help="Comma-separated seeds")
 def benchmark_report(scenario: str | None, seeds: str) -> None:
     """Generate a full benchmark comparison report."""
-    from benchmarks.runner import (
+    from vpp.benchmarks.runner import (
         BenchmarkMethod,
         BenchmarkRunner,
         NoOpMethod,
         RuleBasedPeakShaving,
         SimpleV2GScheduler,
     )
-    from benchmarks.scenarios import ScenarioRegistry
+    from vpp.benchmarks.scenarios import ScenarioRegistry
 
     seed_list = [int(s.strip()) for s in seeds.split(",")]
     methods: list[BenchmarkMethod] = [NoOpMethod(), RuleBasedPeakShaving(), SimpleV2GScheduler()]
@@ -377,11 +377,7 @@ def demo(demo_name: str | None) -> None:
         click.echo(f"Unknown demo: {demo_name}. Available: {', '.join(demos_available)}", err=True)
         sys.exit(1)
 
-    # Import and run demo
-    try:
-        module = __import__(f"demos.{demo_name}_demo", fromlist=["run"])
-        module.run()
-    except ImportError as e:
-        click.echo(f"Could not load demo '{demo_name}': {e}", err=True)
-        click.echo("Make sure you are running from the project root.", err=True)
-        sys.exit(1)
+    import importlib
+
+    module = importlib.import_module(f"vpp.demos.{demo_name}_demo")
+    module.run()

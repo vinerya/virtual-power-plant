@@ -1,22 +1,16 @@
 """Tests for the benchmarking suite."""
 
-import os
-import sys
-
 import numpy as np
 import pytest
 
-# Ensure benchmarks package is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from benchmarks.datasets import (
+from vpp.benchmarks.datasets import (
     CaliforniaISO,
     DatasetRegistry,
     EUGridData,
     EVFleetData,
     IEEETestCase,
 )
-from benchmarks.metrics import (
+from vpp.benchmarks.metrics import (
     BenchmarkMetrics,
     compute_battery_cycles,
     compute_co2_reduction,
@@ -33,14 +27,14 @@ from benchmarks.metrics import (
     compute_uptime,
     compute_v2g_utilization,
 )
-from benchmarks.runner import (
+from vpp.benchmarks.runner import (
     BenchmarkResult,
     BenchmarkRunner,
     NoOpMethod,
     RuleBasedPeakShaving,
     SimpleV2GScheduler,
 )
-from benchmarks.scenarios import Scenario, ScenarioCategory, ScenarioRegistry
+from vpp.benchmarks.scenarios import Scenario, ScenarioCategory, ScenarioRegistry
 
 # ---------------------------------------------------------------------------
 # Datasets
