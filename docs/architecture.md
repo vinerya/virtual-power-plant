@@ -192,6 +192,11 @@ Still per process:
   schedule pushes and DR setpoints that also depend on that state, and it
   would still need sticky routing for the sockets. Run OCPP on a
   single-worker deployment.
+- **Device control**: each device's active setpoint, write rate limiter and
+  expiry watchdog live in the process that issued it, so
+  `VPP_CONTROL_ENABLED=true` with `VPP_API_WORKERS > 1` is refused at
+  startup for the same reason: two workers could send conflicting commands
+  to one device.
 - OpenADR / IEEE 2030.5 views (`/api/v1/protocols/openadr/*`,
   `/ieee2030_5/*`, `/api/v1/dr/status`) read the adapters' in-memory state
   and are only complete on the `protocol-adapters` holder; other workers

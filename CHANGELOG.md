@@ -290,6 +290,8 @@ changes** before upgrading.
 **Multi-worker deployments**
 - `VPP_API_WORKERS` is read: `vpp serve` starts that many workers
   (`--workers` overrides) and each logs the effective topology at startup.
+  OCPP and device control (`VPP_CONTROL_ENABLED`) keep per-process state and
+  are refused when more than one worker is configured.
 - DB-backed leadership leases (`cluster_leases`): the market-data tick,
   degradation updater, alert evaluation, MQTT/Modbus ingestion and protocol
   adapters + DR orchestrator run once per deployment, on the lease holder;

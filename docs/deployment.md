@@ -111,7 +111,8 @@ uvicorn vpp.api.app:create_app --factory --host 127.0.0.1 --port 8000
 - Several workers are supported: `VPP_API_WORKERS=4 vpp serve` (or pass
   `--workers` to uvicorn *and* set `VPP_API_WORKERS` to the same number, so
   the WebSocket relay starts and the startup checks see it). Use PostgreSQL,
-  keep host clocks NTP-synchronised, and note that OCPP requires a single
+  keep host clocks NTP-synchronised, and note that OCPP and device control
+  (`VPP_CONTROL_ENABLED`) require a single
   worker and the rate limit applies per worker; see
   [architecture](architecture.md#process-model).
 
