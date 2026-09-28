@@ -1,13 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { listDispatches } from "@/lib/api/dispatch";
+import { getDispatch, listDispatches } from "@/lib/api/dispatch";
 import { listResources } from "@/lib/api/resources";
 import type { DispatchRun } from "@/lib/api/types";
 import { formatDateTime } from "@/lib/utils";
@@ -24,6 +25,21 @@ export function DispatchesView() {
   const [resourceFilter, setResourceFilter] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<DispatchRun | null>(null);
+
+  // Deep link: /trading/dispatches?run=<id> opens that run's detail sheet
+  // (the optimization planner links fresh runs to their explainer this way).
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const linkedRunId = searchParams.get("run");
+  const linkedTab = searchParams.get("view") === "explain" ? "counterfactual" : "solution";
+  const linkedRun = useQuery({
+    queryKey: ["dispatch", linkedRunId],
+    queryFn: () => getDispatch(linkedRunId as string),
+    enabled: !!linkedRunId,
+  });
+  useEffect(() => {
+    if (linkedRun.data) setSelected(linkedRun.data);
+  }, [linkedRun.data]);
 
   const range = useMemo(() => computeRange(windowSel, customStart, customEnd), [
     windowSel,
@@ -196,9 +212,19 @@ export function DispatchesView() {
         )}
       </Card>
 
+      {linkedRunId && linkedRun.isError && (
+        <p role="alert" className="text-sm text-destructive" data-testid="linked-run-error">
+          Could not open run {linkedRunId}.
+        </p>
+      )}
+
       <DispatchSheet
         run={selected}
-        onClose={() => setSelected(null)}
+        initialTab={linkedRunId && selected?.id === linkedRunId ? linkedTab : "solution"}
+        onClose={() => {
+          setSelected(null);
+          if (linkedRunId) router.replace("/trading/dispatches", { scroll: false });
+        }}
       />
     </div>
   );

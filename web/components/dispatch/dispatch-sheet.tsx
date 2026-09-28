@@ -12,9 +12,12 @@ import { formatDateTime } from "@/lib/utils";
 export function DispatchSheet({
   run,
   onClose,
+  initialTab = "solution",
 }: {
   run: DispatchRun | null;
   onClose: () => void;
+  /** Tab shown when the sheet opens (e.g. "counterfactual" for the explainer). */
+  initialTab?: "inputs" | "solution" | "diagnostics" | "counterfactual";
 }) {
   const open = run !== null;
   const schedule = useMemo(() => extractSchedule(run), [run]);
@@ -37,7 +40,7 @@ export function DispatchSheet({
               </p>
             </SheetHeader>
 
-            <Tabs defaultValue="solution" className="mt-2">
+            <Tabs key={run.id} defaultValue={initialTab} className="mt-2">
               <TabsList>
                 <TabsTrigger value="inputs">Inputs</TabsTrigger>
                 <TabsTrigger value="solution">Solution</TabsTrigger>
