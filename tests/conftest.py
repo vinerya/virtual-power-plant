@@ -15,6 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 os.environ["VPP_ENV"] = "testing"
 os.environ["VPP_DATABASE_URL"] = "sqlite+aiosqlite:///./test_vpp.db"
 os.environ["VPP_SECRET_KEY"] = "test-secret-key-not-for-production"
+# The session-scoped app serves the whole suite from one client address; a
+# per-minute limit would make later tests fail with 429 depending on how many
+# requests earlier ones made. Rate limiting has its own tests (explicit apps).
+os.environ.setdefault("VPP_RATE_LIMIT_ENABLED", "false")
 
 from vpp.api.app import create_app
 from vpp.auth.security import create_access_token, get_password_hash

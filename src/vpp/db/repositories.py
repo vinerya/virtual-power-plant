@@ -216,6 +216,10 @@ class OptimizationRepository:
                          solution: dict | None = None,
                          parameters: dict | None = None) -> OptimizationRunModel:
         obj = OptimizationRunModel(
+            # Explicit, sub-second timestamp: SQLite's CURRENT_TIMESTAMP
+            # server default only has second resolution, which makes
+            # newest-first run history ambiguous.
+            created_at=datetime.now(timezone.utc),
             problem_type=problem_type,
             status=status,
             objective_value=objective_value,
@@ -230,15 +234,55 @@ class OptimizationRepository:
         return obj
 
     @staticmethod
+    async def get_run(session: AsyncSession, run_id: str) -> Optional[OptimizationRunModel]:
+        return await session.get(OptimizationRunModel, run_id)
+
+    @staticmethod
+    async def update_run(session: AsyncSession, run_id: str, *,
+                         solution: dict | None = None,
+                         parameters: dict | None = None,
+                         **fields: Any) -> Optional[OptimizationRunModel]:
+        obj = await session.get(OptimizationRunModel, run_id)
+        if obj is None:
+            return None
+        for key, value in fields.items():
+            if hasattr(obj, key):
+                setattr(obj, key, value)
+        if solution is not None:
+            obj.solution_json = json.dumps(solution)
+        if parameters is not None:
+            obj.parameters_json = json.dumps(parameters)
+        # Bump updated_at explicitly: it doubles as the run's finish time and
+        # SQLite's onupdate=func.now() only has second resolution.
+        obj.updated_at = datetime.now(timezone.utc)
+        await session.flush()
+        return obj
+
+    @staticmethod
     async def list_runs(session: AsyncSession, *, skip: int = 0,
-                        limit: int = 50, problem_type: str | None = None) -> list[OptimizationRunModel]:
+                        limit: int = 50, problem_type: str | None = None,
+                        start: datetime | None = None, end: datetime | None = None,
+                        resource_ids: list[str] | None = None) -> list[OptimizationRunModel]:
         stmt = (
             select(OptimizationRunModel)
-            .offset(skip).limit(limit)
             .order_by(OptimizationRunModel.created_at.desc())
         )
         if problem_type:
             stmt = stmt.where(OptimizationRunModel.problem_type == problem_type)
+        if start is not None:
+            stmt = stmt.where(OptimizationRunModel.created_at >= start)
+        if end is not None:
+            stmt = stmt.where(OptimizationRunModel.created_at <= end)
+        if resource_ids:
+            # Runs persist the ids of the resources they touched inside
+            # parameters_json; match the quoted id so prefixes don't collide.
+            stmt = stmt.where(or_(*[
+                OptimizationRunModel.parameters_json.contains(
+                    json.dumps(str(rid)), autoescape=True
+                )
+                for rid in resource_ids
+            ]))
+        stmt = stmt.offset(skip).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

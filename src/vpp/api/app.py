@@ -395,6 +395,7 @@ def create_app(
     app.include_router(auth.router)
     app.include_router(resources.router)
     app.include_router(optimization.router)
+    app.include_router(optimization.dispatches_router)
     app.include_router(trading.router)
     app.include_router(config.router)
     app.include_router(protocols.router)

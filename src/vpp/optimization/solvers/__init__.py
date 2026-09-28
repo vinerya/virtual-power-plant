@@ -9,13 +9,18 @@ Currently provides:
   comparison and when the solver stack is unavailable.
 - :class:`StochasticCVaRPlugin` - extensive-form stochastic dispatch with
   CVaR risk term (Milestone 2).
+- :class:`PowerAllocationPlugin` / :class:`ProportionalAllocationRules` -
+  single-interval fleet power allocation LP and its proportional fallback.
 """
 
 from .pyomo_plugin import PyomoPlugin, SimpleBatteryDispatchRules
 from .stochastic_plugin import StochasticCVaRPlugin
+from .allocation_plugin import PowerAllocationPlugin, ProportionalAllocationRules
 
 __all__ = [
     "PyomoPlugin",
     "SimpleBatteryDispatchRules",
     "StochasticCVaRPlugin",
+    "PowerAllocationPlugin",
+    "ProportionalAllocationRules",
 ]
