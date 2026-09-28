@@ -52,8 +52,7 @@ from .distributed import (
 # importing it never crashes when pyomo/highspy are missing.
 from .solvers import PyomoPlugin, SimpleBatteryDispatchRules, StochasticCVaRPlugin
 
-# Version information
-__version__ = "1.0.0"
+# Package metadata (the version lives in vpp.__version__ only)
 __author__ = "VPP Development Team"
 
 # Export all public classes and functions

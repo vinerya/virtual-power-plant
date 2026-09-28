@@ -10,6 +10,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from vpp._version import __version__
+
 try:
     from prometheus_client import (
         Counter,
@@ -34,7 +36,7 @@ if _HAS_PROMETHEUS:
 
     # -- Platform info
     VPP_INFO = Info("vpp", "VPP platform information", registry=REGISTRY)
-    VPP_INFO.info({"version": "2.0.0"})
+    VPP_INFO.info({"version": __version__})
 
     # -- Resource metrics
     RESOURCE_COUNT = Gauge(

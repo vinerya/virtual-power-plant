@@ -62,8 +62,7 @@ from .data import (
     LiveDataProvider
 )
 
-# Version information
-__version__ = "1.0.0"
+# Package metadata (the version lives in vpp.__version__ only)
 __author__ = "VPP Trading Team"
 
 # Export all public classes and functions

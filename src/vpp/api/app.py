@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
+from vpp import __version__
 from vpp.settings import get_settings
 from vpp.db.engine import init_db, close_db, get_session_factory
 from vpp.events import get_event_bus
@@ -355,7 +356,7 @@ def create_app(
             "Production-ready API for managing distributed energy resources, "
             "optimization dispatch, multi-market trading, and grid protocol integration."
         ),
-        version="2.0.0",
+        version=__version__,
         lifespan=_lifespan,
         docs_url="/docs",
         redoc_url="/redoc",

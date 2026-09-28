@@ -53,6 +53,5 @@ __all__ = [
     "VPPConfig"
 ]
 
-# Version information
-__version__ = "1.0.0"
+# Package metadata (the version lives in vpp.__version__ only)
 __author__ = "VPP Development Team"
