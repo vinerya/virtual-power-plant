@@ -302,8 +302,18 @@ changes** before upgrading.
   `504 leader_timeout`. Follower telemetry is forwarded to the alert
   evaluator.
 - WebSocket broadcasts are relayed between workers (`cluster_events`).
+- The HTTP rate limit and the failed-login throttle hold across workers:
+  with `VPP_API_WORKERS > 1` they count in the new `shared_rate_limits`
+  table (migration `0011_shared_rate_limits`) with atomic upserts on SQLite
+  and PostgreSQL, instead of giving a client N x the request limit and a
+  password guesser N x the attempts. `VPP_RATE_LIMIT_BACKEND`
+  (`auto` | `memory` | `database`, default `auto`) picks the store; a
+  single worker stays in memory. On a database error the rate limiter fails
+  open and the login throttle falls back to per-worker memory, both with a
+  warning.
 - Settings `VPP_CLUSTER_LEASE_TTL_SECONDS`,
-  `VPP_CLUSTER_CALL_TIMEOUT_SECONDS`, `VPP_CLUSTER_POLL_INTERVAL_SECONDS`.
+  `VPP_CLUSTER_CALL_TIMEOUT_SECONDS`, `VPP_CLUSTER_POLL_INTERVAL_SECONDS`,
+  `VPP_RATE_LIMIT_BACKEND`.
 
 **Docs**
 - `docs/`: architecture, configuration reference (every `VPP_*` setting),
@@ -449,6 +459,8 @@ changes** before upgrading.
 
 ### Security
 
+- The failed-login lockout and the per-IP rate limit are no longer
+  multiplied by the number of API workers (shared through the database).
 - Login no longer reveals whether a username exists through response
   timing (a dummy bcrypt check runs for unknown users) and passwords over
   72 bytes answer `401` instead of `500`.

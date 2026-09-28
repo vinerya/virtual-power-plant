@@ -25,8 +25,8 @@ the WebSocket protocol, and conventions shared by all routes.
   nothing was executed) or `504 {"detail": {"code": "leader_timeout", "call_id": ...}}`
   (accepted, outcome unknown: check `GET /api/v1/trading/orders`).
 - **Rate limiting.** When `VPP_RATE_LIMIT_ENABLED` (default), each client IP
-  gets `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` requests per minute per API
-  worker; beyond that the API answers `429`. Behind the console or another
+  gets `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` requests per minute (shared by
+  all API workers, see `VPP_RATE_LIMIT_BACKEND`); beyond that the API answers `429`. Behind the console or another
   proxy, the client IP comes from `X-Forwarded-For` only if the peer is in
   `VPP_TRUSTED_PROXIES`.
 - **Units and signs.** Power in kW, energy in kWh, prices in $/kWh for

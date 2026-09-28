@@ -179,11 +179,22 @@ one. Coordination goes through the database (`vpp.cluster`):
   workers to their own clients, so a browser sees market data, fills and
   alerts whichever worker its socket landed on (about one
   `VPP_CLUSTER_POLL_INTERVAL_SECONDS` later).
+- **Shared rate limits** (`shared_rate_limits`, used when
+  `VPP_RATE_LIMIT_BACKEND` resolves to `database`: the default with
+  `VPP_API_WORKERS > 1`). The per-IP request limit and the per-username
+  failed-login throttle count in one table for all workers, so a client gets
+  `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` in total and a password guesser
+  `VPP_LOGIN_MAX_FAILURES` attempts per lockout window, whichever worker
+  answers. Each update is one atomic `INSERT ... ON CONFLICT DO UPDATE`
+  (SQLite and PostgreSQL); requests use a one-minute sliding-window counter,
+  logins keep the single-worker lockout semantics. Expired rows are deleted
+  opportunistically. If the database fails, the rate limiter lets requests
+  through (logging a warning) and the login throttle falls back to the
+  worker's in-memory state. A single worker keeps both in memory (no
+  database round trip per request).
 
 Still per process:
 
-- the rate limiter's buckets (a client can make up to workers x
-  `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE`), and any login throttling state;
 - the EventBus itself (only WebSocket broadcasts are relayed);
 - **OCPP**: charge-point sockets and the Central System's state live in one
   process, so `VPP_OCPP_ENABLED=true` with `VPP_API_WORKERS > 1` is refused
@@ -231,9 +242,9 @@ Tables: `users`, `api_keys`, `resources`, `battery_states`,
 `alerts`, `config_documents`, `event_log`, `v2g_vehicles`,
 `v2g_charging_sessions`, `v2g_schedules`, `v2g_flexibility_bids`,
 `dr_event_responses`, and the multi-worker coordination tables
-`cluster_leases`, `cluster_calls`, `cluster_events`.
+`cluster_leases`, `cluster_calls`, `cluster_events`, `shared_rate_limits`.
 
-Migrations live in `src/vpp/migrations/versions/` (0001-0010) and ship in
+Migrations live in `src/vpp/migrations/versions/` (0001-0011) and ship in
 the wheel.
 `tests/test_alembic_drift.py` upgrades a fresh database to head and fails if
 the models and migrations differ, and checks there is a single head.
