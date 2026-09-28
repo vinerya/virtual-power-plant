@@ -11,10 +11,19 @@ import type { Bill } from "@/lib/api/types";
 const KIND_COLORS: Record<string, string> = {
   fixed: "#94a3b8",
   energy: "hsl(var(--primary))",
+  tier: "hsl(var(--primary))",
   demand: "#f59e0b",
+  minimum: "#a78bfa",
   min_bill: "#a78bfa",
+  adder: "#f472b6",
+  tax: "#64748b",
   credit: "#10b981",
 };
+
+function billLabel(b: Bill): string {
+  const name = b.metadata?.tariff_name;
+  return typeof name === "string" && name ? name : (b.tariff_id ?? "other");
+}
 
 export function BillBreakdown({
   bill,
@@ -43,8 +52,8 @@ export function BillBreakdown({
         <div className="flex items-center gap-2">
           {comparison && (
             <Badge variant="outline" className="text-xs">
-              vs {comparison.tariff_id}: $
-              {(bill.total - comparison.total).toFixed(2)}
+              vs {billLabel(comparison)}: {bill.total - comparison.total >= 0 ? "+" : "−"}$
+              {Math.abs(bill.total - comparison.total).toFixed(2)}
             </Badge>
           )}
           <Button
@@ -109,10 +118,13 @@ export function BillBreakdown({
                 {li.name}
                 <span className="ml-2 text-xs text-muted-foreground">
                   {li.kind}
+                  {li.quantity != null && li.unit && li.unit !== "$"
+                    ? ` · ${formatQty(li.quantity)} ${li.unit}`
+                    : ""}
                 </span>
               </td>
               <td className="py-1.5 text-right tabular-nums">
-                ${li.amount.toFixed(2)}
+                {li.amount < 0 ? "−" : ""}${Math.abs(li.amount).toFixed(2)}
               </td>
             </tr>
           ))}
@@ -128,6 +140,10 @@ export function BillBreakdown({
       </table>
     </section>
   );
+}
+
+function formatQty(q: number): string {
+  return Math.abs(q) >= 100 ? q.toFixed(0) : q.toFixed(2);
 }
 
 function flatten(rows: { name: string; amount: number }[]) {

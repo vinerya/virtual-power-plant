@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Plus, Search } from "lucide-react";
+import { Download, Plus, Search } from "lucide-react";
 import { listTariffs } from "@/lib/api/tariffs";
 import { cn } from "@/lib/utils";
 
@@ -13,10 +13,13 @@ export function TariffList({
   selectedId,
   onSelect,
   onNew,
+  onImport,
 }: {
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Omitted for non-admins: the create/import buttons are hidden. */
   onNew?: () => void;
+  onImport?: () => void;
 }) {
   const [q, setQ] = useState("");
   const [utility, setUtility] = useState<string>("");
@@ -63,16 +66,30 @@ export function TariffList({
               className="pl-7"
             />
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-label="New tariff"
-            onClick={onNew}
-            disabled={!onNew}
-          >
-            <Plus className="h-4 w-4" />
-          </Button>
+          {onNew && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="New tariff"
+              title="New tariff"
+              onClick={onNew}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          )}
+          {onImport && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-label="Import from URDB"
+              title="Import from OpenEI URDB"
+              onClick={onImport}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+          )}
         </div>
         {utilities.length > 0 && (
           <select
@@ -98,8 +115,13 @@ export function TariffList({
             ))}
           </li>
         ) : tariffs.isError ? (
-          <li className="p-3 text-sm text-destructive">
+          <li className="p-3 text-sm text-destructive" role="alert">
             Failed to load tariffs.
+          </li>
+        ) : (tariffs.data ?? []).length === 0 ? (
+          <li className="p-4 text-sm text-muted-foreground" data-testid="tariffs-empty">
+            No tariffs yet.
+            {onNew ? " Create one from a preset with +." : " Ask an admin to add one."}
           </li>
         ) : filtered.length === 0 ? (
           <li className="p-4 text-sm text-muted-foreground">
@@ -119,8 +141,10 @@ export function TariffList({
               >
                 <span className="line-clamp-1 font-medium">{t.name}</span>
                 <span className="text-xs text-muted-foreground">
-                  {t.utility ?? "—"}
+                  {t.utility || "—"}
                   {t.sector ? ` · ${t.sector}` : ""}
+                  {t.is_tou ? " · TOU" : ""}
+                  {t.source === "URDB" ? " · URDB" : ""}
                 </span>
               </button>
             </li>
