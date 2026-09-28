@@ -46,14 +46,15 @@ async function proxy(
     );
   }
   const body = await upstream.text();
-  const res = new NextResponse(body, {
-    status: upstream.status,
-    headers: {
-      "content-type":
-        upstream.headers.get("content-type") || "application/json",
-    },
-  });
-  return res;
+  const resHeaders: Record<string, string> = {
+    "content-type": upstream.headers.get("content-type") || "application/json",
+  };
+  // List endpoints report the unpaginated total here (vpp.api.pagination).
+  const total = upstream.headers.get("x-total-count");
+  if (total !== null) resHeaders["x-total-count"] = total;
+  // A 204 must not carry a body.
+  if (upstream.status === 204) return new NextResponse(null, { status: 204 });
+  return new NextResponse(body, { status: upstream.status, headers: resHeaders });
 }
 
 export const GET = proxy;

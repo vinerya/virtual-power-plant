@@ -69,6 +69,11 @@ async function stubUsersApi(page: Page) {
     const req = route.request();
     record(req);
     const id = req.url().split("/").pop()!;
+    if (req.method() === "DELETE") {
+      users = users.filter((u) => u.id !== id);
+      keys = keys.filter((k) => k.user_id !== id);
+      return route.fulfill({ status: 204, body: "" });
+    }
     const patch = req.postDataJSON();
     users = users.map((u) =>
       u.id === id
@@ -155,6 +160,16 @@ test.describe("Settings → Users & API keys (admin)", () => {
     await expect(page.getByText(/bob deactivated; sessions and API keys revoked/)).toBeVisible();
     await expect(bob.getByText("inactive")).toBeVisible();
     await expect(bob.getByRole("button", { name: "Activate bob" })).toBeVisible();
+
+    // Delete with confirmation; not offered for your own account.
+    await expect(self.getByRole("button", { name: "Delete admin-user" })).toHaveCount(0);
+    await bob.getByRole("button", { name: "Delete bob" }).click();
+    await bob.getByRole("button", { name: "Confirm delete" }).click();
+    await expect(page.getByText(/bob deleted; their API keys were removed/)).toBeVisible();
+    await expect(page.getByTestId("user-row-bob")).toHaveCount(0);
+    expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/api/v1/users/u-bob"))).toBe(
+      true,
+    );
   });
 
   test("create user shows the server's password-policy error, then succeeds", async ({ page }) => {

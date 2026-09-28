@@ -23,10 +23,11 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
+from vpp import audit
 from vpp.api.optimization_support import (
     execute_dispatch,
     finish_run,
@@ -35,6 +36,7 @@ from vpp.api.optimization_support import (
     start_run,
     unpack_solution,
 )
+from vpp.api.pagination import TOTAL_COUNT_HEADER, Page, page_params, paginate
 from vpp.auth.security import get_current_user
 from vpp.db.engine import get_db
 from vpp.db.models import UserModel
@@ -73,6 +75,7 @@ dispatches_router = APIRouter(prefix="/api/v1/dispatches", tags=["Optimization"]
 MAX_SCHEDULE_RESOURCE_STEPS = 20 * 288
 _SHORTFALL_TOL_KW = 1e-3
 _MAX_PERSISTED_SCENARIOS = 20
+_runs_page = page_params(default_limit=50, max_limit=200, legacy_skip=True)
 
 
 def _status_str(s: Any) -> str:
@@ -128,6 +131,7 @@ async def _run_tracked(
 @router.post("/dispatch", response_model=DispatchResponse)
 async def dispatch(
     body: DispatchRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
@@ -145,6 +149,15 @@ async def dispatch(
     requires the ``admin`` or ``operator`` role.
     """
     if body.apply and _user.role not in ("admin", "operator"):
+        audit.record(
+            session,
+            request,
+            "control.dispatch",
+            actor=_user,
+            outcome="denied",
+            details={"target_power_kw": body.target_power_kw, "reason": "role"},
+            always=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Role '{_user.role}' may not apply setpoints to devices",
@@ -173,6 +186,24 @@ async def dispatch(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"optimization failed: {result['error']}",
+        )
+
+    if body.apply:
+        deliveries = result["device_deliveries"] or []
+        audit.record(
+            session,
+            request,
+            "control.dispatch",
+            actor=_user,
+            target_type="optimization_run",
+            target_id=result["run_id"],
+            outcome="success" if result["success"] else "failure",
+            details={
+                "target_power_kw": body.target_power_kw,
+                "interval_minutes": body.interval_minutes,
+                "resource_ids": [a.id for a in assets][:50],
+                "devices": len(deliveries),
+            },
         )
 
     by_id = {a.id: a for a in assets}
@@ -217,18 +248,22 @@ async def dispatch(
 
 @router.get("/setpoints")
 async def device_setpoints(
+    response: Response,
     resource_id: str | None = Query(None, description="Only commands for this resource"),
-    limit: int = Query(50, ge=1, le=500),
+    page: Page = Depends(page_params(default_limit=50, max_limit=500)),
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """Setpoint actuator state (kill switch, active setpoints) and recent device commands."""
+    """Setpoint actuator state (kill switch, active setpoints) and recent device commands.
+
+    ``recent`` is paginated with ``limit`` / ``offset``; its total is in
+    ``recent_total`` and the ``X-Total-Count`` header.
+    """
     from vpp.control.actuator import EVENT_LOG_TYPE, get_setpoint_actuator
     from vpp.db.repositories import EventLogRepository
 
-    rows = await EventLogRepository.query(
-        session, event_type=EVENT_LOG_TYPE, resource_id=resource_id, limit=limit
-    )
+    stmt = EventLogRepository.query_stmt(event_type=EVENT_LOG_TYPE, resource_id=resource_id)
+    rows = await paginate(session, response, stmt, page)
     recent = []
     for row in rows:
         try:
@@ -245,7 +280,11 @@ async def device_setpoints(
                 "created_at": created.isoformat() if created else None,
             }
         )
-    return {**get_setpoint_actuator().status(), "recent": recent}
+    return {
+        **get_setpoint_actuator().status(),
+        "recent": recent,
+        "recent_total": int(response.headers[TOTAL_COUNT_HEADER]),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -847,24 +886,22 @@ def _utc(dt: datetime | None) -> datetime | None:
 
 async def _list_runs(
     session: AsyncSession,
+    response: Response,
     *,
-    skip: int,
-    limit: int,
+    page: Page,
     problem_type: str | None,
     start: datetime | None,
     end: datetime | None,
     resource_ids: list[str] | None,
     include_details: bool,
 ) -> list[dict[str, Any]]:
-    runs = await OptimizationRepository.list_runs(
-        session,
-        skip=skip,
-        limit=limit,
+    stmt = OptimizationRepository.runs_query(
         problem_type=problem_type,
         start=_utc(start),
         end=_utc(end),
         resource_ids=resource_ids or None,
     )
+    runs = await paginate(session, response, stmt, page)
     return [run_to_dict(r, include_details=include_details) for r in runs]
 
 
@@ -878,9 +915,8 @@ async def _get_run_or_404(session: AsyncSession, run_id: str):
 @router.get("/runs", response_model=list[OptimizationRunRead])
 @router.get("/history", response_model=list[OptimizationRunRead])
 async def list_runs(
-    skip: int = Query(0, ge=0),
-    offset: int | None = Query(None, ge=0, description="Alias of skip"),
-    limit: int = Query(50, ge=1, le=200),
+    response: Response,
+    page: Page = Depends(_runs_page),
     problem_type: str | None = None,
     start: datetime | None = Query(None, description="Only runs created at or after this time"),
     end: datetime | None = Query(None, description="Only runs created at or before this time"),
@@ -891,11 +927,15 @@ async def list_runs(
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """List persisted optimization runs, newest first."""
+    """List persisted optimization runs, newest first.
+
+    Paginated (``limit`` / ``offset``, ``skip`` is an alias); the total is in
+    ``X-Total-Count``.
+    """
     return await _list_runs(
         session,
-        skip=offset if offset is not None else skip,
-        limit=limit,
+        response,
+        page=page,
         problem_type=problem_type,
         start=start,
         end=end,
@@ -962,9 +1002,8 @@ async def stats(
 @dispatches_router.get("", response_model=list[OptimizationRunRead])
 @dispatches_router.get("/", response_model=list[OptimizationRunRead], include_in_schema=False)
 async def list_dispatches(
-    skip: int = Query(0, ge=0),
-    offset: int | None = Query(None, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    response: Response,
+    page: Page = Depends(_runs_page),
     problem_type: str | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
@@ -976,8 +1015,8 @@ async def list_dispatches(
     """Alias of ``GET /api/v1/optimization/runs``."""
     return await _list_runs(
         session,
-        skip=offset if offset is not None else skip,
-        limit=limit,
+        response,
+        page=page,
         problem_type=problem_type,
         start=start,
         end=end,

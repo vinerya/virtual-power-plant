@@ -9,6 +9,7 @@ const ITEMS = [
   { href: "/settings", label: "Configuration", adminOnly: false },
   { href: "/settings/account", label: "Account", adminOnly: false },
   { href: "/settings/users", label: "Users & API keys", adminOnly: true },
+  { href: "/settings/audit", label: "Audit log", adminOnly: true },
 ] as const;
 
 /** Sub-navigation shared by the settings pages. */

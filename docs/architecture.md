@@ -244,9 +244,10 @@ Tables: `users`, `api_keys`, `resources`, `battery_states`,
 `alerts`, `config_documents`, `event_log`, `v2g_vehicles`,
 `v2g_charging_sessions`, `v2g_schedules`, `v2g_flexibility_bids`,
 `dr_event_responses`, and the multi-worker coordination tables
-`cluster_leases`, `cluster_calls`, `cluster_events`, `shared_rate_limits`.
+`cluster_leases`, `cluster_calls`, `cluster_events`, `shared_rate_limits`,
+`audit_log`.
 
-Migrations live in `src/vpp/migrations/versions/` (0001-0011) and ship in
+Migrations live in `src/vpp/migrations/versions/` (0001-0012) and ship in
 the wheel.
 `tests/test_alembic_drift.py` upgrades a fresh database to head and fails if
 the models and migrations differ, and checks there is a single head.

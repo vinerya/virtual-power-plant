@@ -221,6 +221,33 @@ class APIKeyModel(TimestampMixin, Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AuditLogModel(Base):
+    """Append-only record of a security-relevant action (see :mod:`vpp.audit`).
+
+    ``actor_id`` / ``actor_username`` are copies, not foreign keys, so the
+    history survives deletion of the user. ``details_json`` never holds
+    passwords, tokens or API keys (:func:`vpp.audit.sanitize_details`).
+    Migration: 0012_audit_log.
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_log_actor_ts", "actor_id", "ts"),
+        Index("ix_audit_log_action_ts", "action", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    actor_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(64))
+    target_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    target_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    client_ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    outcome: Mapped[str] = mapped_column(String(16), default="success")
+    details_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 # ---------------------------------------------------------------------------
 # Tariffs
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ import { useSession } from "@/lib/api/session";
 import {
   USER_ROLES,
   createUser,
+  deleteUser,
   listApiKeys,
   listUsers,
   resetUserPassword,
@@ -147,6 +148,7 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
   const qc = useQueryClient();
   const [resetting, setResetting] = useState(false);
   const [confirmDeactivate, setConfirmDeactivate] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const update = useMutation({
     mutationFn: (patch: { role?: UserRole; is_active?: boolean }) => updateUser(user.id, patch),
@@ -162,6 +164,19 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
     onError: (e) => {
       toast.error(apiErrorMessage(e, "Update failed"));
       qc.invalidateQueries({ queryKey: USERS_KEY });
+    },
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteUser(user.id),
+    onSuccess: () => {
+      toast.success(`${user.username} deleted; their API keys were removed`);
+      setConfirmDelete(false);
+      qc.invalidateQueries({ queryKey: USERS_KEY });
+      qc.invalidateQueries({ queryKey: ["api-keys"] });
+    },
+    onError: (e) => {
+      toast.error(apiErrorMessage(e, "Could not delete the user"));
+      setConfirmDelete(false);
     },
   });
   const revoke = useMutation({
@@ -264,6 +279,31 @@ function UserRow({ user, isSelf }: { user: User; isSelf: boolean }) {
             >
               Revoke sessions
             </Button>
+            {!isSelf &&
+              (confirmDelete ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate()}
+                  >
+                    Confirm delete
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
+                    Cancel
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  aria-label={`Delete ${user.username}`}
+                  onClick={() => setConfirmDelete(true)}
+                >
+                  Delete
+                </Button>
+              ))}
           </span>
         </td>
       </tr>
@@ -357,8 +397,9 @@ export function UsersView() {
         <CardContent className="space-y-2">
           <p className="text-xs text-muted-foreground">
             Changing a role or deactivating a user signs them out everywhere; deactivation also
-            revokes their API keys. You cannot demote or deactivate yourself or the last active
-            admin.
+            revokes their API keys. Deleting a user removes the account and its API keys for good
+            (the audit log keeps their name). You cannot demote, deactivate or delete yourself or
+            the last active admin.
           </p>
           <UsersTable />
         </CardContent>

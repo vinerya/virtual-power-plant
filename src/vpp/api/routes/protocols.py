@@ -11,13 +11,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp import audit
 from vpp.auth.security import get_current_user, require_role
 from vpp.cluster.lease import is_local
 from vpp.cluster.rpc import on_leader, register_handler
 from vpp.cluster.topology import LEASE_PROTOCOLS
+from vpp.db.engine import get_db
 from vpp.protocols.base import ProtocolMode, ProtocolRegistry
 
 router = APIRouter(prefix="/api/v1/protocols", tags=["protocols"])
@@ -131,20 +134,50 @@ async def _list_lease_bound_local() -> list[dict[str, Any]]:
 @router.post("/{name}/connect", response_model=ConnectResponse)
 async def connect_protocol(
     name: str,
+    request: Request,
     body: ConnectRequest | None = None,
     _user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Connect a protocol adapter."""
     config = body.config if body else {}
-    if _forwards(name, registry):
-        return await on_leader(
-            LEASE_PROTOCOLS,
-            "connect",
-            {"name": name, "config": config},
-            lambda: _connect_local(registry, name, config),
-        )
-    return await _connect_local(registry, name, config)
+    # Only the option names: values may hold endpoint credentials.
+    details: dict[str, Any] = {"config_keys": sorted(config)}
+    try:
+        if _forwards(name, registry):
+            result = await on_leader(
+                LEASE_PROTOCOLS,
+                "connect",
+                {"name": name, "config": config},
+                lambda: _connect_local(registry, name, config),
+            )
+        else:
+            result = await _connect_local(registry, name, config)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_502_BAD_GATEWAY:
+            audit.record(
+                session,
+                request,
+                "control.protocol_connect",
+                actor=_user,
+                target_type="protocol",
+                target_id=name,
+                outcome="failure",
+                details={**details, "error": str(exc.detail)},
+                always=True,
+            )
+        raise
+    audit.record(
+        session,
+        request,
+        "control.protocol_connect",
+        actor=_user,
+        target_type="protocol",
+        target_id=name,
+        details={**details, "status": result.get("status")},
+    )
+    return result
 
 
 async def _connect_local(
@@ -188,18 +221,30 @@ async def _connect_local(
 @router.post("/{name}/disconnect", response_model=ConnectResponse)
 async def disconnect_protocol(
     name: str,
+    request: Request,
     _user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Disconnect a protocol adapter."""
     if _forwards(name, registry):
-        return await on_leader(
+        result = await on_leader(
             LEASE_PROTOCOLS,
             "disconnect",
             {"name": name},
             lambda: _disconnect_local(registry, name),
         )
-    return await _disconnect_local(registry, name)
+    else:
+        result = await _disconnect_local(registry, name)
+    audit.record(
+        session,
+        request,
+        "control.protocol_disconnect",
+        actor=_user,
+        target_type="protocol",
+        target_id=name,
+    )
+    return result
 
 
 async def _disconnect_local(registry: ProtocolRegistry, name: str) -> dict[str, Any]:

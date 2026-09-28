@@ -638,7 +638,7 @@ async def test_last_active_admin_is_protected(db_session: AsyncSession, make_use
         caller = UserModel(id=str(uuid.uuid4()), username="demoted-meanwhile", role="admin")
         for body in (UserUpdate(role="viewer"), UserUpdate(is_active=False)):
             with pytest.raises(HTTPException) as exc:
-                await update_user(last_id, body, session=db_session, admin=caller)
+                await update_user(last_id, body, request=None, session=db_session, admin=caller)
             assert exc.value.status_code == 409
             assert "last active admin" in exc.value.detail
         await db_session.rollback()

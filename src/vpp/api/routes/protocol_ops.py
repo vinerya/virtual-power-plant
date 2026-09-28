@@ -16,11 +16,13 @@ from __future__ import annotations
 import time
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp import audit
+from vpp.api.pagination import Page, page_params, paginate
 from vpp.api.routes.protocols import PROTOCOL_READ_TIMEOUT_S, get_registry
 from vpp.auth.security import get_current_user, require_role
 from vpp.cluster.rpc import on_leader, register_handler
@@ -144,15 +146,27 @@ def _require_cp(adapter: OCPPAdapter, cp_id: str) -> None:
 @router.post("/ocpp/charge-points/{cp_id}/remote-start")
 async def remote_start(
     cp_id: str,
+    request: Request,
     body: RemoteStartRequest | None = None,
     _user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Send RemoteStartTransaction; ``accepted`` is the charger's answer (live)."""
     adapter = _adapter(registry, "ocpp", OCPPAdapter)
     _require_cp(adapter, cp_id)
     body = body or RemoteStartRequest()
     accepted = await adapter.remote_start(cp_id, body.connector_id, id_tag=body.id_tag)
+    audit.record(
+        session,
+        request,
+        "control.ocpp_remote_start",
+        actor=_user,
+        target_type="charge_point",
+        target_id=cp_id,
+        outcome="success" if accepted else "failure",
+        details={**body.model_dump(), "accepted": bool(accepted), "mode": adapter.mode.value},
+    )
     return {
         **_header(adapter),
         "charge_point_id": cp_id,
@@ -165,15 +179,27 @@ async def remote_start(
 @router.post("/ocpp/charge-points/{cp_id}/remote-stop")
 async def remote_stop(
     cp_id: str,
+    request: Request,
     body: RemoteStopRequest | None = None,
     _user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Send RemoteStopTransaction (the given, or the charge point's latest, transaction)."""
     adapter = _adapter(registry, "ocpp", OCPPAdapter)
     _require_cp(adapter, cp_id)
     body = body or RemoteStopRequest()
     accepted = await adapter.remote_stop(cp_id, body.transaction_id)
+    audit.record(
+        session,
+        request,
+        "control.ocpp_remote_stop",
+        actor=_user,
+        target_type="charge_point",
+        target_id=cp_id,
+        outcome="success" if accepted else "failure",
+        details={**body.model_dump(), "accepted": bool(accepted), "mode": adapter.mode.value},
+    )
     return {
         **_header(adapter),
         "charge_point_id": cp_id,
@@ -299,8 +325,10 @@ async def _override_opt_local(
 async def override_opt(
     event_id: str,
     body: OptRequest,
+    request: Request,
     user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Operator opt-in/out override.
 
@@ -309,12 +337,38 @@ async def override_opt(
     dispatch for the event.
     """
     username = getattr(user, "username", None)
-    return await on_leader(
-        LEASE_PROTOCOLS,
-        "openadr_opt",
-        {"event_id": event_id, "body": body.model_dump(mode="json"), "username": username},
-        lambda: _override_opt_local(registry, event_id, body, username),
+    details = {"opt_type": body.opt_type, "reason": body.reason}
+    try:
+        result = await on_leader(
+            LEASE_PROTOCOLS,
+            "openadr_opt",
+            {"event_id": event_id, "body": body.model_dump(mode="json"), "username": username},
+            lambda: _override_opt_local(registry, event_id, body, username),
+        )
+    except HTTPException as exc:
+        if exc.status_code == 502:  # VTN unreachable / rejected the response
+            audit.record(
+                session,
+                request,
+                "control.dr_opt",
+                actor=user,
+                target_type="dr_event",
+                target_id=event_id,
+                outcome="failure",
+                details={**details, "error": str(exc.detail)},
+                always=True,
+            )
+        raise
+    audit.record(
+        session,
+        request,
+        "control.dr_opt",
+        actor=user,
+        target_type="dr_event",
+        target_id=event_id,
+        details=details,
     )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -427,20 +481,26 @@ for _method, _handler in (
 
 @dr_router.get("/responses")
 async def dr_responses(
+    response: Response,
     protocol: str | None = None,
     source_id: str | None = None,
     action: str | None = None,
-    limit: int = Query(100, ge=1, le=1000),
+    page: Page = Depends(page_params(default_limit=100, max_limit=1000)),
     _user=Depends(get_current_user),
     session: AsyncSession = Depends(get_db),
 ):
-    """Audit log of DR decisions (received/opt/dispatch/release), newest first."""
-    stmt = select(DREventResponseModel).order_by(DREventResponseModel.created_at.desc())
+    """Log of DR decisions (received/opt/dispatch/release), newest first.
+
+    Paginated (``limit`` / ``offset``); the total is in ``X-Total-Count``.
+    """
+    stmt = select(DREventResponseModel).order_by(
+        DREventResponseModel.created_at.desc(), DREventResponseModel.id
+    )
     if protocol:
         stmt = stmt.where(DREventResponseModel.protocol == protocol)
     if source_id:
         stmt = stmt.where(DREventResponseModel.source_id == source_id)
     if action:
         stmt = stmt.where(DREventResponseModel.action == action)
-    rows = (await session.execute(stmt.limit(limit))).scalars().all()
+    rows = await paginate(session, response, stmt, page)
     return [response_to_dict(r) for r in rows]

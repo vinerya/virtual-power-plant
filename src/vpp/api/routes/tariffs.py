@@ -40,10 +40,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp.api.pagination import Page, page_params, paginate
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import UserModel
@@ -158,14 +159,18 @@ async def create_tariff(
 @router.get("", response_model=list[TariffRead])
 @router.get("/", response_model=list[TariffRead], include_in_schema=False)
 async def list_tariffs(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    response: Response,
+    page: Page = Depends(page_params(default_limit=50, max_limit=200, legacy_skip=True)),
     utility: str | None = None,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """List tariffs (paginated, filterable by ``utility``)."""
-    rows = await TariffRepository.list(session, skip=skip, limit=limit, utility=utility)
+    """List tariffs, newest first (filterable by ``utility``).
+
+    Paginated (``limit`` / ``offset``, ``skip`` is an alias); the total is in
+    ``X-Total-Count``.
+    """
+    rows = await paginate(session, response, TariffRepository.list_query(utility=utility), page)
     return [_row_to_read(r) for r in rows]
 
 

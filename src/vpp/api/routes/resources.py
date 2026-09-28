@@ -14,13 +14,14 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
 
+from vpp.api.pagination import Page, page_params, paginate
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import ResourceModel, UserModel
@@ -186,19 +187,21 @@ async def _conflict_if_name_taken(session: AsyncSession, name: str) -> None:
 
 @router.get("", response_model=list[ResourceResponse])
 async def list_resources(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    response: Response,
+    page: Page = Depends(page_params(default_limit=50, max_limit=200, legacy_skip=True)),
     resource_type: str | None = Query(None, description="battery | solar | wind_turbine (wind)"),
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """List all registered energy resources."""
-    items = await ResourceRepository.list_all(
-        session,
-        skip=skip,
-        limit=limit,
-        resource_type=normalize_resource_type(resource_type) if resource_type else None,
+    """List registered energy resources, newest first.
+
+    Paginated (``limit`` / ``offset``, ``skip`` is an alias); the total is in
+    ``X-Total-Count``.
+    """
+    stmt = ResourceRepository.list_query(
+        normalize_resource_type(resource_type) if resource_type else None
     )
+    items = await paginate(session, response, stmt, page)
     socs = await latest_soc(session, [r.id for r in items if r.resource_type == "battery"])
     return [resource_to_response(r, socs.get(r.id)) for r in items]
 

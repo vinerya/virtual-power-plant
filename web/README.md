@@ -73,7 +73,8 @@ rate-limit each user separately once this server's address is in the API's
 | `/protocols` | Protocol adapters with LIVE / SIMULATED badges, counters, connect / disconnect | `/api/v1/protocols` |
 | `/settings` | Platform config YAML editor (self-hosted Monaco), schema validation, server errors inline, diff, apply | `/api/v1/config` |
 | `/settings/account` | Change password, log out everywhere, own API keys (new keys shown once) | `/api/auth/password`, `/api/auth/logout-all`, `/api/v1/auth/api-keys` |
-| `/settings/users` | Admin: create users, change roles, activate/deactivate, reset passwords, revoke sessions, every API key | `/api/v1/users*`, `/api/v1/auth/api-keys?all=true` |
+| `/settings/users` | Admin: create users, change roles, activate/deactivate, delete, reset passwords, revoke sessions, every API key | `/api/v1/users*`, `/api/v1/auth/api-keys?all=true` |
+| `/settings/audit` | Admin: audit log (sign-ins, credential and user changes, control actions), filtered and paged | `/api/v1/audit` (total from `X-Total-Count`) |
 | `/portal` | Customer overview: energy flow from their live devices, bill summary | `/api/v1/customer/me*` |
 | `/portal/account` | Change password, log out everywhere | `/api/auth/password`, `/api/auth/logout-all` |
 | `/portal/bill`, `/portal/devices`, `/portal/enroll` | Bill breakdown (or the server's explanation when no bill is possible), devices, DR program enrollment | `/api/v1/customer/*` |

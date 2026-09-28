@@ -49,8 +49,20 @@ export type CreatedApiKey = z.infer<typeof createdKeySchema>;
 
 // -- admin -------------------------------------------------------------------
 
+/** Largest page the users endpoint serves (`limit` max). */
+export const USERS_PAGE_MAX = 500;
+
 export async function listUsers(): Promise<User[]> {
-  return parseResponse(z.array(userSchema), await api.get("/api/v1/users"), "users");
+  return parseResponse(
+    z.array(userSchema),
+    await api.get(`/api/v1/users?limit=${USERS_PAGE_MAX}`),
+    "users",
+  );
+}
+
+/** Permanently delete a user (their API keys go with them). */
+export function deleteUser(id: string): Promise<void> {
+  return api.delete(`/api/v1/users/${encodeURIComponent(id)}`);
 }
 
 export async function createUser(body: {
@@ -87,9 +99,44 @@ export function revokeUserSessions(id: string): Promise<void> {
 export async function listApiKeys(all = false): Promise<ApiKey[]> {
   return parseResponse(
     z.array(apiKeySchema),
-    await api.get(`/api/v1/auth/api-keys${all ? "?all=true" : ""}`),
+    await api.get(`/api/v1/auth/api-keys?limit=500${all ? "&all=true" : ""}`),
     "API keys",
   );
+}
+
+// -- audit log (admin) -------------------------------------------------------
+
+export const auditEntrySchema = z.object({
+  id: z.number(),
+  ts: z.string(),
+  actor_id: z.string().nullable().optional(),
+  actor_username: z.string().nullable().optional(),
+  action: z.string(),
+  target_type: z.string().nullable().optional(),
+  target_id: z.string().nullable().optional(),
+  client_ip: z.string().nullable().optional(),
+  outcome: z.string(),
+  details: z.record(z.unknown()).optional().default({}),
+});
+export type AuditEntry = z.infer<typeof auditEntrySchema>;
+
+export interface AuditQuery {
+  actor?: string;
+  action?: string;
+  outcome?: string;
+  limit: number;
+  offset: number;
+}
+
+export async function listAudit(
+  q: AuditQuery,
+): Promise<{ entries: AuditEntry[]; total: number | null }> {
+  const params = new URLSearchParams({ limit: String(q.limit), offset: String(q.offset) });
+  if (q.actor) params.set("actor", q.actor);
+  if (q.action) params.set("action", q.action);
+  if (q.outcome) params.set("outcome", q.outcome);
+  const { items, total } = await api.getPaged<unknown>(`/api/v1/audit?${params}`);
+  return { entries: parseResponse(z.array(auditEntrySchema), items, "audit log"), total };
 }
 
 export async function createApiKey(body: { name: string; role: UserRole }): Promise<CreatedApiKey> {

@@ -290,7 +290,8 @@ fresh token.
 | `/protocols` | adapters with LIVE / SIMULATED badges, connect/disconnect |
 | `/settings` | platform config YAML editor with schema validation |
 | `/settings/account` | change password, log out everywhere, your API keys |
-| `/settings/users` | admin: users (role, activation, password reset, sessions) and every API key |
+| `/settings/users` | admin: users (role, activation, deletion, password reset, sessions) and every API key |
+| `/settings/audit` | admin: audit log of sign-ins, credential and user changes and control actions |
 | `/portal/*` | customer portal: overview, bill, devices, program enrollment, account (password) |
 
 Viewers get read-only pages; the backend enforces every permission

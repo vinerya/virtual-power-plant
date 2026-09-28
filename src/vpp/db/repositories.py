@@ -9,7 +9,7 @@ from datetime import datetime as _datetime
 from datetime import timezone as _tz
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import (
@@ -64,17 +64,18 @@ class ResourceRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    def list_query(resource_type: str | None = None) -> Select:
+        """Filtered, deterministically ordered select (no paging)."""
+        stmt = select(ResourceModel).order_by(ResourceModel.created_at.desc(), ResourceModel.id)
+        if resource_type:
+            stmt = stmt.where(ResourceModel.resource_type == resource_type)
+        return stmt
+
+    @staticmethod
     async def list_all(
         session: AsyncSession, *, skip: int = 0, limit: int = 100, resource_type: str | None = None
     ) -> list[ResourceModel]:
-        stmt = (
-            select(ResourceModel)
-            .offset(skip)
-            .limit(limit)
-            .order_by(ResourceModel.created_at.desc())
-        )
-        if resource_type:
-            stmt = stmt.where(ResourceModel.resource_type == resource_type)
+        stmt = ResourceRepository.list_query(resource_type).offset(skip).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
@@ -310,7 +311,28 @@ class OptimizationRepository:
         end: datetime | None = None,
         resource_ids: list[str] | None = None,
     ) -> list[OptimizationRunModel]:
-        stmt = select(OptimizationRunModel).order_by(OptimizationRunModel.created_at.desc())
+        stmt = (
+            OptimizationRepository.runs_query(
+                problem_type=problem_type, start=start, end=end, resource_ids=resource_ids
+            )
+            .offset(skip)
+            .limit(limit)
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    def runs_query(
+        *,
+        problem_type: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resource_ids: list[str] | None = None,
+    ) -> Select:
+        """Filtered, deterministically ordered select of runs (no paging)."""
+        stmt = select(OptimizationRunModel).order_by(
+            OptimizationRunModel.created_at.desc(), OptimizationRunModel.id
+        )
         if problem_type:
             stmt = stmt.where(OptimizationRunModel.problem_type == problem_type)
         if start is not None:
@@ -330,9 +352,7 @@ class OptimizationRepository:
                     ]
                 )
             )
-        stmt = stmt.offset(skip).limit(limit)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return stmt
 
     @staticmethod
     async def get_stats(session: AsyncSession) -> dict[str, Any]:
@@ -381,13 +401,19 @@ class TradingRepository:
         market: str | None = None,
         status: str | None = None,
     ) -> list[OrderModel]:
-        stmt = select(OrderModel).offset(skip).limit(limit).order_by(OrderModel.created_at.desc())
+        stmt = TradingRepository.orders_query(market=market, status=status)
+        result = await session.execute(stmt.offset(skip).limit(limit))
+        return list(result.scalars().all())
+
+    @staticmethod
+    def orders_query(*, market: str | None = None, status: str | None = None) -> Select:
+        """Filtered, deterministically ordered select of orders (no paging)."""
+        stmt = select(OrderModel).order_by(OrderModel.created_at.desc(), OrderModel.id)
         if market:
             stmt = stmt.where(OrderModel.market == market)
         if status:
             stmt = stmt.where(OrderModel.status == status)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return stmt
 
     @staticmethod
     async def update_order_status(
@@ -421,13 +447,19 @@ class TradingRepository:
         market: str | None = None,
         order_id: str | None = None,
     ) -> list[TradeModel]:
-        stmt = select(TradeModel).offset(skip).limit(limit).order_by(TradeModel.created_at.desc())
+        stmt = TradingRepository.trades_query(market=market, order_id=order_id)
+        result = await session.execute(stmt.offset(skip).limit(limit))
+        return list(result.scalars().all())
+
+    @staticmethod
+    def trades_query(*, market: str | None = None, order_id: str | None = None) -> Select:
+        """Filtered, deterministically ordered select of trades (no paging)."""
+        stmt = select(TradeModel).order_by(TradeModel.created_at.desc(), TradeModel.id)
         if market:
             stmt = stmt.where(TradeModel.market == market)
         if order_id:
             stmt = stmt.where(TradeModel.order_id == order_id)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return stmt
 
 
 # ---------------------------------------------------------------------------
@@ -528,17 +560,21 @@ class TariffRepository:
     async def list(
         session: AsyncSession, *, skip: int = 0, limit: int = 50, utility: str | None = None
     ) -> list[TariffRow]:
+        stmt = TariffRepository.list_query(utility=utility).offset(skip).limit(limit)
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    def list_query(*, utility: str | None = None) -> Select:
+        """Live (not deleted) tariffs, newest first (no paging)."""
         stmt = (
             select(TariffRow)
             .where(TariffRow.deleted_at.is_(None))
-            .offset(skip)
-            .limit(limit)
-            .order_by(TariffRow.created_at.desc())
+            .order_by(TariffRow.created_at.desc(), TariffRow.id)
         )
         if utility:
             stmt = stmt.where(TariffRow.utility == utility)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return stmt
 
     @staticmethod
     async def update(session: AsyncSession, tariff_id: str, **fields: Any) -> TariffRow | None:
@@ -612,10 +648,16 @@ class EventLogRepository:
         resource_id: str | None = None,
         limit: int = 100,
     ) -> list[EventLogModel]:
-        stmt = select(EventLogModel).limit(limit).order_by(EventLogModel.created_at.desc())
+        stmt = EventLogRepository.query_stmt(event_type=event_type, resource_id=resource_id)
+        result = await session.execute(stmt.limit(limit))
+        return list(result.scalars().all())
+
+    @staticmethod
+    def query_stmt(*, event_type: str | None = None, resource_id: str | None = None) -> Select:
+        """Filtered events, newest first (no paging)."""
+        stmt = select(EventLogModel).order_by(EventLogModel.created_at.desc(), EventLogModel.id)
         if event_type:
             stmt = stmt.where(EventLogModel.event_type == event_type)
         if resource_id:
             stmt = stmt.where(EventLogModel.resource_id == resource_id)
-        result = await session.execute(stmt)
-        return list(result.scalars().all())
+        return stmt

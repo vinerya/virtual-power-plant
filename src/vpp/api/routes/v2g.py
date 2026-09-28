@@ -19,11 +19,12 @@ import json
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp import audit
 from vpp.api.routes.protocols import get_registry
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
@@ -425,6 +426,7 @@ async def fleet_flexibility(
 @router.post("/schedule")
 async def create_schedule(
     body: ScheduleRequest,
+    request: Request,
     user=Depends(require_role("admin", "operator")),
     session: AsyncSession = Depends(get_db),
     registry: ProtocolRegistry = Depends(get_registry),
@@ -473,6 +475,19 @@ async def create_schedule(
     )
     await session.commit()
     summary = summarize_deliveries(deliveries)
+    audit.record(
+        session,
+        request,
+        "control.v2g_schedule",
+        actor=user,
+        target_type="v2g_schedule",
+        target_id=record.id,
+        details={
+            "vehicles": len(rows),
+            "push_to_chargers": body.push_to_chargers,
+            "deliveries": summary,
+        },
+    )
     await publish(
         EventType.V2G_SCHEDULE_CREATED,
         {
@@ -508,6 +523,7 @@ async def list_schedules(
 @router.post("/dispatch")
 async def dispatch_signal(
     body: DispatchRequest,
+    request: Request,
     user=Depends(require_role("admin", "operator")),
     aggregator: V2GAggregator = Depends(get_aggregator),
     session: AsyncSession = Depends(get_db),
@@ -556,6 +572,21 @@ async def dispatch_signal(
         deliveries=deliveries,
     )
     await session.commit()
+    audit.record(
+        session,
+        request,
+        "control.v2g_dispatch",
+        actor=user,
+        target_type="v2g_schedule",
+        target_id=record.id,
+        details={
+            "target_power_kw": body.target_power_kw,
+            "achieved_power_kw": result.achieved_power_kw,
+            "service": body.service,
+            "vehicles": len(rows),
+            "push_to_chargers": body.push_to_chargers,
+        },
+    )
     fleet = aggregator.fleet
     await publish(
         EventType.V2G_DISPATCH,
@@ -583,6 +614,7 @@ async def dispatch_signal(
 @router.post("/bid")
 async def create_bid(
     body: BidRequest,
+    request: Request,
     user=Depends(require_role("admin", "operator")),
     aggregator: V2GAggregator = Depends(get_aggregator),
     session: AsyncSession = Depends(get_db),
@@ -603,6 +635,15 @@ async def create_bid(
         raise HTTPException(status_code=409, detail="Insufficient flexibility for bid")
     await record_bid(session, bid, created_by=getattr(user, "id", None))
     await session.commit()
+    audit.record(
+        session,
+        request,
+        "control.v2g_bid",
+        actor=user,
+        target_type="v2g_bid",
+        target_id=getattr(bid, "bid_id", None),
+        details=body.model_dump(),
+    )
     return bid.to_dict()
 
 
