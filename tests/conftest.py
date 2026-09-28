@@ -50,8 +50,13 @@ async def client(app) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest_asyncio.fixture
-async def db_session() -> AsyncGenerator[AsyncSession, None]:
-    """Provide a database session for direct repository testing."""
+async def db_session(app) -> AsyncGenerator[AsyncSession, None]:
+    """Provide a database session for direct repository testing.
+
+    Depends on ``app`` because that fixture initialises the database; without
+    it a test using only ``db_session`` fails with "Database not initialised"
+    when run on its own.
+    """
     async for session in get_db():
         yield session
 
