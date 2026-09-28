@@ -39,7 +39,7 @@ async def test_customer_login_issues_customer_audience(client: AsyncClient, auth
 
 async def test_operator_login_issues_operator_audience(client: AsyncClient, admin_user):
     resp = await client.post(
-        "/api/v1/auth/token", params={"username": "testadmin", "password": "adminpassword123"}
+        "/api/v1/auth/token", data={"username": "testadmin", "password": "adminpassword123"}
     )
     assert resp.status_code == 200
     token = resp.json()["access_token"]
@@ -122,6 +122,6 @@ async def test_inactive_user_cannot_log_in(client: AsyncClient, auth_headers: di
     user.is_active = False
     await db_session.commit()
     resp = await client.post(
-        "/api/v1/auth/token", params={"username": user.username, "password": "password123"}
+        "/api/v1/auth/token", data={"username": user.username, "password": "password123"}
     )
     assert resp.status_code == 401

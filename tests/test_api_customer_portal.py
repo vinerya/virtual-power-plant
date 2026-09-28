@@ -430,7 +430,7 @@ async def test_register_customer_without_profile(client: AsyncClient, auth_heade
     )
     assert resp.status_code == 201
     login = await client.post(
-        "/api/v1/auth/token", params={"username": username, "password": "password123"}
+        "/api/v1/auth/token", data={"username": username, "password": "password123"}
     )
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     me = (await client.get("/api/v1/customer/me", headers=headers)).json()

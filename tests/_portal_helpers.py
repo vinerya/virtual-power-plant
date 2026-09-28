@@ -48,7 +48,7 @@ async def create_customer(
     resp = await client.post("/api/v1/customers", json=body, headers=admin_headers)
     assert resp.status_code == 201, resp.text
     login = await client.post(
-        "/api/v1/auth/token", params={"username": username, "password": "password123"}
+        "/api/v1/auth/token", data={"username": username, "password": "password123"}
     )
     assert login.status_code == 200, login.text
     return resp.json()["id"], {"Authorization": f"Bearer {login.json()['access_token']}"}
