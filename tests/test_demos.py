@@ -53,6 +53,21 @@ class TestDemos:
         assert "OpenADR" in captured.out
         assert "OCPP" in captured.out
 
+    def test_protocols_demo_without_current_event_loop(self, capsys):
+        """Regression: the demo used asyncio.get_event_loop(), which raises
+        "There is no current event loop" when an earlier test (e.g. any
+        pytest-asyncio test or asyncio.run call) has cleared the loop.
+        Reproduce that state deterministically instead of relying on order."""
+        import asyncio
+
+        from demos.protocols_demo import run
+
+        asyncio.set_event_loop(None)
+        run()
+        captured = capsys.readouterr()
+        assert "Response: optIn (auto)" in captured.out
+        assert "Demo complete" in captured.out
+
     def test_dashboard_demo(self, capsys):
         from demos.dashboard_demo import run
         run()

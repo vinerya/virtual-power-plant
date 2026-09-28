@@ -65,23 +65,13 @@ def run() -> None:
     print(f"    Signal: {dr_event.signal_type.value} = {dr_event.signal_level}")
     print(f"    Duration: {dr_event.duration_seconds / 3600:.1f} hours")
 
-    # Auto opt-in response (handle_incoming_event is async)
-    response = asyncio.get_event_loop().run_until_complete(
-        openadr.handle_incoming_event(dr_event)
-    ) if asyncio.get_event_loop().is_running() is False else None
-
-    # Fallback: run in a new loop for sync contexts
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop and loop.is_running():
-        # Already in an async context — just show simulated response
-        print(f"    Response: optIn (auto)")
-    else:
-        response = asyncio.run(openadr.handle_incoming_event(dr_event))
-        print(f"    Response: {response.opt_type} (auto)")
+    # Auto opt-in response. handle_incoming_event is async and run() is a
+    # plain sync entry point, so drive it with asyncio.run(), which always
+    # creates (and closes) its own loop. Do not use asyncio.get_event_loop()
+    # here: on Python 3.10+ it raises "There is no current event loop" once
+    # an earlier asyncio.run() / pytest-asyncio test has cleared the loop.
+    response = asyncio.run(openadr.handle_incoming_event(dr_event))
+    print(f"    Response: {response.opt_type} (auto)")
 
     print(f"    Events tracked: {len(openadr.get_active_events())}")
 

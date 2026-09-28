@@ -140,6 +140,9 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["vpp"]
+# The repo-root ``alembic/`` migrations directory would otherwise make ruff
+# classify the installed ``alembic`` library as first-party.
+known-third-party = ["alembic"]
 
 [tool.mypy]
 python_version = "3.10"

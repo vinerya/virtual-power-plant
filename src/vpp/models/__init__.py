@@ -20,8 +20,7 @@ from .battery import (
     create_battery_model
 )
 
-# Version information
-__version__ = "1.0.0"
+# Package metadata (the version lives in vpp.__version__ only)
 __author__ = "VPP Development Team"
 
 # Export all public classes and functions

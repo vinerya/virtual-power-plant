@@ -12,7 +12,9 @@ from vpp.protocols.base import ProtocolRegistry, ProtocolStatus
 
 router = APIRouter(prefix="/api/v1/protocols", tags=["protocols"])
 
-# Module-level registry instance (wired up in app.py lifespan)
+# Process-wide registry, created at import time.  The app lifespan's MQTT and
+# Modbus ingestion loops register their adapters into it via get_registry();
+# set_registry() lets tests swap in an isolated instance.
 _registry = ProtocolRegistry()
 
 

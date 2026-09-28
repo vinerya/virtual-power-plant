@@ -62,7 +62,7 @@ This project fills that gap: a **complete, production-ready VPP platform** with 
 - **JWT authentication** with role-based access control and API key support
 - **SQLAlchemy 2.0 async** database layer (SQLite dev, PostgreSQL prod)
 - **Pydantic v2 schemas** for request/response validation
-- **Docker Compose** deployment with PostgreSQL and Redis
+- **Docker Compose** deployment with PostgreSQL
 - **CI/CD pipelines** — GitHub Actions for lint, test, security scan, Docker build, PyPI release
 
 ### Monitoring & Observability
@@ -304,7 +304,7 @@ Connect to `/ws` and subscribe to: `resource_updates`, `optimization_events`, `m
 ## Docker Deployment
 
 ```bash
-# Full stack: API + PostgreSQL + Redis
+# Full stack: API + PostgreSQL
 docker-compose up -d
 
 # With monitoring: + Prometheus (:9090) + Grafana (:3001, dashboards

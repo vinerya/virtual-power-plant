@@ -39,14 +39,9 @@ class ResourceModel(TimestampMixin, Base):
     config_json: Mapped[str] = mapped_column(Text, default="{}")  # type-specific params
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
 
-    # M3 -- Battery degradation persistence.
-    # NOTE: this project relies on `Base.metadata.create_all()` at startup
-    # rather than alembic migrations.  When alembic is wired up later (M4+),
-    # these four columns require an explicit migration on existing dev DBs:
-    #   ALTER TABLE resources ADD COLUMN state_of_health FLOAT DEFAULT 1.0;
-    #   ALTER TABLE resources ADD COLUMN cumulative_throughput_kwh FLOAT DEFAULT 0.0;
-    #   ALTER TABLE resources ADD COLUMN last_degradation_update DATETIME NULL;
-    #   ALTER TABLE resources ADD COLUMN chemistry VARCHAR(16) NULL;
+    # M3 -- Battery degradation persistence.  Migration:
+    # 0002_add_battery_degradation.py.  Any schema change in this module needs
+    # a matching alembic revision; tests/test_alembic_drift.py enforces it.
     state_of_health: Mapped[float] = mapped_column(Float, default=1.0)
     cumulative_throughput_kwh: Mapped[float] = mapped_column(Float, default=0.0)
     last_degradation_update: Mapped[datetime | None] = mapped_column(
@@ -215,7 +210,7 @@ class APIKeyModel(TimestampMixin, Base):
 
 
 # ---------------------------------------------------------------------------
-# Events
+# Tariffs
 # ---------------------------------------------------------------------------
 
 class TariffRow(TimestampMixin, Base):
@@ -234,6 +229,10 @@ class TariffRow(TimestampMixin, Base):
     effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
 
 class EventLogModel(TimestampMixin, Base):
     """Persisted event log for auditing and replay."""

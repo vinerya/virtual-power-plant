@@ -55,6 +55,8 @@ import time
 from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
+from vpp._version import __version__
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -84,11 +86,7 @@ if _HAS_PROMETHEUS:
 
     # -- Platform info
     VPP_INFO = Info("vpp", "VPP platform information", registry=REGISTRY)
-    try:
-        from vpp import __version__ as _vpp_version
-    except Exception:  # pragma: no cover - defensive, partial installs
-        _vpp_version = "unknown"
-    VPP_INFO.info({"version": _vpp_version})
+    VPP_INFO.info({"version": __version__})
 
     # -- Resource metrics
     RESOURCE_COUNT = Gauge(

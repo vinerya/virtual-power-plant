@@ -1,21 +1,19 @@
 """Virtual Power Plant (VPP) library initialization."""
 
-from .core import VirtualPowerPlant
+from . import models, optimization
+from ._version import __version__
 from .config import VPPConfig
+from .core import VirtualPowerPlant
 from .exceptions import VPPError
 
-# Import advanced modules
-from . import optimization
-from . import models
-
-__version__ = "2.0.0"
 __author__ = "VPP Development Team"
 __license__ = "MIT"
 
 __all__ = [
-    "VirtualPowerPlant",
-    "VPPConfig", 
+    "VPPConfig",
     "VPPError",
-    "optimization",
-    "models"
+    "VirtualPowerPlant",
+    "__version__",
+    "models",
+    "optimization"
 ]

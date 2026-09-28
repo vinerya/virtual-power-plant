@@ -61,9 +61,15 @@ def init() -> None:
 
 
 @cli.command()
-def migrate() -> None:
-    """Run pending database migrations (via Alembic)."""
-    click.echo("Migrations will be available after alembic is configured.")
+@click.option("--revision", default="head", show_default=True, help="Target revision.")
+def migrate(revision: str) -> None:
+    """Run pending database migrations (alembic upgrade)."""
+    from vpp.db.engine import run_alembic_upgrade
+    from vpp.settings import get_settings
+
+    settings = get_settings()
+    run_alembic_upgrade(settings.database_url, revision)
+    click.echo(f"Database migrated to {revision} ({settings.database_url})")
 
 
 # ---------------------------------------------------------------------------
