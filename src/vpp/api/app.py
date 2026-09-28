@@ -439,6 +439,13 @@ def create_app(
     app.include_router(degradation.router)
     app.include_router(ocpp.router)  # OCPP 1.6-J websocket: /ocpp/{charge_point_id}
 
+    from .routes import customer, customers, resource_metrics, sites
+
+    app.include_router(resource_metrics.router)
+    app.include_router(sites.router)
+    app.include_router(customer.router)
+    app.include_router(customers.router)
+
     # -- WebSocket ----------------------------------------------------------
     from .websocket import websocket_endpoint
 

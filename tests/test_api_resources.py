@@ -52,3 +52,18 @@ async def test_duplicate_name_rejected(client: AsyncClient, auth_headers: dict):
     assert resp1.status_code == 201
     resp2 = await client.post("/api/v1/resources/", json=payload, headers=auth_headers)
     assert resp2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_update_resource_returns_fresh_row(client: AsyncClient, auth_headers: dict):
+    """PUT used to 500 (MissingGreenlet) lazy-loading the expired updated_at."""
+    created = await client.post(
+        "/api/v1/resources/",
+        json={"name": "put-regression", "resource_type": "battery", "rated_power": 5.0},
+        headers=auth_headers,
+    )
+    rid = created.json()["id"]
+    resp = await client.put(f"/api/v1/resources/{rid}", json={"online": False}, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["online"] is False
+    assert resp.json()["updated_at"]

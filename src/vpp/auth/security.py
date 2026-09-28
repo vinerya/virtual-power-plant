@@ -16,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vpp.db.engine import get_db
 from vpp.db.models import UserModel, APIKeyModel
 from vpp.db.repositories import UserRepository
-from vpp.schemas.auth import TokenPayload, UserRole
+from vpp.schemas.auth import (
+    AUDIENCE_CUSTOMER,
+    AUDIENCE_OPERATOR,
+    TokenPayload,
+    UserRole,
+    audience_for_role,
+)
 from vpp.settings import Settings, get_settings
 
 _bearer_scheme = HTTPBearer(auto_error=False)
@@ -63,26 +69,48 @@ def create_access_token(data: dict[str, Any], settings: Settings | None = None) 
 def decode_access_token(token: str, settings: Settings | None = None) -> TokenPayload:
     settings = settings or get_settings()
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
-        return TokenPayload(**payload)
-    except JWTError as exc:
+        # ``aud`` is validated below (and against the user's role in
+        # get_current_principal) rather than by python-jose, which would
+        # otherwise reject every token carrying an ``aud`` claim when no
+        # single expected audience is passed.
+        payload = jwt.decode(
+            token,
+            settings.secret_key,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_aud": False},
+        )
+        decoded = TokenPayload(**payload)
+    except (JWTError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+    if decoded.aud is not None and decoded.aud not in (AUDIENCE_OPERATOR, AUDIENCE_CUSTOMER):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token audience",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return decoded
 
 
 # ---------------------------------------------------------------------------
 # FastAPI dependencies
 # ---------------------------------------------------------------------------
 
-async def get_current_user(
+async def get_current_principal(
     bearer: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     api_key: str | None = Depends(_api_key_header),
     session: AsyncSession = Depends(get_db),
 ) -> UserModel:
-    """Resolve the current user from either a JWT bearer token or an API key."""
+    """Resolve the caller from a JWT bearer token or an API key, any role.
+
+    This includes ``customer`` accounts. Only routes that scope every
+    response to the caller's own data (the member portal, ``/auth/me``,
+    ownership-checked site/metrics reads) should depend on this directly;
+    everything else should use :func:`get_current_user`.
+    """
 
     # Try JWT first
     if bearer is not None:
@@ -90,6 +118,14 @@ async def get_current_user(
         user = await UserRepository.get_by_id(session, payload.sub)
         if user is None or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        # A token minted for one console must not outlive a role change
+        # that moves the user to the other one.
+        if payload.aud is not None and payload.aud != audience_for_role(user.role):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token audience does not match account",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return user
 
     # Fall back to API key
@@ -101,6 +137,24 @@ async def get_current_user(
         detail="Missing authentication credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+async def get_current_user(
+    user: UserModel = Depends(get_current_principal),
+) -> UserModel:
+    """Resolve the current *operator-side* user (deny-by-default for customers).
+
+    Every pre-existing operator endpoint depends on this, so adding the
+    ``customer`` role cannot silently expose fleet-wide data: customer
+    accounts get 403 here and must go through routes that explicitly opt in
+    via :func:`get_current_principal` or ``require_role(UserRole.CUSTOMER)``.
+    """
+    if user.role == UserRole.CUSTOMER.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Customer accounts cannot access operator endpoints",
+        )
+    return user
 
 
 async def get_api_key_user(api_key: str, session: AsyncSession) -> UserModel:
@@ -127,7 +181,7 @@ def require_role(*roles: str | UserRole):
 
     allowed = {r.value if isinstance(r, UserRole) else r for r in roles}
 
-    async def _check(user: UserModel = Depends(get_current_user)) -> UserModel:
+    async def _check(user: UserModel = Depends(get_current_principal)) -> UserModel:
         if user.role not in allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

@@ -31,6 +31,7 @@ Every other key is passed straight through to
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from vpp.protocols.base import ProtocolMessage
@@ -96,6 +97,16 @@ class ModbusResourcePersister:
                     "Modbus telemetry for unknown resource %r; dropping", self._resource_id
                 )
                 return
+            # Keep history too, so GET /resources/{id}/metrics has a series
+            # for Modbus devices (battery_states only covers MQTT batteries).
+            from vpp.portal.telemetry import record_samples
+
+            await record_samples(
+                session,
+                self._resource_id,
+                [(datetime.fromtimestamp(message.timestamp, tz=timezone.utc), kw, None)],
+                source="modbus",
+            )
             await session.commit()
 
         try:

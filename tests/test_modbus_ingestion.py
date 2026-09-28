@@ -179,3 +179,34 @@ async def test_handle_message_publishes_resource_updated_event(db_session, app):
     assert received[0].event_type == EventType.RESOURCE_UPDATED
     assert received[0].data["resource_id"] == resource.id
     assert received[0].data["current_power_kw"] == pytest.approx(3.0)
+
+
+@pytest.mark.asyncio
+async def test_handle_message_records_telemetry_history(db_session, app):
+    """Each poll is also appended to resource_telemetry for /metrics history."""
+    from sqlalchemy import select
+
+    from vpp.db.models import ResourceTelemetryModel
+
+    reset_event_bus()
+    resource = await ResourceRepository.create(
+        db_session,
+        name=f"modbus-history-{datetime.now().timestamp()}",
+        resource_type="solar",
+        rated_power=5.0,
+    )
+    await db_session.commit()
+
+    persister = ModbusResourcePersister(resource.id, get_session_factory())
+    msg = ProtocolMessage(topic="modbus/x", payload={"ac_power": 1200.0}, source="modbus")
+    await persister.handle_message(msg)
+
+    rows = (
+        await db_session.execute(
+            select(ResourceTelemetryModel).where(ResourceTelemetryModel.resource_id == resource.id)
+        )
+    ).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].power_kw == pytest.approx(1.2)
+    assert rows[0].source == "modbus"
+    assert rows[0].state_of_charge is None

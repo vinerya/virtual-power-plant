@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vpp.auth.security import (
     create_access_token,
     generate_api_key,
+    get_current_principal,
     get_current_user,
     get_password_hash,
     hash_api_key,
@@ -20,10 +21,12 @@ from vpp.db.repositories import UserRepository
 from vpp.schemas.auth import (
     APIKeyCreate,
     APIKeyResponse,
+    MeResponse,
     Token,
     UserCreate,
     UserResponse,
     UserRole,
+    audience_for_role,
 )
 from vpp.settings import get_settings
 
@@ -34,12 +37,21 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 async def login(username: str, password: str, session: AsyncSession = Depends(get_db)):
     """Authenticate and receive a JWT access token."""
     user = await UserRepository.get_by_username(session, username)
-    if user is None or not verify_password(password, user.hashed_password):
+    if (
+        user is None
+        or not user.is_active
+        or not verify_password(password, user.hashed_password)
+    ):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     settings = get_settings()
     token = create_access_token(
-        {"sub": user.id, "username": user.username, "role": user.role},
+        {
+            "sub": user.id,
+            "username": user.username,
+            "role": user.role,
+            "aud": audience_for_role(user.role),
+        },
         settings,
     )
     return Token(access_token=token, expires_in=settings.jwt_expire_minutes * 60)
@@ -65,10 +77,21 @@ async def register(
     return user
 
 
-@router.get("/me", response_model=UserResponse)
-async def me(user: UserModel = Depends(get_current_user)):
-    """Return the currently authenticated user."""
-    return user
+@router.get("/me", response_model=MeResponse)
+async def me(user: UserModel = Depends(get_current_principal)):
+    """Return the currently authenticated user (any role, incl. customers).
+
+    ``audience`` tells the web console which UI to route the user to; it is
+    derived from the user's *current* role, not echoed from the token.
+    """
+    return MeResponse(
+        id=user.id,
+        username=user.username,
+        role=UserRole(user.role),
+        is_active=user.is_active,
+        created_at=user.created_at,
+        audience=audience_for_role(user.role),
+    )
 
 
 @router.post("/api-key", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
