@@ -35,10 +35,16 @@ def _exchange(base_volume=20.0, seed=11):
     market.status = MarketStatus.OPEN
     market.tick_size = 0.01
     market.lot_size = 0.1
-    provider = SimulatedDataProvider({
-        "markets": ["rt"], "base_prices": {"rt": 50.0}, "seed": seed,
-        "volatility": 0.3, "mean_reversion": 3.0, "base_volume": base_volume,
-    })
+    provider = SimulatedDataProvider(
+        {
+            "markets": ["rt"],
+            "base_prices": {"rt": 50.0},
+            "seed": seed,
+            "volatility": 0.3,
+            "mean_reversion": 3.0,
+            "base_volume": base_volume,
+        }
+    )
     return SimulatedExchange([market], provider, start=T0), market
 
 
@@ -65,7 +71,9 @@ class TestSimulatedExchange:
         assert sum(f.quantity for f in fills) == pytest.approx(qty)
         assert fills[0].price == first_price and fills[0].liquidity == "taker"
         assert fills[-1].price > first_price
-        assert fills[0].fee == pytest.approx(fills[0].quantity * (market.transaction_fee + market.market_fee))
+        assert fills[0].fee == pytest.approx(
+            fills[0].quantity * (market.transaction_fee + market.market_fee)
+        )
         assert first_price not in market.order_book.asks  # consumed
         assert ex.snapshot("rt").ask_price > first_price
 
@@ -167,17 +175,26 @@ class _BuyThenSell(TradingStrategy):
     def generate_signals(self, market_data, portfolio):
         signals = []
         if self.bar == 0:
-            signals.append({"action": "buy", "market": "m", "quantity": self.qty, "order_type": "market"})
+            signals.append(
+                {"action": "buy", "market": "m", "quantity": self.qty, "order_type": "market"}
+            )
         elif self.bar == self.exit_bar:
-            signals.append({"action": "sell", "market": "m", "quantity": self.qty, "order_type": "market"})
+            signals.append(
+                {"action": "sell", "market": "m", "quantity": self.qty, "order_type": "market"}
+            )
         self.bar += 1
         return signals
 
 
 class TestBacktest:
     def test_hand_computed_round_trip(self):
-        result = run_backtest(_BuyThenSell(), {"m": [10.0, 11.0, 12.0]},
-                              fee_per_unit=0.0, half_spread=0.0, initial_cash=1000.0)
+        result = run_backtest(
+            _BuyThenSell(),
+            {"m": [10.0, 11.0, 12.0]},
+            fee_per_unit=0.0,
+            half_spread=0.0,
+            initial_cash=1000.0,
+        )
         assert result.num_trades == 2
         assert result.total_pnl == pytest.approx(20.0)
         assert result.realized_pnl == pytest.approx(20.0)
@@ -188,8 +205,13 @@ class TestBacktest:
         assert result.final_positions == {}
 
     def test_fees_spread_and_drawdown(self):
-        result = run_backtest(_BuyThenSell(exit_bar=5), {"m": [10.0, 5.0, 10.0]},
-                              fee_per_unit=0.1, half_spread=0.0, initial_cash=1000.0)
+        result = run_backtest(
+            _BuyThenSell(exit_bar=5),
+            {"m": [10.0, 5.0, 10.0]},
+            fee_per_unit=0.1,
+            half_spread=0.0,
+            initial_cash=1000.0,
+        )
         assert result.num_trades == 1
         assert result.fees == pytest.approx(1.0)
         # Equity: 999 -> 949 -> 999; drawdown from the 1000 starting peak.
@@ -197,8 +219,13 @@ class TestBacktest:
         assert result.unrealized_pnl == pytest.approx(0.0)
         assert result.final_positions == {"m": 10.0}
 
-        spread = run_backtest(_BuyThenSell(), {"m": [10.0, 10.0, 10.0]},
-                              fee_per_unit=0.0, half_spread=0.01, initial_cash=1000.0)
+        spread = run_backtest(
+            _BuyThenSell(),
+            {"m": [10.0, 10.0, 10.0]},
+            fee_per_unit=0.0,
+            half_spread=0.01,
+            initial_cash=1000.0,
+        )
         assert spread.total_pnl == pytest.approx(-(0.1 + 0.1) * 10)
 
     def test_input_validation(self):

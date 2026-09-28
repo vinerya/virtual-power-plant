@@ -49,16 +49,30 @@ async def test_site_contract_matches_console(client: AsyncClient, auth_headers: 
     await db_session.commit()
     await _set_power(client, auth_headers, bat, -2.0)
     await _set_power(client, auth_headers, pv, 4.5)
-    db_session.add(BatteryStateModel(
-        resource_id=bat, soc=60.0, timestamp=datetime.now(timezone.utc) - timedelta(minutes=1)
-    ))
+    db_session.add(
+        BatteryStateModel(
+            resource_id=bat, soc=60.0, timestamp=datetime.now(timezone.utc) - timedelta(minutes=1)
+        )
+    )
     await db_session.commit()
 
     site = await create_site(
         client, auth_headers, region="ERCOT", resource_ids=[bat, pv], timezone="America/Chicago"
     )
-    for key in ("id", "name", "lat", "lon", "region", "resource_ids", "total_resources",
-                "online_count", "current_power", "rated_power", "active_alerts", "health"):
+    for key in (
+        "id",
+        "name",
+        "lat",
+        "lon",
+        "region",
+        "resource_ids",
+        "total_resources",
+        "online_count",
+        "current_power",
+        "rated_power",
+        "active_alerts",
+        "health",
+    ):
         assert key in site, key
     assert sorted(site["resource_ids"]) == sorted([bat, pv])
     assert site["total_resources"] == 2
@@ -79,10 +93,14 @@ async def test_site_contract_matches_console(client: AsyncClient, auth_headers: 
     assert all(s["region"] == "ERCOT" for s in filtered.json())
 
 
-async def test_latest_soc_prefers_newest_source(client: AsyncClient, auth_headers: dict, db_session):
+async def test_latest_soc_prefers_newest_source(
+    client: AsyncClient, auth_headers: dict, db_session
+):
     bat = await create_resource(client, auth_headers)
     now = datetime.now(timezone.utc)
-    db_session.add(BatteryStateModel(resource_id=bat, soc=90.0, timestamp=now - timedelta(hours=1)))
+    db_session.add(
+        BatteryStateModel(resource_id=bat, soc=90.0, timestamp=now - timedelta(hours=1))
+    )
     await db_session.commit()
     await _set_power(client, auth_headers, bat, 1.0, soc=0.25)  # newer, generic telemetry
     site = await create_site(client, auth_headers, resource_ids=[bat])
@@ -129,7 +147,9 @@ async def test_customer_sees_only_own_sites(client: AsyncClient, auth_headers: d
     assert [s["id"] for s in listing.json()] == [mine["id"]]
     assert (await client.get(f"/api/v1/sites/{mine['id']}", headers=cheaders)).status_code == 200
     for other in (theirs, unowned):
-        assert (await client.get(f"/api/v1/sites/{other['id']}", headers=cheaders)).status_code == 404
+        assert (
+            await client.get(f"/api/v1/sites/{other['id']}", headers=cheaders)
+        ).status_code == 404
 
 
 async def test_site_write_permissions(client: AsyncClient, auth_headers: dict, db_session):
@@ -172,13 +192,15 @@ async def test_membership_is_exclusive_and_replaceable(client: AsyncClient, auth
     b = await create_resource(client, auth_headers)
     s1 = await create_site(client, auth_headers, resource_ids=[a])
     conflict = await client.post(
-        "/api/v1/sites", json={"name": "s2", "lat": 0, "lon": 0, "resource_ids": [a]},
+        "/api/v1/sites",
+        json={"name": "s2", "lat": 0, "lon": 0, "resource_ids": [a]},
         headers=auth_headers,
     )
     assert conflict.status_code == 409
 
     patched = await client.patch(
-        f"/api/v1/sites/{s1['id']}", json={"resource_ids": [b], "name": "renamed"},
+        f"/api/v1/sites/{s1['id']}",
+        json={"resource_ids": [b], "name": "renamed"},
         headers=auth_headers,
     )
     assert patched.status_code == 200, patched.text
@@ -189,7 +211,9 @@ async def test_membership_is_exclusive_and_replaceable(client: AsyncClient, auth
     assert s2["resource_ids"] == [a]
 
     # Deleting a site unassigns (not deletes) its resources.
-    assert (await client.delete(f"/api/v1/sites/{s1['id']}", headers=auth_headers)).status_code == 204
+    assert (
+        await client.delete(f"/api/v1/sites/{s1['id']}", headers=auth_headers)
+    ).status_code == 204
     assert (await client.get(f"/api/v1/resources/{b}", headers=auth_headers)).status_code == 200
     s3 = await create_site(client, auth_headers, resource_ids=[b])
     assert s3["resource_ids"] == [b]
@@ -198,15 +222,23 @@ async def test_membership_is_exclusive_and_replaceable(client: AsyncClient, auth
 async def test_owner_assignment_and_unassignment(client: AsyncClient, auth_headers: dict):
     cid, cheaders = await create_customer(client, auth_headers)
     site = await create_site(client, auth_headers)
-    resp = await client.patch(f"/api/v1/sites/{site['id']}", json={"owner_id": cid}, headers=auth_headers)
+    resp = await client.patch(
+        f"/api/v1/sites/{site['id']}", json={"owner_id": cid}, headers=auth_headers
+    )
     assert resp.json()["owner_id"] == cid
     assert (await client.get(f"/api/v1/sites/{site['id']}", headers=cheaders)).status_code == 200
-    resp = await client.patch(f"/api/v1/sites/{site['id']}", json={"owner_id": None}, headers=auth_headers)
+    resp = await client.patch(
+        f"/api/v1/sites/{site['id']}", json={"owner_id": None}, headers=auth_headers
+    )
     assert resp.json()["owner_id"] is None
     assert (await client.get(f"/api/v1/sites/{site['id']}", headers=cheaders)).status_code == 404
-    bad = await client.patch(f"/api/v1/sites/{site['id']}", json={"lat": None}, headers=auth_headers)
+    bad = await client.patch(
+        f"/api/v1/sites/{site['id']}", json={"lat": None}, headers=auth_headers
+    )
     assert bad.status_code == 422
-    assert (await client.patch("/api/v1/sites/nope", json={}, headers=auth_headers)).status_code == 404
+    assert (
+        await client.patch("/api/v1/sites/nope", json={}, headers=auth_headers)
+    ).status_code == 404
 
 
 async def test_meter_readings_ingest_and_read(client: AsyncClient, auth_headers: dict):
@@ -215,20 +247,29 @@ async def test_meter_readings_ingest_and_read(client: AsyncClient, auth_headers:
     url = f"/api/v1/sites/{site['id']}/meter-readings"
     t0 = datetime(2026, 3, 1, tzinfo=timezone.utc)
     readings = [
-        {"timestamp": (t0 + timedelta(minutes=15 * i)).isoformat(), "import_kwh": 0.5, "export_kwh": 0.1}
+        {
+            "timestamp": (t0 + timedelta(minutes=15 * i)).isoformat(),
+            "import_kwh": 0.5,
+            "export_kwh": 0.1,
+        }
         for i in range(4)
     ]
-    resp = await client.post(url, json={"interval_minutes": 15, "readings": readings}, headers=auth_headers)
+    resp = await client.post(
+        url, json={"interval_minutes": 15, "readings": readings}, headers=auth_headers
+    )
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"site_id": site["id"], "received": 4, "inserted": 4, "updated": 0}
 
     # Re-sending an interval corrects it (upsert).
     fix = [{"timestamp": t0.isoformat(), "import_kwh": 0.9}]
-    resp = await client.post(url, json={"interval_minutes": 15, "readings": fix}, headers=auth_headers)
+    resp = await client.post(
+        url, json={"interval_minutes": 15, "readings": fix}, headers=auth_headers
+    )
     assert resp.json()["updated"] == 1 and resp.json()["inserted"] == 0
 
     got = await client.get(
-        url, params={"start": t0.isoformat(), "end": (t0 + timedelta(hours=1)).isoformat()},
+        url,
+        params={"start": t0.isoformat(), "end": (t0 + timedelta(hours=1)).isoformat()},
         headers=cheaders,
     )
     assert got.status_code == 200
@@ -239,16 +280,26 @@ async def test_meter_readings_ingest_and_read(client: AsyncClient, auth_headers:
 
     # Misaligned timestamp, mixed interval, negative energy, customer write.
     misaligned = [{"timestamp": (t0 + timedelta(minutes=7)).isoformat(), "import_kwh": 1}]
-    assert (await client.post(url, json={"interval_minutes": 15, "readings": misaligned},
-                              headers=auth_headers)).status_code == 422
+    assert (
+        await client.post(
+            url, json={"interval_minutes": 15, "readings": misaligned}, headers=auth_headers
+        )
+    ).status_code == 422
     hourly = [{"timestamp": t0.isoformat(), "import_kwh": 1}]
-    assert (await client.post(url, json={"interval_minutes": 60, "readings": hourly},
-                              headers=auth_headers)).status_code == 409
+    assert (
+        await client.post(
+            url, json={"interval_minutes": 60, "readings": hourly}, headers=auth_headers
+        )
+    ).status_code == 409
     neg = [{"timestamp": t0.isoformat(), "import_kwh": -1}]
-    assert (await client.post(url, json={"interval_minutes": 15, "readings": neg},
-                              headers=auth_headers)).status_code == 422
-    assert (await client.post(url, json={"interval_minutes": 15, "readings": fix},
-                              headers=cheaders)).status_code == 403
+    assert (
+        await client.post(
+            url, json={"interval_minutes": 15, "readings": neg}, headers=auth_headers
+        )
+    ).status_code == 422
+    assert (
+        await client.post(url, json={"interval_minutes": 15, "readings": fix}, headers=cheaders)
+    ).status_code == 403
 
 
 async def test_customer_cannot_read_foreign_meter_data(client: AsyncClient, auth_headers: dict):

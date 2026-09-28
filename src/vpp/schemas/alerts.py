@@ -32,7 +32,8 @@ class AlertRead(BaseModel):
     title: str
     message: str
     status: AlertStatusLiteral = Field(
-        ..., description="Effective status: an expired snooze reads as 'active'",
+        ...,
+        description="Effective status: an expired snooze reads as 'active'",
     )
     snoozed_until: datetime | None = None
     acknowledged_at: datetime | None = None
@@ -69,7 +70,9 @@ class AlertRuleBase(BaseModel):
     description: str = Field("", max_length=2000)
     rule_type: RuleTypeLiteral = "threshold"
     metric: str = Field(
-        ..., min_length=1, max_length=64,
+        ...,
+        min_length=1,
+        max_length=64,
         description=(
             "Numeric key of RESOURCE_UPDATED telemetry, e.g. 'soc', 'soh', "
             "'temperature', 'current_power_kw'. 'soc'/'soh' are compared on a "
@@ -84,10 +87,13 @@ class AlertRuleBase(BaseModel):
     z_score_threshold: float = Field(3.0, gt=0)
     cooldown_s: float = Field(300.0, ge=0)
     resource_id: str | None = Field(
-        default=None, max_length=36, description="Restrict the rule to one resource",
+        default=None,
+        max_length=36,
+        description="Restrict the rule to one resource",
     )
     auto_resolve: bool = Field(
-        True, description="Threshold rules: resolve open alerts once the value is back in range",
+        True,
+        description="Threshold rules: resolve open alerts once the value is back in range",
     )
     enabled: bool = True
 

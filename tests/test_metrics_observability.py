@@ -52,10 +52,13 @@ async def test_http_metrics_use_route_template_not_raw_path(client: AsyncClient,
     # The raw id must never appear as a label value.
     metrics_text = (await client.get("/metrics")).text
     assert rid not in metrics_text
-    assert _sample(
-        "vpp_api_request_duration_seconds_count",
-        {"method": "GET", "endpoint": "/api/v1/resources/{resource_id}"},
-    ) >= 1
+    assert (
+        _sample(
+            "vpp_api_request_duration_seconds_count",
+            {"method": "GET", "endpoint": "/api/v1/resources/{resource_id}"},
+        )
+        >= 1
+    )
 
 
 @pytest.mark.asyncio
@@ -107,7 +110,8 @@ def test_collector_is_noop_without_prometheus(monkeypatch):
     c.record_order("day_ahead", "buy", "filled")
     c.set_resource_power("r", "battery", 1.0)
     vpp_metrics.observe_event(
-        Event(event_type=EventType.RESOURCE_UPDATED, data={"resource_id": "r", "soc": 50}), c,
+        Event(event_type=EventType.RESOURCE_UPDATED, data={"resource_id": "r", "soc": 50}),
+        c,
     )
     assert c.get_metrics_text().startswith(b"#")
     assert c.get_content_type() == "text/plain"
@@ -124,36 +128,54 @@ async def test_resource_updated_events_update_gauges():
     sub = vpp_metrics.subscribe_event_bus(bus)
     rid = f"res-{uuid.uuid4().hex[:8]}"
     try:
-        await bus.publish(Event(
-            event_type=EventType.RESOURCE_ADDED,
-            data={"id": rid, "resource_type": "battery"},
-        ))
-        await bus.publish(Event(
-            event_type=EventType.RESOURCE_UPDATED,
-            data={"resource_id": rid, "soc": 55.0, "power": -12.5},
-            source="mqtt.telemetry_ingestion",
-        ))
+        await bus.publish(
+            Event(
+                event_type=EventType.RESOURCE_ADDED,
+                data={"id": rid, "resource_type": "battery"},
+            )
+        )
+        await bus.publish(
+            Event(
+                event_type=EventType.RESOURCE_UPDATED,
+                data={"resource_id": rid, "soc": 55.0, "power": -12.5},
+                source="mqtt.telemetry_ingestion",
+            )
+        )
         assert _sample("vpp_battery_soc", {"resource_id": rid}) == pytest.approx(0.55)
-        assert _sample(
-            "vpp_resource_power_kw", {"resource_id": rid, "resource_type": "battery"},
-        ) == -12.5
+        assert (
+            _sample(
+                "vpp_resource_power_kw",
+                {"resource_id": rid, "resource_type": "battery"},
+            )
+            == -12.5
+        )
         assert _sample("vpp_resource_last_update_timestamp_seconds", {"resource_id": rid}) > 0
 
         # Modbus-style payload (no soc, current_power_kw) keeps the known type.
-        await bus.publish(Event(
-            event_type=EventType.RESOURCE_UPDATED,
-            data={"resource_id": rid, "current_power_kw": 7.0},
-            source="modbus.telemetry_ingestion",
-        ))
-        assert _sample(
-            "vpp_resource_power_kw", {"resource_id": rid, "resource_type": "battery"},
-        ) == 7.0
+        await bus.publish(
+            Event(
+                event_type=EventType.RESOURCE_UPDATED,
+                data={"resource_id": rid, "current_power_kw": 7.0},
+                source="modbus.telemetry_ingestion",
+            )
+        )
+        assert (
+            _sample(
+                "vpp_resource_power_kw",
+                {"resource_id": rid, "resource_type": "battery"},
+            )
+            == 7.0
+        )
 
         await bus.publish(Event(event_type=EventType.RESOURCE_REMOVED, data={"id": rid}))
         assert REGISTRY.get_sample_value("vpp_battery_soc", {"resource_id": rid}) is None
-        assert REGISTRY.get_sample_value(
-            "vpp_resource_power_kw", {"resource_id": rid, "resource_type": "battery"},
-        ) is None
+        assert (
+            REGISTRY.get_sample_value(
+                "vpp_resource_power_kw",
+                {"resource_id": rid, "resource_type": "battery"},
+            )
+            is None
+        )
     finally:
         bus.unsubscribe(sub)
 
@@ -165,33 +187,56 @@ async def test_optimization_and_trading_events_update_counters():
     pt = f"pt_{uuid.uuid4().hex[:6]}"
     market = f"mkt_{uuid.uuid4().hex[:6]}"
     try:
-        await bus.publish(Event(
-            event_type=EventType.OPTIMIZATION_COMPLETED,
-            data={"problem_type": pt, "solve_time_s": 0.2},
-        ))
-        await bus.publish(Event(
-            event_type=EventType.OPTIMIZATION_FAILED, data={"problem_type": pt},
-        ))
-        assert _sample("vpp_optimization_runs_total", {"problem_type": pt, "status": "success"}) == 1
+        await bus.publish(
+            Event(
+                event_type=EventType.OPTIMIZATION_COMPLETED,
+                data={"problem_type": pt, "solve_time_s": 0.2},
+            )
+        )
+        await bus.publish(
+            Event(
+                event_type=EventType.OPTIMIZATION_FAILED,
+                data={"problem_type": pt},
+            )
+        )
+        assert (
+            _sample("vpp_optimization_runs_total", {"problem_type": pt, "status": "success"}) == 1
+        )
         assert _sample("vpp_optimization_runs_total", {"problem_type": pt, "status": "error"}) == 1
         assert _sample("vpp_optimization_duration_seconds_count", {"problem_type": pt}) == 1
 
-        await bus.publish(Event(
-            event_type=EventType.ORDER_SUBMITTED, data={"market": market, "side": "buy"},
-        ))
-        await bus.publish(Event(
-            event_type=EventType.ORDER_FILLED, data={"market": market, "side": "buy"},
-        ))
-        await bus.publish(Event(
-            event_type=EventType.TRADE_EXECUTED,
-            data={"market": market, "side": "buy", "quantity_mwh": 2.5, "total_pnl": 42.0},
-        ))
-        assert _sample(
-            "vpp_trading_orders_total", {"market": market, "side": "buy", "status": "submitted"},
-        ) == 1
-        assert _sample(
-            "vpp_trading_orders_total", {"market": market, "side": "buy", "status": "filled"},
-        ) == 1
+        await bus.publish(
+            Event(
+                event_type=EventType.ORDER_SUBMITTED,
+                data={"market": market, "side": "buy"},
+            )
+        )
+        await bus.publish(
+            Event(
+                event_type=EventType.ORDER_FILLED,
+                data={"market": market, "side": "buy"},
+            )
+        )
+        await bus.publish(
+            Event(
+                event_type=EventType.TRADE_EXECUTED,
+                data={"market": market, "side": "buy", "quantity_mwh": 2.5, "total_pnl": 42.0},
+            )
+        )
+        assert (
+            _sample(
+                "vpp_trading_orders_total",
+                {"market": market, "side": "buy", "status": "submitted"},
+            )
+            == 1
+        )
+        assert (
+            _sample(
+                "vpp_trading_orders_total",
+                {"market": market, "side": "buy", "status": "filled"},
+            )
+            == 1
+        )
         assert _sample("vpp_trading_trades_total", {"market": market, "side": "buy"}) == 1
         assert _sample("vpp_trading_volume_mwh_total", {"market": market, "side": "buy"}) == 2.5
         assert _sample("vpp_trading_pnl_total") == 42.0
@@ -219,7 +264,12 @@ def test_module_helpers_delegate():
     vpp_metrics.record_trade(market, "sell", -1.5)
     vpp_metrics.set_trading_pnl(-3.0)
     vpp_metrics.record_alert_fired("critical", market)
-    assert _sample("vpp_trading_orders_total", {"market": market, "side": "sell", "status": "rejected"}) == 1
+    assert (
+        _sample(
+            "vpp_trading_orders_total", {"market": market, "side": "sell", "status": "rejected"}
+        )
+        == 1
+    )
     assert _sample("vpp_trading_volume_mwh_total", {"market": market, "side": "sell"}) == 1.5
     assert _sample("vpp_trading_pnl_total") == -3.0
     assert _sample("vpp_alerts_fired_total", {"severity": "critical", "rule": market}) == 1
@@ -326,7 +376,8 @@ async def test_prometheus_middleware_counts_500s():
     labels = {"method": "GET", "endpoint": "/boom", "status": "500"}
     before = _sample("vpp_api_requests_total", labels)
     async with AsyncClient(
-        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://t",
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://t",
     ) as c:
         resp = await c.get("/boom")
     assert resp.status_code == 500

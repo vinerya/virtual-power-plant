@@ -50,7 +50,9 @@ async def _validate_owner(session: AsyncSession, owner_id: str | None) -> None:
         return
     owner = await session.get(UserModel, owner_id)
     if owner is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"owner {owner_id!r} not found")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"owner {owner_id!r} not found"
+        )
     if owner.role != UserRole.CUSTOMER.value:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -58,9 +60,7 @@ async def _validate_owner(session: AsyncSession, owner_id: str | None) -> None:
         )
 
 
-async def _assign_resources(
-    session: AsyncSession, site_id: str, resource_ids: list[str]
-) -> None:
+async def _assign_resources(session: AsyncSession, site_id: str, resource_ids: list[str]) -> None:
     """Make ``resource_ids`` exactly the members of ``site_id``.
 
     Resources already assigned to a *different* site are rejected (409)
@@ -68,13 +68,21 @@ async def _assign_resources(
     customer sees and bills against.
     """
     wanted = list(dict.fromkeys(resource_ids))
-    rows = list(
-        (await session.execute(select(ResourceModel).where(ResourceModel.id.in_(wanted)))).scalars().all()
-    ) if wanted else []
+    rows = (
+        list(
+            (await session.execute(select(ResourceModel).where(ResourceModel.id.in_(wanted))))
+            .scalars()
+            .all()
+        )
+        if wanted
+        else []
+    )
     found = {r.id: r for r in rows}
     missing = [rid for rid in wanted if rid not in found]
     if missing:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"unknown resource ids: {missing}")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"unknown resource ids: {missing}"
+        )
     taken = [r.id for r in rows if r.site_id not in (None, site_id)]
     if taken:
         raise HTTPException(
@@ -82,8 +90,10 @@ async def _assign_resources(
             detail=f"resources already assigned to another site: {taken}",
         )
     current = (
-        await session.execute(select(ResourceModel).where(ResourceModel.site_id == site_id))
-    ).scalars().all()
+        (await session.execute(select(ResourceModel).where(ResourceModel.site_id == site_id)))
+        .scalars()
+        .all()
+    )
     for r in current:
         if r.id not in found:
             r.site_id = None
@@ -115,7 +125,9 @@ async def list_sites(
 
 
 @router.post("", response_model=SiteResponse, status_code=status.HTTP_201_CREATED)
-@router.post("/", response_model=SiteResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@router.post(
+    "/", response_model=SiteResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False
+)
 async def create_site(
     body: SiteCreate,
     session: AsyncSession = Depends(get_db),
@@ -169,7 +181,9 @@ async def update_site(
         if name in fields:
             value = getattr(body, name)
             if value is None and name in ("name", "lat", "lon", "timezone"):
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"{name} cannot be null")
+                raise HTTPException(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"{name} cannot be null"
+                )
             setattr(site, name, value)
     if "metadata" in fields:
         site.metadata_json = json.dumps(body.metadata or {})
@@ -192,12 +206,20 @@ async def delete_site(
     # Explicit rather than relying on FK actions (SQLite doesn't enforce them
     # unless PRAGMA foreign_keys is on).
     for r in (
-        await session.execute(select(ResourceModel).where(ResourceModel.site_id == site_id))
-    ).scalars().all():
+        (await session.execute(select(ResourceModel).where(ResourceModel.site_id == site_id)))
+        .scalars()
+        .all()
+    ):
         r.site_id = None
     for m in (
-        await session.execute(select(MeterReadingModel).where(MeterReadingModel.site_id == site_id))
-    ).scalars().all():
+        (
+            await session.execute(
+                select(MeterReadingModel).where(MeterReadingModel.site_id == site_id)
+            )
+        )
+        .scalars()
+        .all()
+    ):
         await session.delete(m)
     await session.delete(site)
     await session.flush()
@@ -231,7 +253,7 @@ async def ingest_meter_readings(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail=f"site already has {existing_iv}-minute interval data; "
-                   f"cannot mix with {body.interval_minutes}-minute readings",
+            f"cannot mix with {body.interval_minutes}-minute readings",
         )
 
     step = body.interval_minutes * 60
@@ -256,22 +278,34 @@ async def ingest_meter_readings(
                     MeterReadingModel.timestamp <= hi,
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     inserted = updated = 0
     for ts, (imp, exp) in by_ts.items():
         row = current.get(ts)
         if row is None:
-            session.add(MeterReadingModel(
-                site_id=site_id, timestamp=ts, interval_minutes=body.interval_minutes,
-                import_kwh=imp, export_kwh=exp,
-            ))
+            session.add(
+                MeterReadingModel(
+                    site_id=site_id,
+                    timestamp=ts,
+                    interval_minutes=body.interval_minutes,
+                    import_kwh=imp,
+                    export_kwh=exp,
+                )
+            )
             inserted += 1
         else:
             row.import_kwh, row.export_kwh = imp, exp
             updated += 1
     await session.flush()
-    return {"site_id": site_id, "received": len(body.readings), "inserted": inserted, "updated": updated}
+    return {
+        "site_id": site_id,
+        "received": len(body.readings),
+        "inserted": inserted,
+        "updated": updated,
+    }
 
 
 @router.get("/{site_id}/meter-readings", response_model=list[MeterReadingOut])
@@ -289,19 +323,25 @@ async def list_meter_readings(
     end_utc = as_utc(end) if end else datetime.now(timezone.utc)
     start_utc = as_utc(start) if start else end_utc - timedelta(days=7)
     if start_utc >= end_utc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="start must be before end")
-    rows = (
-        await session.execute(
-            select(MeterReadingModel)
-            .where(
-                MeterReadingModel.site_id == site_id,
-                MeterReadingModel.timestamp >= start_utc,
-                MeterReadingModel.timestamp < end_utc,
-            )
-            .order_by(MeterReadingModel.timestamp)
-            .limit(limit)
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="start must be before end"
         )
-    ).scalars().all()
+    rows = (
+        (
+            await session.execute(
+                select(MeterReadingModel)
+                .where(
+                    MeterReadingModel.site_id == site_id,
+                    MeterReadingModel.timestamp >= start_utc,
+                    MeterReadingModel.timestamp < end_utc,
+                )
+                .order_by(MeterReadingModel.timestamp)
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return [
         {
             "timestamp": as_utc(m.timestamp),

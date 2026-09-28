@@ -35,7 +35,7 @@ class ResearchModel(ABC):
         self._trained = False
         self._training_metrics: dict[str, Any] = {}
 
-    def is_production_ready(self) -> bool:  # noqa: PLR6301
+    def is_production_ready(self) -> bool:
         """Research models are NEVER production-ready by default."""
         return False
 

@@ -6,10 +6,11 @@ Registered for ``problem_type == 'stochastic_dispatch'``. Expects
 ``scenarios`` list (each entry a dict or :class:`Scenario` with ``probability``
 and ``prices``) and optional ``cvar_alpha`` / ``cvar_lambda``.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..base import (
     OptimizationPlugin,
@@ -18,7 +19,7 @@ from ..base import (
     OptimizationStatus,
 )
 from ..formulations.stochastic import build_stochastic_dispatch_model
-from .pyomo_plugin import _try_import_pyomo, PyomoPlugin
+from .pyomo_plugin import PyomoPlugin, _try_import_pyomo
 
 
 class StochasticCVaRPlugin(OptimizationPlugin):
@@ -60,7 +61,7 @@ class StochasticCVaRPlugin(OptimizationPlugin):
     def solve(
         self,
         problem: OptimizationProblem,
-        timeout_ms: Optional[int] = None,
+        timeout_ms: int | None = None,
     ) -> OptimizationResult:
         start = time.time()
         if not self.is_available():
@@ -131,9 +132,9 @@ class StochasticCVaRPlugin(OptimizationPlugin):
         # Extract per-scenario trajectories.
         S = len(scenarios)
         T = len(model.T)
-        per_scenario: List[Dict[str, Any]] = []
-        scenario_costs: List[float] = []
-        probs: List[float] = []
+        per_scenario: list[dict[str, Any]] = []
+        scenario_costs: list[float] = []
+        probs: list[float] = []
         for s in range(S):
             p_chg = [float(pyo.value(model.p_charge[t, s])) for t in range(T)]
             p_dis = [float(pyo.value(model.p_discharge[t, s])) for t in range(T)]
@@ -167,7 +168,7 @@ class StochasticCVaRPlugin(OptimizationPlugin):
         # Value-at-risk at level alpha equals the optimal eta (Rockafellar–Uryasev).
         value_at_risk = eta
 
-        solution: Dict[str, Any] = {
+        solution: dict[str, Any] = {
             "scenarios": per_scenario,
             "expected_cost": expected_cost,
             "cvar": cvar,

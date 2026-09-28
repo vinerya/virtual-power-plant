@@ -1,7 +1,8 @@
 """Tests for degradation-aware dispatch optimization (Milestone 2)."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -18,9 +19,7 @@ from vpp.optimization.solvers import PyomoPlugin
 from vpp.resources import Battery
 
 pyomo_available = PyomoPlugin().is_available()
-pytestmark = pytest.mark.skipif(
-    not pyomo_available, reason="pyomo + HiGHS not installed"
-)
+pytestmark = pytest.mark.skipif(not pyomo_available, reason="pyomo + HiGHS not installed")
 
 if pyomo_available:
     import pyomo.environ as pyo
@@ -32,7 +31,7 @@ CAP = 100.0
 P_MAX = 25.0
 
 
-def _params(prices: List[float]) -> Dict[str, Any]:
+def _params(prices: list[float]) -> dict[str, Any]:
     return {
         "battery_capacity_kwh": CAP,
         "max_charge_kw": P_MAX,
@@ -55,7 +54,7 @@ def _solve(model):
     return solver.solve(model)
 
 
-def _two_peak_prices() -> List[float]:
+def _two_peak_prices() -> list[float]:
     p = [0.10] * 24
     for h in (0, 1, 2, 3, 4, 13, 14):
         p[h] = 0.04
@@ -66,7 +65,7 @@ def _two_peak_prices() -> List[float]:
     return p
 
 
-def _step_prices() -> List[float]:
+def _step_prices() -> list[float]:
     """Single peak per day -- one cheap window, one expensive window."""
     p = [0.10] * 24
     for h in range(0, 6):
@@ -76,13 +75,13 @@ def _step_prices() -> List[float]:
     return p
 
 
-def _soc_trace(model) -> List[float]:
+def _soc_trace(model) -> list[float]:
     cap = pyo.value(model.cap)
     soc0 = pyo.value(model.soc_0) / cap
     return [soc0] + [pyo.value(model.soc[t]) / cap for t in model.T]
 
 
-def _cycling(soc_trace: List[float]) -> float:
+def _cycling(soc_trace: list[float]) -> float:
     return sum(abs(soc_trace[i] - soc_trace[i - 1]) for i in range(1, len(soc_trace)))
 
 
@@ -129,8 +128,7 @@ def test_wear_cost_proportional_to_throughput():
     wear = WearCost(throughput_cost_per_kwh=0.03, cycle_cost_curve={1.0: 1.0})
     dt = pyo.value(m_base.dt)
     realized = wear.throughput_cost_per_kwh * sum(
-        (pyo.value(m_base.p_charge[t]) + pyo.value(m_base.p_discharge[t])) * dt
-        for t in m_base.T
+        (pyo.value(m_base.p_charge[t]) + pyo.value(m_base.p_discharge[t])) * dt for t in m_base.T
     )
 
     # Now build a fresh model with the wear term, fix p_charge/p_discharge
@@ -182,12 +180,8 @@ def test_dod_pwl_prefers_shallow_cycles():
     soc_pwl = _soc_trace(m_pwl)
 
     # Max single-step |dSOC| is smaller in pwl mode (deep bins discouraged).
-    max_step_thru = max(
-        abs(soc_thru[i] - soc_thru[i - 1]) for i in range(1, len(soc_thru))
-    )
-    max_step_pwl = max(
-        abs(soc_pwl[i] - soc_pwl[i - 1]) for i in range(1, len(soc_pwl))
-    )
+    max_step_thru = max(abs(soc_thru[i] - soc_thru[i - 1]) for i in range(1, len(soc_thru)))
+    max_step_pwl = max(abs(soc_pwl[i] - soc_pwl[i - 1]) for i in range(1, len(soc_pwl)))
     assert max_step_pwl <= max_step_thru + 1e-6, (
         f"dod_pwl should produce shallower per-step swings: "
         f"thru={max_step_thru}, pwl={max_step_pwl}"
@@ -214,7 +208,8 @@ def test_wear_cost_hooks_for_telemetry_consistency_builds_and_solves():
         cycle_cost_curve={0.1: 0.5, 0.3: 2.0, 0.6: 10.0, 1.0: 50.0},
     )
     objective_terms, constraint_builders = wear_cost_hooks_for_telemetry_consistency(
-        wear, calendar_weight=0.01,
+        wear,
+        calendar_weight=0.01,
     )
     params = _params(_two_peak_prices())
     model = build_battery_dispatch_model(
@@ -288,9 +283,7 @@ def test_soh_updates_from_dispatch():
     rf = RainflowDegradation(**LFP_PRESET["rainflow"])
     expected_loss = rf.predict_capacity_loss(trace, dt_hours)
 
-    applied = battery.apply_realized_dispatch(
-        trace, dt_hours, degradation_model=rf
-    )
+    applied = battery.apply_realized_dispatch(trace, dt_hours, degradation_model=rf)
     assert applied == pytest.approx(expected_loss, rel=1e-9)
     assert battery.state_of_health == pytest.approx(1.0 - expected_loss, rel=1e-9)
     assert battery.cumulative_throughput_kwh > 0
@@ -302,12 +295,8 @@ def test_soh_updates_from_dispatch():
 
 
 def test_wear_cost_from_preset():
-    lfp = WearCost.from_preset(
-        LFP_PRESET, capacity_kwh=100.0, replacement_cost_dollars=20000.0
-    )
-    nmc = WearCost.from_preset(
-        NMC_PRESET, capacity_kwh=100.0, replacement_cost_dollars=20000.0
-    )
+    lfp = WearCost.from_preset(LFP_PRESET, capacity_kwh=100.0, replacement_cost_dollars=20000.0)
+    nmc = WearCost.from_preset(NMC_PRESET, capacity_kwh=100.0, replacement_cost_dollars=20000.0)
 
     # LFP: 6000 cycles * 2 * 100 = 1.2e6 kWh => $20000 / 1.2e6 ~= $0.0167/kWh
     assert lfp.throughput_cost_per_kwh == pytest.approx(20000.0 / 1_200_000.0, rel=1e-9)

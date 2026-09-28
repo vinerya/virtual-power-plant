@@ -99,8 +99,19 @@ async def test_list_alerts_matches_console_shape(client, auth_headers, db_sessio
     assert resp.status_code == 200, resp.text
     [item] = resp.json()
     # Fields read by web/lib/api/types.ts::Alert
-    for key in ("id", "timestamp", "severity", "source", "source_kind", "source_link",
-                "title", "message", "status", "snoozed_until", "acknowledged_at"):
+    for key in (
+        "id",
+        "timestamp",
+        "severity",
+        "source",
+        "source_kind",
+        "source_link",
+        "title",
+        "message",
+        "status",
+        "snoozed_until",
+        "acknowledged_at",
+    ):
         assert key in item
     assert item["id"] == row.id
     assert item["severity"] == "critical"
@@ -174,12 +185,16 @@ async def test_snooze_and_expiry(client, auth_headers, db_session):
     assert body["status"] == "snoozed"
     assert datetime.fromisoformat(body["snoozed_until"]) == until
 
-    snoozed = await client.get(f"/api/v1/alerts?source={row.source}&status=snoozed", headers=auth_headers)
+    snoozed = await client.get(
+        f"/api/v1/alerts?source={row.source}&status=snoozed", headers=auth_headers
+    )
     assert [a["id"] for a in snoozed.json()] == [row.id]
 
     # Snooze via duration only
     resp = await client.post(
-        f"/api/v1/alerts/{row.id}/snooze", json={"duration_ms": 1000}, headers=auth_headers,
+        f"/api/v1/alerts/{row.id}/snooze",
+        json={"duration_ms": 1000},
+        headers=auth_headers,
     )
     assert resp.status_code == 200
 
@@ -187,7 +202,9 @@ async def test_snooze_and_expiry(client, auth_headers, db_session):
     await db_session.refresh(row)
     row.snoozed_until = _now() - timedelta(seconds=1)
     await db_session.commit()
-    active = await client.get(f"/api/v1/alerts?source={row.source}&status=active", headers=auth_headers)
+    active = await client.get(
+        f"/api/v1/alerts?source={row.source}&status=active", headers=auth_headers
+    )
     assert [a["status"] for a in active.json()] == ["active"]
 
 
@@ -213,7 +230,9 @@ async def test_resolve(client, auth_headers, db_session):
     assert resp.json()["resolved_at"] is not None
     # Resolved alerts cannot be snoozed; ack is a no-op.
     snooze = await client.post(
-        f"/api/v1/alerts/{row.id}/snooze", json={"duration_ms": 1000}, headers=auth_headers,
+        f"/api/v1/alerts/{row.id}/snooze",
+        json={"duration_ms": 1000},
+        headers=auth_headers,
     )
     assert snooze.status_code == 409
     ack = await client.post(f"/api/v1/alerts/{row.id}/ack", headers=auth_headers)
@@ -228,9 +247,16 @@ async def test_resolve(client, auth_headers, db_session):
 @pytest.mark.asyncio
 async def test_rules_crud(client, auth_headers, viewer_headers):
     name = f"High temp {_uid()}"
-    body = {"name": name, "metric": "temperature", "comparison": ">", "threshold": 45,
-            "severity": "critical"}
-    assert (await client.post("/api/v1/alerts/rules", json=body, headers=viewer_headers)).status_code == 403
+    body = {
+        "name": name,
+        "metric": "temperature",
+        "comparison": ">",
+        "threshold": 45,
+        "severity": "critical",
+    }
+    assert (
+        await client.post("/api/v1/alerts/rules", json=body, headers=viewer_headers)
+    ).status_code == 403
 
     created = await client.post("/api/v1/alerts/rules", json=body, headers=auth_headers)
     assert created.status_code == 201, created.text
@@ -243,23 +269,35 @@ async def test_rules_crud(client, auth_headers, viewer_headers):
 
     listed = await client.get("/api/v1/alerts/rules", headers=viewer_headers)
     assert rid in {r["id"] for r in listed.json()}
-    assert (await client.get(f"/api/v1/alerts/rules/{rid}", headers=viewer_headers)).json()["name"] == name
+    assert (await client.get(f"/api/v1/alerts/rules/{rid}", headers=viewer_headers)).json()[
+        "name"
+    ] == name
 
     patched = await client.patch(
-        f"/api/v1/alerts/rules/{rid}", json={"threshold": 55, "enabled": False}, headers=auth_headers,
+        f"/api/v1/alerts/rules/{rid}",
+        json={"threshold": 55, "enabled": False},
+        headers=auth_headers,
     )
     assert patched.status_code == 200
     assert patched.json()["threshold"] == 55 and patched.json()["enabled"] is False
     assert patched.json()["metric"] == "temperature"
 
     bad = await client.post(
-        "/api/v1/alerts/rules", json={**body, "name": "x" + name, "severity": "fatal"}, headers=auth_headers,
+        "/api/v1/alerts/rules",
+        json={**body, "name": "x" + name, "severity": "fatal"},
+        headers=auth_headers,
     )
     assert bad.status_code == 422
 
-    assert (await client.delete(f"/api/v1/alerts/rules/{rid}", headers=auth_headers)).status_code == 204
-    assert (await client.get(f"/api/v1/alerts/rules/{rid}", headers=auth_headers)).status_code == 404
-    assert (await client.delete(f"/api/v1/alerts/rules/{rid}", headers=auth_headers)).status_code == 404
+    assert (
+        await client.delete(f"/api/v1/alerts/rules/{rid}", headers=auth_headers)
+    ).status_code == 204
+    assert (
+        await client.get(f"/api/v1/alerts/rules/{rid}", headers=auth_headers)
+    ).status_code == 404
+    assert (
+        await client.delete(f"/api/v1/alerts/rules/{rid}", headers=auth_headers)
+    ).status_code == 404
 
 
 # ---------------------------------------------------------------------------
@@ -269,27 +307,50 @@ async def test_rules_crud(client, auth_headers, viewer_headers):
 
 def test_manager_scopes_cooldown_per_source():
     mgr = AlertManager()
-    mgr.add_rule(AlertRule(name="r", rule_type=RuleType.THRESHOLD, metric_name="soc",
-                           threshold=0.1, comparison="<", cooldown_s=3600))
+    mgr.add_rule(
+        AlertRule(
+            name="r",
+            rule_type=RuleType.THRESHOLD,
+            metric_name="soc",
+            threshold=0.1,
+            comparison="<",
+            cooldown_s=3600,
+        )
+    )
     assert len(mgr.check("soc", 0.05, source="a")) == 1
     assert mgr.check("soc", 0.05, source="a") == []  # cooldown for a
-    [alert] = mgr.check("soc", 0.05, source="b")      # independent for b
+    [alert] = mgr.check("soc", 0.05, source="b")  # independent for b
     assert alert.source == "b" and alert.metadata["metric"] == "soc"
 
 
 def test_manager_respects_rule_resource_scope():
     mgr = AlertManager()
-    mgr.add_rule(AlertRule(name="r", rule_type=RuleType.THRESHOLD, metric_name="p",
-                           threshold=1, cooldown_s=0, resource_id="only-me"))
+    mgr.add_rule(
+        AlertRule(
+            name="r",
+            rule_type=RuleType.THRESHOLD,
+            metric_name="p",
+            threshold=1,
+            cooldown_s=0,
+            resource_id="only-me",
+        )
+    )
     assert mgr.check("p", 5, source="other") == []
     assert len(mgr.check("p", 5, source="only-me")) == 1
 
 
 def test_effective_status_and_serialize_naive_datetimes():
     row = AlertModel(
-        id="x", status="snoozed", severity="info", source="system", source_kind="system",
-        title="t", message="m", fired_at=datetime(2026, 1, 1, 12, 0),  # naive, as from SQLite
-        last_fired_at=datetime(2026, 1, 1, 12, 0), snoozed_until=datetime(2026, 1, 1, 13, 0),
+        id="x",
+        status="snoozed",
+        severity="info",
+        source="system",
+        source_kind="system",
+        title="t",
+        message="m",
+        fired_at=datetime(2026, 1, 1, 12, 0),  # naive, as from SQLite
+        last_fired_at=datetime(2026, 1, 1, 12, 0),
+        snoozed_until=datetime(2026, 1, 1, 13, 0),
         occurrences=1,
     )
     at = datetime(2026, 1, 1, 12, 30, tzinfo=timezone.utc)
@@ -315,16 +376,30 @@ async def _add_rule(**fields) -> AlertRuleModel:
 
 async def _alerts_for(source: str) -> list[AlertModel]:
     async with get_session_factory()() as s:
-        return list((await s.execute(
-            select(AlertModel).where(AlertModel.source == source).order_by(AlertModel.fired_at)
-        )).scalars().all())
+        return list(
+            (
+                await s.execute(
+                    select(AlertModel)
+                    .where(AlertModel.source == source)
+                    .order_by(AlertModel.fired_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
 
 @pytest.mark.asyncio
 async def test_service_fires_dedupes_and_auto_resolves(app, db_session):
     metric = f"m_{_uid()}"
-    rule = await _add_rule(name=f"Low {metric}", metric=metric, comparison="<", threshold=10.0,
-                           severity="critical", cooldown_s=0)
+    rule = await _add_rule(
+        name=f"Low {metric}",
+        metric=metric,
+        comparison="<",
+        threshold=10.0,
+        severity="critical",
+        cooldown_s=0,
+    )
     resource = ResourceModel(name=f"bat-{_uid()}", resource_type="battery", rated_power=5.0)
     db_session.add(resource)
     await db_session.commit()
@@ -333,33 +408,46 @@ async def test_service_fires_dedupes_and_auto_resolves(app, db_session):
     fake = FakeBroadcaster()
     svc = AlertService(get_session_factory(), broadcaster=fake)
     await svc.start(bus)
-    fired_before = REGISTRY.get_sample_value(
-        "vpp_alerts_fired_total", {"severity": "critical", "rule": rule.name},
-    ) or 0.0
+    fired_before = (
+        REGISTRY.get_sample_value(
+            "vpp_alerts_fired_total",
+            {"severity": "critical", "rule": rule.name},
+        )
+        or 0.0
+    )
     try:
+
         async def publish(value: float) -> None:
-            await bus.publish(Event(
-                event_type=EventType.RESOURCE_UPDATED,
-                data={"resource_id": resource.id, metric: value},
-            ))
+            await bus.publish(
+                Event(
+                    event_type=EventType.RESOURCE_UPDATED,
+                    data={"resource_id": resource.id, metric: value},
+                )
+            )
             await svc.drain()
 
         await publish(50.0)  # in range
         assert await _alerts_for(resource.id) == []
 
-        await publish(5.0)   # fires
+        await publish(5.0)  # fires
         [row] = await _alerts_for(resource.id)
         assert row.status == "active" and row.severity == "critical"
         assert row.rule_id == rule.id and row.title == rule.name
         assert resource.name in row.message
         assert len(fake.sent) == 1
         channel, payload = fake.sent[0]
-        assert channel == "alerts" and payload["id"] == row.id and payload["severity"] == "critical"
-        assert REGISTRY.get_sample_value(
-            "vpp_alerts_fired_total", {"severity": "critical", "rule": rule.name},
-        ) == fired_before + 1
+        assert (
+            channel == "alerts" and payload["id"] == row.id and payload["severity"] == "critical"
+        )
+        assert (
+            REGISTRY.get_sample_value(
+                "vpp_alerts_fired_total",
+                {"severity": "critical", "rule": rule.name},
+            )
+            == fired_before + 1
+        )
 
-        await publish(4.0)   # still low: de-duplicated onto the same alert
+        await publish(4.0)  # still low: de-duplicated onto the same alert
         [row] = await _alerts_for(resource.id)
         assert row.occurrences == 2 and row.value == 4.0
         assert len(fake.sent) == 1
@@ -368,7 +456,7 @@ async def test_service_fires_dedupes_and_auto_resolves(app, db_session):
         [row] = await _alerts_for(resource.id)
         assert row.status == "resolved" and row.resolved_by == "auto"
 
-        await publish(1.0)   # fires again as a new alert
+        await publish(1.0)  # fires again as a new alert
         rows = await _alerts_for(resource.id)
         assert [r.status for r in rows] == ["resolved", "active"]
         assert len(fake.sent) == 2
@@ -381,20 +469,29 @@ async def test_service_fires_dedupes_and_auto_resolves(app, db_session):
 async def test_service_normalises_soc_percent_and_ignores_other_events(app):
     metric = "soc"
     rid = f"res-{_uid()}"
-    rule = await _add_rule(name=f"soc low {_uid()}", metric=metric, comparison="<",
-                           threshold=0.1, cooldown_s=0, resource_id=rid)
+    rule = await _add_rule(
+        name=f"soc low {_uid()}",
+        metric=metric,
+        comparison="<",
+        threshold=0.1,
+        cooldown_s=0,
+        resource_id=rid,
+    )
     bus = EventBus()
     svc = AlertService(get_session_factory(), broadcaster=FakeBroadcaster())
     await svc.start(bus)
     try:
-        await bus.publish(Event(event_type=EventType.RESOURCE_UPDATED,
-                                data={"resource_id": rid, "soc": 50.0}))  # 50% -> 0.5
-        await bus.publish(Event(event_type=EventType.RESOURCE_FAULT,
-                                data={"resource_id": rid, "soc": 1.0}))   # not telemetry
+        await bus.publish(
+            Event(event_type=EventType.RESOURCE_UPDATED, data={"resource_id": rid, "soc": 50.0})
+        )  # 50% -> 0.5
+        await bus.publish(
+            Event(event_type=EventType.RESOURCE_FAULT, data={"resource_id": rid, "soc": 1.0})
+        )  # not telemetry
         await svc.drain()
         assert await _alerts_for(rid) == []
-        await bus.publish(Event(event_type=EventType.RESOURCE_UPDATED,
-                                data={"resource_id": rid, "soc": 5.0}))   # 5% -> 0.05
+        await bus.publish(
+            Event(event_type=EventType.RESOURCE_UPDATED, data={"resource_id": rid, "soc": 5.0})
+        )  # 5% -> 0.05
         await svc.drain()
         [row] = await _alerts_for(rid)
         assert row.value == pytest.approx(0.05)
@@ -500,11 +597,13 @@ async def test_lifespan_wires_alert_service(monkeypatch, preserve_db_globals):
             await ws_manager.connect(ws)
             await ws_manager.subscribe(ws, "alerts")
             try:
-                await get_event_bus().publish(Event(
-                    event_type=EventType.RESOURCE_UPDATED,
-                    data={"resource_id": "bat-life", "soc": 4.0, "temperature": 25.0},
-                    source="mqtt.telemetry_ingestion",
-                ))
+                await get_event_bus().publish(
+                    Event(
+                        event_type=EventType.RESOURCE_UPDATED,
+                        data={"resource_id": "bat-life", "soc": 4.0, "temperature": 25.0},
+                        source="mqtt.telemetry_ingestion",
+                    )
+                )
                 await asyncio.wait_for(svc.drain(), timeout=5)
             finally:
                 await ws_manager.disconnect(ws)
@@ -516,7 +615,9 @@ async def test_lifespan_wires_alert_service(monkeypatch, preserve_db_globals):
             assert data["title"] == "Battery SOC low"
             assert data["source"] == "bat-life"
             assert data["status"] == "active"
-            assert REGISTRY.get_sample_value("vpp_battery_soc", {"resource_id": "bat-life"}) == 0.04
+            assert (
+                REGISTRY.get_sample_value("vpp_battery_soc", {"resource_id": "bat-life"}) == 0.04
+            )
         assert get_alert_service() is None
     finally:
         reset_event_bus()

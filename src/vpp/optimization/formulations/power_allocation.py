@@ -45,6 +45,7 @@ Resource-level parameters (``resources`` list of dicts):
     cost_up      : float, marginal $/kWh when exporting (p > 0)
     cost_down    : float, marginal $/kWh when absorbing (p < 0)
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -129,11 +130,15 @@ def build_power_allocation_model(params: dict[str, Any]) -> pyo.ConcreteModel:
 
     def _share_pos(mm, i, k):
         ref, r = pairs_pos[i]
-        return mm.pos[r, k] * float(by_id[ref]["hi_kw"]) == mm.pos[ref, k] * float(by_id[r]["hi_kw"])
+        return mm.pos[r, k] * float(by_id[ref]["hi_kw"]) == mm.pos[ref, k] * float(
+            by_id[r]["hi_kw"]
+        )
 
     def _share_neg(mm, i, k):
         ref, r = pairs_neg[i]
-        return mm.neg[r, k] * float(by_id[ref]["lo_kw"]) == mm.neg[ref, k] * float(by_id[r]["lo_kw"])
+        return mm.neg[r, k] * float(by_id[ref]["lo_kw"]) == mm.neg[ref, k] * float(
+            by_id[r]["lo_kw"]
+        )
 
     m.share_pos = pyo.Constraint(range(len(pairs_pos)), m.K, rule=_share_pos)
     m.share_neg = pyo.Constraint(range(len(pairs_neg)), m.K, rule=_share_neg)
@@ -141,15 +146,14 @@ def build_power_allocation_model(params: dict[str, Any]) -> pyo.ConcreteModel:
     m.p = pyo.Expression(
         m.R, rule=lambda mm, r: sum(mm.pos[r, k] for k in mm.K) - sum(mm.neg[r, k] for k in mm.K)
     )
-    m.balance = pyo.Constraint(
-        expr=sum(m.p[r] for r in m.R) + m.short_up - m.short_down == target
-    )
+    m.balance = pyo.Constraint(expr=sum(m.p[r] for r in m.R) + m.short_up - m.short_down == target)
 
     def _seg_cost(base: float, k: int) -> float:
         return base + loading_penalty * (2 * k + 1) / K
 
     m.cost = pyo.Objective(
-        expr=dt * (
+        expr=dt
+        * (
             sum(
                 _seg_cost(float(by_id[r].get("cost_up", 0.0)), k) * m.pos[r, k]
                 + _seg_cost(float(by_id[r].get("cost_down", 0.0)), k) * m.neg[r, k]

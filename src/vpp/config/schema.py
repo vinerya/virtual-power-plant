@@ -177,6 +177,5 @@ def validate_config_mapping(
         return VPPConfigDocument.model_validate(data), []
     except ValidationError as exc:
         return None, [
-            {"path": _format_loc(tuple(err["loc"])), "message": err["msg"]}
-            for err in exc.errors()
+            {"path": _format_loc(tuple(err["loc"])), "message": err["msg"]} for err in exc.errors()
         ]

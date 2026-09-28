@@ -1,7 +1,5 @@
 """Tests for application settings."""
 
-import os
-
 import pytest
 
 from vpp.settings import Settings

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -21,6 +21,7 @@ class ResourceType(str, Enum):
 # Base schemas
 # ---------------------------------------------------------------------------
 
+
 class ResourceBase(BaseModel):
     """Shared resource fields."""
 
@@ -32,16 +33,17 @@ class ResourceBase(BaseModel):
 
 class ResourceCreate(ResourceBase):
     """Schema for creating a new resource (discriminated by resource_type)."""
+
     pass
 
 
 class ResourceUpdate(BaseModel):
     """Schema for updating a resource (all fields optional)."""
 
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    rated_power: Optional[float] = Field(None, gt=0)
-    metadata: Optional[dict[str, Any]] = None
-    online: Optional[bool] = None
+    name: str | None = Field(None, min_length=1, max_length=255)
+    rated_power: float | None = Field(None, gt=0)
+    metadata: dict[str, Any] | None = None
+    online: bool | None = None
 
 
 class ResourceResponse(ResourceBase):
@@ -60,6 +62,7 @@ class ResourceResponse(ResourceBase):
 # ---------------------------------------------------------------------------
 # Battery
 # ---------------------------------------------------------------------------
+
 
 class BatteryCreate(ResourceCreate):
     """Create a battery resource."""
@@ -95,6 +98,7 @@ class BatteryResponse(ResourceResponse):
 # Solar
 # ---------------------------------------------------------------------------
 
+
 class SolarCreate(ResourceCreate):
     """Create a solar resource."""
 
@@ -115,6 +119,7 @@ class SolarResponse(ResourceResponse):
 # ---------------------------------------------------------------------------
 # Wind Turbine
 # ---------------------------------------------------------------------------
+
 
 class WindTurbineCreate(ResourceCreate):
     """Create a wind turbine resource."""
@@ -160,6 +165,7 @@ class WindTurbineResponse(ResourceResponse):
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
+
 
 class ResourceMetrics(BaseModel):
     """Snapshot of resource metrics."""

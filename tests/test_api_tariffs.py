@@ -1,10 +1,11 @@
 """Tests for /api/v1/tariffs endpoints (Milestone 3)."""
+
 from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -15,8 +16,9 @@ from vpp.auth.security import create_access_token, get_password_hash
 from vpp.db.repositories import UserRepository
 from vpp.tariffs import BillingPeriod, MeterTrace, load_urdb_json
 
-
-PRESET = Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
+PRESET = (
+    Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
+)
 
 
 def _load_preset_dict() -> dict:
@@ -36,11 +38,13 @@ async def viewer_headers(db_session: AsyncSession) -> dict[str, str]:
             role="viewer",
         )
         await db_session.commit()
-    token = create_access_token({
-        "sub": user.id,
-        "username": user.username,
-        "role": user.role,
-    })
+    token = create_access_token(
+        {
+            "sub": user.id,
+            "username": user.username,
+            "role": user.role,
+        }
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -156,7 +160,9 @@ async def test_import_urdb_unauthenticated_403(client: AsyncClient, viewer_heade
 
 
 @pytest.mark.asyncio
-async def test_import_urdb_with_mocked_openei(client: AsyncClient, auth_headers: dict, monkeypatch):
+async def test_import_urdb_with_mocked_openei(
+    client: AsyncClient, auth_headers: dict, monkeypatch
+):
     """Mock httpx call to simulate a URDB record import."""
     monkeypatch.setenv("OPENEI_API_KEY", "test-key")
     preset = _load_preset_dict()
@@ -166,9 +172,15 @@ async def test_import_urdb_with_mocked_openei(client: AsyncClient, auth_headers:
     fake_response.json.return_value = {"items": [preset]}
 
     class _FakeClient:
-        def __init__(self, *a, **kw): pass
-        async def __aenter__(self): return self
-        async def __aexit__(self, *a): return False
+        def __init__(self, *a, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
         async def get(self, url, params=None):
             return fake_response
 

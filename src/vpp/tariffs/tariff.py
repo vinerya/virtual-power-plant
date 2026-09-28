@@ -1,4 +1,5 @@
 """Tariff orchestrator: composes rate components into a Bill."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -33,7 +34,9 @@ class Bill:
                 f"  ({self.period.days} days)"
             )
         lines.append("-" * len(header))
-        lines.append(f"{'Kind':<8} {'Label':<32} {'Qty':>10} {'Unit':<5} {'Rate':>9} {'Amount':>10}")
+        lines.append(
+            f"{'Kind':<8} {'Label':<32} {'Qty':>10} {'Unit':<5} {'Rate':>9} {'Amount':>10}"
+        )
         for li in self.line_items:
             lines.append(
                 f"{li.kind:<8} {li.label[:32]:<32} {li.quantity:>10.3f} "
@@ -107,12 +110,8 @@ class Tariff:
             primary_subtotal = round(minimum.amount, 4)
 
         # Snapshots BEFORE adders run, so adders don't compound with each other.
-        energy_snapshot = round(
-            sum(li.amount for li in items if li.kind in {"energy", "tier"}), 4
-        )
-        demand_snapshot = round(
-            sum(li.amount for li in items if li.kind == "demand"), 4
-        )
+        energy_snapshot = round(sum(li.amount for li in items if li.kind in {"energy", "tier"}), 4)
+        demand_snapshot = round(sum(li.amount for li in items if li.kind == "demand"), 4)
 
         # Adders.
         for ad in adders:
@@ -158,9 +157,7 @@ class Tariff:
 
         # Taxes (additive, not compounding).
         for tx in taxes:
-            base = (
-                post_adder_energy if tx.applies_to == "energy" else post_adder_subtotal
-            )
+            base = post_adder_energy if tx.applies_to == "energy" else post_adder_subtotal
             amount = round(base * tx.rate, 4)
             items.append(
                 BillLineItem(

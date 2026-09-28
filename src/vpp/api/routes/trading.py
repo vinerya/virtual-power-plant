@@ -65,20 +65,34 @@ def _metadata(row: OrderModel) -> dict[str, Any]:
 
 def _order_response(row: OrderModel) -> OrderResponse:
     return OrderResponse(
-        id=row.id, order_type=row.order_type, market=row.market, side=row.side,
-        quantity=row.quantity, price=row.price, status=row.status,
-        filled_quantity=row.filled_quantity, remaining_quantity=row.remaining_quantity,
-        average_price=row.average_price, time_in_force=row.time_in_force,
-        created_at=row.created_at or datetime.utcnow(), updated_at=row.updated_at,
+        id=row.id,
+        order_type=row.order_type,
+        market=row.market,
+        side=row.side,
+        quantity=row.quantity,
+        price=row.price,
+        status=row.status,
+        filled_quantity=row.filled_quantity,
+        remaining_quantity=row.remaining_quantity,
+        average_price=row.average_price,
+        time_in_force=row.time_in_force,
+        created_at=row.created_at or datetime.utcnow(),
+        updated_at=row.updated_at,
         metadata=_metadata(row),
     )
 
 
 def _trade_response(row: TradeModel) -> TradeResponse:
     return TradeResponse(
-        id=row.id, order_id=row.order_id, market=row.market, side=row.side,
-        quantity=row.quantity, price=row.price, fees=row.fees,
-        timestamp=row.created_at or datetime.utcnow(), strategy=row.strategy or None,
+        id=row.id,
+        order_id=row.order_id,
+        market=row.market,
+        side=row.side,
+        quantity=row.quantity,
+        price=row.price,
+        fees=row.fees,
+        timestamp=row.created_at or datetime.utcnow(),
+        strategy=row.strategy or None,
         realized_pnl=row.realized_pnl,
     )
 
@@ -111,10 +125,16 @@ async def submit_order(
     try:
         result = await svc.place_order(
             session,
-            order_type=body.order_type, market=body.market, side=body.side,
-            quantity=body.quantity, price=body.price, stop_price=body.stop_price,
-            limit_price=body.limit_price, visible_quantity=body.visible_quantity,
-            time_in_force=body.time_in_force, metadata=body.metadata,
+            order_type=body.order_type,
+            market=body.market,
+            side=body.side,
+            quantity=body.quantity,
+            price=body.price,
+            stop_price=body.stop_price,
+            limit_price=body.limit_price,
+            visible_quantity=body.visible_quantity,
+            time_in_force=body.time_in_force,
+            metadata=body.metadata,
             submitted_by=_username(user),
         )
     except TradingError as exc:
@@ -264,7 +284,8 @@ async def backtest_strategy(
             prices=body.prices,
             timestamps=body.timestamps,
             interval_minutes=(
-                body.interval_minutes if body.prices is not None
+                body.interval_minutes
+                if body.prices is not None
                 else body.synthetic.interval_minutes
             ),
             periods=body.synthetic.periods,
@@ -296,7 +317,10 @@ async def run_strategy(
     """
     try:
         return await get_trading_service().run_strategy(
-            session, name, params=body.params, dry_run=body.dry_run,
+            session,
+            name,
+            params=body.params,
+            dry_run=body.dry_run,
             submitted_by=_username(user),
         )
     except TradingError as exc:

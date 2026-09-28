@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 # OCPP value objects
 # ---------------------------------------------------------------------------
 
+
 class ChargePointStatus(str, Enum):
     AVAILABLE = "Available"
     PREPARING = "Preparing"
@@ -96,7 +97,7 @@ class ChargingSchedulePeriod:
     """One period within a charging profile."""
 
     start_period: int  # seconds from profile start
-    limit: float       # power in W or current in A
+    limit: float  # power in W or current in A
     number_phases: int = 3
 
 
@@ -385,7 +386,9 @@ class OCPPAdapter(ProtocolAdapter):
             return False
         allowed = self._config.get("allowed_charge_points")
         if allowed and charge_point_id not in allowed:
-            logger.warning("OCPP connection from non-allow-listed charge point %s", charge_point_id)
+            logger.warning(
+                "OCPP connection from non-allow-listed charge point %s", charge_point_id
+            )
             return False
         password = self._config.get("basic_auth_password")
         if not password:
@@ -577,7 +580,9 @@ class OCPPAdapter(ProtocolAdapter):
             try:
                 tx_id = int(cp.active_transaction_id)
             except ValueError:
-                logger.warning("Transaction id %r on %s is not an OCPP id", cp.active_transaction_id, cp_id)
+                logger.warning(
+                    "Transaction id %r on %s is not an OCPP id", cp.active_transaction_id, cp_id
+                )
                 return False
             status = await self._live_call(
                 cp_id, "RemoteStopTransaction", {"transactionId": tx_id}
@@ -606,10 +611,7 @@ class OCPPAdapter(ProtocolAdapter):
             return False
 
         if isinstance(profile, dict):
-            periods = [
-                ChargingSchedulePeriod(**p)
-                for p in profile.get("schedule", [])
-            ]
+            periods = [ChargingSchedulePeriod(**p) for p in profile.get("schedule", [])]
             profile = ChargingProfile(
                 profile_id=profile.get("profile_id", 1),
                 schedule=periods,
@@ -671,9 +673,10 @@ class OCPPAdapter(ProtocolAdapter):
                 return False
         elif route != "sim" or cp is None:
             return False
-        if cp is not None and (profile_id is None or (
-            cp.active_profile is not None and cp.active_profile.profile_id == profile_id
-        )):
+        if cp is not None and (
+            profile_id is None
+            or (cp.active_profile is not None and cp.active_profile.profile_id == profile_id)
+        ):
             cp.active_profile = None
         return True
 
@@ -745,9 +748,7 @@ class OCPPAdapter(ProtocolAdapter):
         try:
             handler = self._CALL_HANDLERS.get(action)
             if handler is None:
-                raise OCPPError(
-                    OCPPErrorCode.NOT_IMPLEMENTED, f"Action {action} not implemented"
-                )
+                raise OCPPError(OCPPErrorCode.NOT_IMPLEMENTED, f"Action {action} not implemented")
             cp = self._charge_points.get(cp_id)
             if cp is not None:
                 cp.last_heartbeat = time.time()
@@ -789,9 +790,7 @@ class OCPPAdapter(ProtocolAdapter):
     async def _on_heartbeat(self, cp_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return {"currentTime": _iso(time.time())}
 
-    async def _on_status_notification(
-        self, cp_id: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _on_status_notification(self, cp_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         _require(payload, "connectorId", "errorCode", "status")
         connector_id = _as_int(payload, "connectorId")
         try:
@@ -831,9 +830,7 @@ class OCPPAdapter(ProtocolAdapter):
         _require(payload, "idTag")
         return {"idTagInfo": {"status": self._id_tag_status(str(payload["idTag"]))}}
 
-    async def _on_start_transaction(
-        self, cp_id: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _on_start_transaction(self, cp_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         _require(payload, "connectorId", "idTag", "meterStart", "timestamp")
         connector_id = _as_int(payload, "connectorId")
         meter_start = _as_int(payload, "meterStart")
@@ -852,14 +849,17 @@ class OCPPAdapter(ProtocolAdapter):
             }
         await self._publish(
             f"ocpp/transaction/{cp_id}",
-            {"charge_point_id": cp_id, "event": "started", "transaction_id": tx_id,
-             "connector_id": connector_id, "id_tag_status": id_status},
+            {
+                "charge_point_id": cp_id,
+                "event": "started",
+                "transaction_id": tx_id,
+                "connector_id": connector_id,
+                "id_tag_status": id_status,
+            },
         )
         return {"transactionId": tx_id, "idTagInfo": {"status": id_status}}
 
-    async def _on_stop_transaction(
-        self, cp_id: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
+    async def _on_stop_transaction(self, cp_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         _require(payload, "transactionId", "meterStop", "timestamp")
         tx_id = _as_int(payload, "transactionId")
         meter_stop = _as_int(payload, "meterStop")
@@ -874,8 +874,13 @@ class OCPPAdapter(ProtocolAdapter):
             cp.current_power_kw = 0.0
         await self._publish(
             f"ocpp/transaction/{cp_id}",
-            {"charge_point_id": cp_id, "event": "stopped", "transaction_id": tx_id,
-             "reason": payload.get("reason", "Local"), "energy_kwh": energy_kwh},
+            {
+                "charge_point_id": cp_id,
+                "event": "stopped",
+                "transaction_id": tx_id,
+                "reason": payload.get("reason", "Local"),
+                "energy_kwh": energy_kwh,
+            },
         )
         response: dict[str, Any] = {}
         if "idTag" in payload:
@@ -945,8 +950,11 @@ class OCPPAdapter(ProtocolAdapter):
             await get_event_bus().publish(
                 Event(
                     event_type=EventType.RESOURCE_UPDATED,
-                    data={"resource_id": resource_id, "charge_point_id": cp.charge_point_id,
-                          **readings},
+                    data={
+                        "resource_id": resource_id,
+                        "charge_point_id": cp.charge_point_id,
+                        **readings,
+                    },
                     source="ocpp.meter_values",
                 )
             )
@@ -966,7 +974,11 @@ class OCPPAdapter(ProtocolAdapter):
 
         msg = ProtocolMessage(
             topic=f"ocpp/status/{cp.charge_point_id}",
-            payload={"charge_point_id": cp.charge_point_id, "old": old.value, "new": new_status.value},
+            payload={
+                "charge_point_id": cp.charge_point_id,
+                "old": old.value,
+                "new": new_status.value,
+            },
             source="ocpp",
         )
         await self._dispatch(msg)

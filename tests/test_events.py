@@ -2,7 +2,7 @@
 
 import pytest
 
-from vpp.events.bus import EventBus, Event, EventType
+from vpp.events.bus import Event, EventBus, EventType
 
 
 class TestEventBus:
@@ -15,7 +15,9 @@ class TestEventBus:
             received.append(event)
 
         bus.subscribe(handler, event_types={EventType.RESOURCE_ADDED})
-        count = await bus.publish(Event(event_type=EventType.RESOURCE_ADDED, data={"name": "bat1"}))
+        count = await bus.publish(
+            Event(event_type=EventType.RESOURCE_ADDED, data={"name": "bat1"})
+        )
 
         assert count == 1
         assert len(received) == 1

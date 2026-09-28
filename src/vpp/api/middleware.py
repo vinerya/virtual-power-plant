@@ -81,7 +81,9 @@ class RequestIdMiddleware:
             return
 
         incoming = _header(scope, _REQUEST_ID_HEADER_BYTES)
-        request_id = incoming if incoming and _VALID_REQUEST_ID.match(incoming) else uuid.uuid4().hex
+        request_id = (
+            incoming if incoming and _VALID_REQUEST_ID.match(incoming) else uuid.uuid4().hex
+        )
         scope.setdefault("state", {})["request_id"] = request_id
 
         status_code = 500
@@ -92,7 +94,8 @@ class RequestIdMiddleware:
             if message["type"] == "http.response.start":
                 status_code = message["status"]
                 headers = [
-                    (k, v) for k, v in message.get("headers", [])
+                    (k, v)
+                    for k, v in message.get("headers", [])
                     if k.lower() != _REQUEST_ID_HEADER_BYTES
                 ]
                 headers.append((_REQUEST_ID_HEADER_BYTES, request_id.encode("latin-1")))

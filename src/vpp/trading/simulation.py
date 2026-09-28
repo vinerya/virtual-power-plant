@@ -167,10 +167,7 @@ class SimulatedExchange:
         self.last_tick = now
 
         for order in list(self.open_orders.values()):
-            if (
-                order.time_in_force == "DAY"
-                and order.timestamp.date() < now.date()
-            ):
+            if order.time_in_force == "DAY" and order.timestamp.date() < now.date():
                 order.status = OrderStatus.EXPIRED
                 self.open_orders.pop(order.id, None)
                 result.expired.append(OrderUpdate(order=order, reason="DAY order expired"))

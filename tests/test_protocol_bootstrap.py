@@ -115,9 +115,7 @@ async def test_supervisor_retries_connect_with_backoff(monkeypatch):
 @pytest.mark.asyncio
 async def test_start_only_enabled_adapters():
     registry = ProtocolRegistry()
-    tasks = start_protocol_adapters(
-        Settings(ocpp_enabled=True, openadr_enabled=True), registry
-    )
+    tasks = start_protocol_adapters(Settings(ocpp_enabled=True, openadr_enabled=True), registry)
     try:
         for _ in range(50):
             if len(registry) == 2 and all(a.is_operational for a in registry.list_adapters()):
@@ -187,8 +185,9 @@ def test_ocpp_route_mounted_on_app(isolated_protocol_registry):
     from starlette.websockets import WebSocketDisconnect
 
     client = TestClient(app_module.create_app(rate_limit_enabled=False))
-    with pytest.raises(WebSocketDisconnect) as info, client.websocket_connect(
-        "/ocpp/CP1", subprotocols=["ocpp1.6"]
+    with (
+        pytest.raises(WebSocketDisconnect) as info,
+        client.websocket_connect("/ocpp/CP1", subprotocols=["ocpp1.6"]),
     ):
         pass
     assert info.value.code == 1013

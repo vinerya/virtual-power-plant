@@ -3,13 +3,11 @@
 import pytest
 
 from vpp.db.repositories import (
-    ResourceRepository,
-    OptimizationRepository,
-    TradingRepository,
-    UserRepository,
     EventLogRepository,
+    OptimizationRepository,
+    ResourceRepository,
+    TradingRepository,
 )
-from vpp.auth.security import get_password_hash
 
 
 @pytest.mark.asyncio

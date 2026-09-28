@@ -84,9 +84,7 @@ def test_tariffs_table_round_trips(tmp_path: Path) -> None:
         command.downgrade(cfg, "0003_add_nominal_energy")
         inspector = inspect(engine)
         assert "tariffs" not in inspector.get_table_names()
-        created_at = {
-            c["name"]: c for c in inspector.get_columns("resources")
-        }["created_at"]
+        created_at = {c["name"]: c for c in inspector.get_columns("resources")}["created_at"]
         assert created_at["nullable"] is True
     finally:
         engine.dispose()

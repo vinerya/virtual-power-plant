@@ -1,16 +1,17 @@
 """Tests for ADMM fleet dispatch (M4)."""
+
 from __future__ import annotations
 
 import pytest
 
 pyo = pytest.importorskip("pyomo.environ")
 
+from vpp.optimization.formulations.admm import admm_fleet_solve
 from vpp.optimization.formulations.fleet_dispatch import (
     FleetBattery,
     FleetCoupling,
     build_fleet_dispatch_model,
 )
-from vpp.optimization.formulations.admm import admm_fleet_solve
 from vpp.optimization.solvers.pyomo_plugin import _try_import_pyomo
 
 
@@ -41,7 +42,10 @@ def test_admm_converges_on_5_battery(solver):
     batts = [_b(f"r{i}") for i in range(5)]
     # Use a non-binding feeder so consensus can match exactly.
     result = admm_fleet_solve(
-        batts, len(prices), 1.0, prices,
+        batts,
+        len(prices),
+        1.0,
+        prices,
         coupling=FleetCoupling(feeder_max_export_kw=500.0, feeder_max_import_kw=500.0),
         rho=2.0,
         max_iters=40,
@@ -83,7 +87,10 @@ def test_admm_respects_feeder_limit(solver):
     batts = [_b(f"r{i}", soc=0.9) for i in range(3)]
     coupling = FleetCoupling(feeder_max_export_kw=30.0, feeder_max_import_kw=200.0)
     result = admm_fleet_solve(
-        batts, len(prices), 1.0, prices,
+        batts,
+        len(prices),
+        1.0,
+        prices,
         coupling=coupling,
         rho=2.0,
         max_iters=80,

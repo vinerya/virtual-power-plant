@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Register map definitions
 # ---------------------------------------------------------------------------
 
+
 class RegisterType(str, Enum):
     HOLDING = "holding"
     INPUT = "input"
@@ -60,41 +61,81 @@ INVERTER_MAPS: dict[str, RegisterMap] = {
     "sma_sunnyboy": RegisterMap(
         name="SMA Sunny Boy",
         registers={
-            "ac_power": RegisterDefinition(30775, 2, RegisterType.INPUT, "AC Power", "W", 1.0, "int32"),
-            "dc_power": RegisterDefinition(30773, 2, RegisterType.INPUT, "DC Power", "W", 1.0, "int32"),
-            "daily_yield": RegisterDefinition(30517, 4, RegisterType.INPUT, "Daily Yield", "Wh", 1.0, "uint64"),
-            "total_yield": RegisterDefinition(30513, 4, RegisterType.INPUT, "Total Yield", "Wh", 1.0, "uint64"),
-            "grid_frequency": RegisterDefinition(30803, 2, RegisterType.INPUT, "Grid Freq", "Hz", 0.01, "uint32"),
+            "ac_power": RegisterDefinition(
+                30775, 2, RegisterType.INPUT, "AC Power", "W", 1.0, "int32"
+            ),
+            "dc_power": RegisterDefinition(
+                30773, 2, RegisterType.INPUT, "DC Power", "W", 1.0, "int32"
+            ),
+            "daily_yield": RegisterDefinition(
+                30517, 4, RegisterType.INPUT, "Daily Yield", "Wh", 1.0, "uint64"
+            ),
+            "total_yield": RegisterDefinition(
+                30513, 4, RegisterType.INPUT, "Total Yield", "Wh", 1.0, "uint64"
+            ),
+            "grid_frequency": RegisterDefinition(
+                30803, 2, RegisterType.INPUT, "Grid Freq", "Hz", 0.01, "uint32"
+            ),
         },
     ),
     "fronius_symo": RegisterMap(
         name="Fronius Symo",
         registers={
-            "ac_power": RegisterDefinition(40092, 1, RegisterType.HOLDING, "AC Power", "W", 1.0, "float32"),
-            "ac_energy": RegisterDefinition(40094, 2, RegisterType.HOLDING, "AC Energy", "Wh", 1.0, "float32"),
-            "dc_power": RegisterDefinition(40101, 1, RegisterType.HOLDING, "DC Power", "W", 1.0, "float32"),
-            "frequency": RegisterDefinition(40086, 1, RegisterType.HOLDING, "Frequency", "Hz", 1.0, "float32"),
+            "ac_power": RegisterDefinition(
+                40092, 1, RegisterType.HOLDING, "AC Power", "W", 1.0, "float32"
+            ),
+            "ac_energy": RegisterDefinition(
+                40094, 2, RegisterType.HOLDING, "AC Energy", "Wh", 1.0, "float32"
+            ),
+            "dc_power": RegisterDefinition(
+                40101, 1, RegisterType.HOLDING, "DC Power", "W", 1.0, "float32"
+            ),
+            "frequency": RegisterDefinition(
+                40086, 1, RegisterType.HOLDING, "Frequency", "Hz", 1.0, "float32"
+            ),
         },
     ),
     "solaredge_se": RegisterMap(
         name="SolarEdge SE",
         registers={
-            "ac_power": RegisterDefinition(40084, 1, RegisterType.HOLDING, "AC Power", "W", 1.0, "int16"),
-            "ac_power_scale": RegisterDefinition(40085, 1, RegisterType.HOLDING, "AC Power Scale", "", 1.0, "int16"),
-            "dc_power": RegisterDefinition(40101, 1, RegisterType.HOLDING, "DC Power", "W", 1.0, "int16"),
-            "temperature": RegisterDefinition(40104, 1, RegisterType.HOLDING, "Temperature", "°C", 0.01, "int16"),
-            "ac_energy": RegisterDefinition(40094, 2, RegisterType.HOLDING, "AC Energy", "Wh", 1.0, "uint32"),
+            "ac_power": RegisterDefinition(
+                40084, 1, RegisterType.HOLDING, "AC Power", "W", 1.0, "int16"
+            ),
+            "ac_power_scale": RegisterDefinition(
+                40085, 1, RegisterType.HOLDING, "AC Power Scale", "", 1.0, "int16"
+            ),
+            "dc_power": RegisterDefinition(
+                40101, 1, RegisterType.HOLDING, "DC Power", "W", 1.0, "int16"
+            ),
+            "temperature": RegisterDefinition(
+                40104, 1, RegisterType.HOLDING, "Temperature", "°C", 0.01, "int16"
+            ),
+            "ac_energy": RegisterDefinition(
+                40094, 2, RegisterType.HOLDING, "AC Energy", "Wh", 1.0, "uint32"
+            ),
         },
     ),
     "generic_meter": RegisterMap(
         name="Generic Power Meter",
         registers={
-            "voltage_l1": RegisterDefinition(0, 2, RegisterType.INPUT, "Voltage L1", "V", 0.1, "float32"),
-            "voltage_l2": RegisterDefinition(2, 2, RegisterType.INPUT, "Voltage L2", "V", 0.1, "float32"),
-            "voltage_l3": RegisterDefinition(4, 2, RegisterType.INPUT, "Voltage L3", "V", 0.1, "float32"),
-            "current_l1": RegisterDefinition(6, 2, RegisterType.INPUT, "Current L1", "A", 0.01, "float32"),
-            "power_total": RegisterDefinition(12, 2, RegisterType.INPUT, "Total Power", "W", 1.0, "float32"),
-            "energy_total": RegisterDefinition(72, 2, RegisterType.INPUT, "Total Energy", "kWh", 0.1, "float32"),
+            "voltage_l1": RegisterDefinition(
+                0, 2, RegisterType.INPUT, "Voltage L1", "V", 0.1, "float32"
+            ),
+            "voltage_l2": RegisterDefinition(
+                2, 2, RegisterType.INPUT, "Voltage L2", "V", 0.1, "float32"
+            ),
+            "voltage_l3": RegisterDefinition(
+                4, 2, RegisterType.INPUT, "Voltage L3", "V", 0.1, "float32"
+            ),
+            "current_l1": RegisterDefinition(
+                6, 2, RegisterType.INPUT, "Current L1", "A", 0.01, "float32"
+            ),
+            "power_total": RegisterDefinition(
+                12, 2, RegisterType.INPUT, "Total Power", "W", 1.0, "float32"
+            ),
+            "energy_total": RegisterDefinition(
+                72, 2, RegisterType.INPUT, "Total Energy", "kWh", 0.1, "float32"
+            ),
         },
     ),
 }
@@ -120,7 +161,7 @@ class ModbusAdapter(ProtocolAdapter):
 
     async def connect(self) -> None:
         try:
-            from pymodbus.client import AsyncModbusTcpClient, AsyncModbusSerialClient
+            from pymodbus.client import AsyncModbusSerialClient, AsyncModbusTcpClient
         except ImportError as exc:
             raise RuntimeError(
                 "pymodbus is required for Modbus support. "
@@ -224,11 +265,15 @@ class ModbusAdapter(ProtocolAdapter):
             try:
                 if reg.register_type == RegisterType.HOLDING:
                     result = await self._client.read_holding_registers(
-                        reg.address, reg.count, slave=unit,
+                        reg.address,
+                        reg.count,
+                        slave=unit,
                     )
                 elif reg.register_type == RegisterType.INPUT:
                     result = await self._client.read_input_registers(
-                        reg.address, reg.count, slave=unit,
+                        reg.address,
+                        reg.count,
+                        slave=unit,
                     )
                 else:
                     continue
@@ -290,6 +335,7 @@ class ModbusAdapter(ProtocolAdapter):
             return float(val)
         elif defn.data_type == "float32":
             import struct
+
             raw = struct.pack(">HH", regs[0], regs[1] if len(regs) > 1 else 0)
             return struct.unpack(">f", raw)[0]
         return float(regs[0])

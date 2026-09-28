@@ -32,18 +32,18 @@ from .optimization import (
 from .telemetry import DegradationUpdater, SOHUpdate, TelemetryWindow
 
 __all__ = [
-    "DegradationModel",
-    "ThroughputDegradation",
-    "CalendarDegradation",
-    "RainflowDegradation",
     "LFP_PRESET",
     "NMC_PRESET",
-    "WearCost",
-    "add_wear_cost_term",
-    "add_dod_constraints",
-    "add_calendar_aging_bias",
-    "wear_cost_hooks_for_telemetry_consistency",
+    "CalendarDegradation",
+    "DegradationModel",
     "DegradationUpdater",
+    "RainflowDegradation",
     "SOHUpdate",
     "TelemetryWindow",
+    "ThroughputDegradation",
+    "WearCost",
+    "add_calendar_aging_bias",
+    "add_dod_constraints",
+    "add_wear_cost_term",
+    "wear_cost_hooks_for_telemetry_consistency",
 ]

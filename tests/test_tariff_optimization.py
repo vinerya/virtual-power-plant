@@ -1,18 +1,17 @@
 """Tests for the M2 tariff -> optimizer adapter (vpp.tariffs.optimization)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
 from vpp.optimization.solvers import PyomoPlugin
 
 pyomo_available = PyomoPlugin().is_available()
-pytestmark = pytest.mark.skipif(
-    not pyomo_available, reason="pyomo + HiGHS not installed"
-)
+pytestmark = pytest.mark.skipif(not pyomo_available, reason="pyomo + HiGHS not installed")
 
 if pyomo_available:
     import pyomo.environ as pyo
@@ -21,7 +20,6 @@ if pyomo_available:
     from vpp.tariffs import (
         BillingPeriod,
         DemandCharge,
-        FixedCharge,
         MeterTrace,
         Tariff,
         TimeOfUseRate,
@@ -29,10 +27,6 @@ if pyomo_available:
         load_urdb_json,
     )
     from vpp.tariffs.optimization import (
-        TariffOptParams,
-        add_demand_charge_terms,
-        add_tariff_constraints,
-        add_tariff_energy_term,
         build_tariff_hooks,
         load_nem3_avoided_cost_2024,
         tariff_to_opt_params,
@@ -44,7 +38,7 @@ ALL_DAYS = (True,) * 7
 ALL_MONTHS = frozenset(range(1, 13))
 
 
-def _battery_params(prices: List[float], **extras) -> Dict[str, Any]:
+def _battery_params(prices: list[float], **extras) -> dict[str, Any]:
     p = {
         "battery_capacity_kwh": 20.0,
         "max_charge_kw": 5.0,
@@ -246,9 +240,7 @@ def test_ratchet_floor_binds():
 
     obj_terms, cb = build_tariff_hooks(opt)
     # Tiny load so unconstrained peak would be ~0.
-    params = _battery_params(
-        [0.0] * T, disable_base_energy_cost=True, load=[0.5] * T
-    )
+    params = _battery_params([0.0] * T, disable_base_energy_cost=True, load=[0.5] * T)
     m = build_battery_dispatch_model(params, obj_terms, cb)
     _solve(m)
     assert pyo.value(m.peak_demand_kw) >= 37.5 - 1e-6
@@ -272,9 +264,7 @@ def test_nem2_export_credited_at_buy_price():
     load = [0.5] * T
     solar = [0.0] * 8 + [6.0] * 8 + [0.0] * 8  # 8 AM - 4 PM solar
     obj_terms, cb = build_tariff_hooks(opt)
-    p = _battery_params(
-        [0.0] * T, disable_base_energy_cost=True, load=load, solar=solar
-    )
+    p = _battery_params([0.0] * T, disable_base_energy_cost=True, load=load, solar=solar)
     m = build_battery_dispatch_model(p, obj_terms, cb)
     _solve(m)
 
@@ -284,8 +274,7 @@ def test_nem2_export_credited_at_buy_price():
 
     # Validate the energy revenue/cost equality with the model objective.
     energy_term_value = sum(
-        opt.energy_buy_per_kwh[t] * imports[t]
-        - opt.energy_sell_per_kwh[t] * exports[t]
+        opt.energy_buy_per_kwh[t] * imports[t] - opt.energy_sell_per_kwh[t] * exports[t]
         for t in range(T)
     )
     # peak_demand contribution is 0 (no DC component in PG&E E-TOU-C).
@@ -333,20 +322,22 @@ def test_nem3_export_avoided_cost():
     obj2, cb2 = build_tariff_hooks(opt_nem2)
     m2 = build_battery_dispatch_model(
         _battery_params([0.0] * T, disable_base_energy_cost=True, load=load, solar=solar),
-        obj2, cb2,
+        obj2,
+        cb2,
     )
     _solve(m2)
 
     ac = load_nem3_avoided_cost_2024()
-    opt_nem3 = tariff_to_opt_params(
-        tariff, horizon_start, T, 60, nem="nem3", nem3_avoided_cost=ac
-    )
+    opt_nem3 = tariff_to_opt_params(tariff, horizon_start, T, 60, nem="nem3", nem3_avoided_cost=ac)
     # Verify sell < buy at most hours.
-    assert all(s <= b + 1e-9 for s, b in zip(opt_nem3.energy_sell_per_kwh, opt_nem3.energy_buy_per_kwh))
+    assert all(
+        s <= b + 1e-9 for s, b in zip(opt_nem3.energy_sell_per_kwh, opt_nem3.energy_buy_per_kwh)
+    )
     obj3, cb3 = build_tariff_hooks(opt_nem3)
     m3 = build_battery_dispatch_model(
         _battery_params([0.0] * T, disable_base_energy_cost=True, load=load, solar=solar),
-        obj3, cb3,
+        obj3,
+        cb3,
     )
     _solve(m3)
 
@@ -374,9 +365,7 @@ def test_pge_etouc_full_month():
 
     opt = tariff_to_opt_params(tariff, horizon_start, T, 60, nem="nem2")
     obj_terms, cb = build_tariff_hooks(opt)
-    params = _battery_params(
-        [0.0] * T, disable_base_energy_cost=True, load=load, solar=solar
-    )
+    params = _battery_params([0.0] * T, disable_base_energy_cost=True, load=load, solar=solar)
     m = build_battery_dispatch_model(params, obj_terms, cb)
     _solve(m)
 
@@ -400,7 +389,5 @@ def test_pge_etouc_full_month():
     # only counts imports (it ignores export compensation in M1) so the
     # two will agree only on the import side: build that quantity from the
     # opt buy vector.
-    opt_import_cost = sum(
-        opt.energy_buy_per_kwh[t] * imports_kwh[t] for t in range(T)
-    )
+    opt_import_cost = sum(opt.energy_buy_per_kwh[t] * imports_kwh[t] for t in range(T))
     assert energy_total == pytest.approx(opt_import_cost, abs=1e-2)

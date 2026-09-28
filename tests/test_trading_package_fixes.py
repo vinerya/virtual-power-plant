@@ -33,8 +33,14 @@ from vpp.trading.strategies import (
 
 
 def _trade(market="DA", side="buy", qty=10.0, price=50.0, fees=0.0, ts=None):
-    return Trade(market=market, side=side, quantity=qty, price=price, fees=fees,
-                 timestamp=ts or datetime.now())
+    return Trade(
+        market=market,
+        side=side,
+        quantity=qty,
+        price=price,
+        fees=fees,
+        timestamp=ts or datetime.now(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -126,12 +132,16 @@ class TestVaR:
         assert v99 == pytest.approx(232.63, rel=1e-3)
 
     def test_parametric_var_hedge_and_correlation(self):
-        hedged = parametric_var({"A": 1000.0, "B": -1000.0}, {"A": 0.1, "B": 0.1},
-                                correlations={"A": {"B": 1.0}, "B": {"A": 1.0}})
+        hedged = parametric_var(
+            {"A": 1000.0, "B": -1000.0},
+            {"A": 0.1, "B": 0.1},
+            correlations={"A": {"B": 1.0}, "B": {"A": 1.0}},
+        )
         assert hedged == pytest.approx(0.0, abs=1e-9)
-        independent = parametric_var({"A": 1000.0, "B": 1000.0}, {"A": 0.1, "B": 0.1},
-                                     default_correlation=0.0)
-        assert independent == pytest.approx(164.485 * 2 ** 0.5, rel=1e-4)
+        independent = parametric_var(
+            {"A": 1000.0, "B": 1000.0}, {"A": 0.1, "B": 0.1}, default_correlation=0.0
+        )
+        assert independent == pytest.approx(164.485 * 2**0.5, rel=1e-4)
 
     def test_parametric_var_rejects_unknown_confidence(self):
         with pytest.raises(ValueError):
@@ -168,10 +178,15 @@ class TestEvaluateOrder:
         p = Portfolio(initial_cash=1e6)
         p.add_trade(_trade(qty=10, price=50))
         p.add_trade(_trade(side="sell", qty=2, price=10))  # big realized loss today
-        assert rm.evaluate_order(MarketOrder("DA", "sell", 5), p, {"DA": 50}, 50,
-                                 daily_volatility={"DA": 0.5}) == []
-        assert rm.evaluate_order(MarketOrder("DA", "buy", 1), p, {"DA": 50}, 50,
-                                 daily_volatility={"DA": 0.5})
+        assert (
+            rm.evaluate_order(
+                MarketOrder("DA", "sell", 5), p, {"DA": 50}, 50, daily_volatility={"DA": 0.5}
+            )
+            == []
+        )
+        assert rm.evaluate_order(
+            MarketOrder("DA", "buy", 1), p, {"DA": 50}, 50, daily_volatility={"DA": 0.5}
+        )
 
     def test_daily_loss_blocks_new_risk(self):
         rm = RiskManager(RiskLimits(max_daily_loss=50))
@@ -184,11 +199,16 @@ class TestEvaluateOrder:
     def test_var_limit(self):
         rm = RiskManager(RiskLimits(var_limit=100))
         p = Portfolio(initial_cash=1e6)
-        reasons = rm.evaluate_order(MarketOrder("DA", "buy", 10), p, {"DA": 50}, 50,
-                                    daily_volatility={"DA": 0.5})
+        reasons = rm.evaluate_order(
+            MarketOrder("DA", "buy", 10), p, {"DA": 50}, 50, daily_volatility={"DA": 0.5}
+        )
         assert any("VaR" in r for r in reasons)  # 1.645 * 500 * 0.5 = 411
-        assert rm.evaluate_order(MarketOrder("DA", "buy", 1), p, {"DA": 50}, 50,
-                                 daily_volatility={"DA": 0.5}) == []
+        assert (
+            rm.evaluate_order(
+                MarketOrder("DA", "buy", 1), p, {"DA": 50}, 50, daily_volatility={"DA": 0.5}
+            )
+            == []
+        )
 
     def test_concentration_needs_two_markets(self):
         rm = RiskManager(RiskLimits(concentration_limit=0.6))
@@ -263,8 +283,10 @@ class TestOrderBook:
         assert order2.is_executable(53.0) is False  # triggered, but above limit
 
     def test_validate_stop_limit_parameters(self):
-        assert validate_order_parameters("stop_limit", "RT", "buy", 1,
-                                         stop_price=50, limit_price=52) == []
+        assert (
+            validate_order_parameters("stop_limit", "RT", "buy", 1, stop_price=50, limit_price=52)
+            == []
+        )
         assert validate_order_parameters("stop_limit", "RT", "buy", 1)
 
 
@@ -344,12 +366,14 @@ class TestEngine:
 class TestSimulatedDataProvider:
     def test_prices_stay_bounded(self):
         """The seasonal factor used to compound every step (x1.2^60/hour)."""
-        provider = SimulatedDataProvider({"markets": ["DA"], "base_prices": {"DA": 50.0},
-                                          "seed": 1, "mean_reversion": 0.0})
+        provider = SimulatedDataProvider(
+            {"markets": ["DA"], "base_prices": {"DA": 50.0}, "seed": 1, "mean_reversion": 0.0}
+        )
         provider.connect()
         start = datetime(2025, 6, 1, 12)
-        prices = [provider.generate("DA", start + timedelta(minutes=i)).last_price
-                  for i in range(2000)]
+        prices = [
+            provider.generate("DA", start + timedelta(minutes=i)).last_price for i in range(2000)
+        ]
         assert min(prices) > 5.0 and max(prices) < 500.0
 
     def test_seeded_and_timestamped_generation_is_reproducible(self):
@@ -358,6 +382,7 @@ class TestSimulatedDataProvider:
             p.connect()
             t0 = datetime(2025, 1, 1)
             return [p.generate("DA", t0 + timedelta(hours=i)).last_price for i in range(10)]
+
         assert run() == run()
 
     def test_seasonal_shape(self):

@@ -1,20 +1,20 @@
 """SOS2 tier-aware MILP tests (Milestone 3)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
 from vpp.optimization.solvers import PyomoPlugin
 
 pyomo_available = PyomoPlugin().is_available()
-pytestmark = pytest.mark.skipif(
-    not pyomo_available, reason="pyomo + HiGHS not installed"
-)
+pytestmark = pytest.mark.skipif(not pyomo_available, reason="pyomo + HiGHS not installed")
 
 if pyomo_available:
     import pyomo.environ as pyo
+
     from vpp.optimization.formulations.dispatch import build_battery_dispatch_model
     from vpp.tariffs import Tariff, TieredEnergyRate
     from vpp.tariffs.optimization import (
@@ -26,12 +26,13 @@ if pyomo_available:
 
 def _solve(model, time_limit_s: float = 30.0):
     from pyomo.contrib.appsi.solvers.highs import Highs
+
     s = Highs()
     s.config.time_limit = time_limit_s
     return s.solve(model)
 
 
-def _battery_params(T: int, **extras) -> Dict[str, Any]:
+def _battery_params(T: int, **extras) -> dict[str, Any]:
     p = {
         "battery_capacity_kwh": 200.0,
         "max_charge_kw": 20.0,
@@ -76,7 +77,9 @@ def test_sos2_two_tier_dispatch():
         solar.append(3.0 if 10 <= hour < 14 else 0.0)
     params = _battery_params(T, load=load, solar=solar)
     m = build_battery_dispatch_model(
-        params, objective_terms=obj_terms, constraint_builders=builders,
+        params,
+        objective_terms=obj_terms,
+        constraint_builders=builders,
     )
     _solve(m)
 

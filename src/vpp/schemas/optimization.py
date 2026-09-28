@@ -20,6 +20,7 @@ MAX_STOCHASTIC_SIZE = 20_000  # scenarios x horizon hours
 # Dispatch
 # ---------------------------------------------------------------------------
 
+
 class DispatchRequest(BaseModel):
     """Request to split a site power target across the online resources.
 
@@ -28,11 +29,14 @@ class DispatchRequest(BaseModel):
     """
 
     target_power_kw: float = Field(
-        ..., ge=-1_000_000, le=1_000_000,
+        ...,
+        ge=-1_000_000,
+        le=1_000_000,
         description="Target total power in kW (export-positive; negative = absorb)",
     )
     resource_ids: list[str] | None = Field(
-        None, max_length=500,
+        None,
+        max_length=500,
         description="Restrict dispatch to these resource ids (default: all online resources)",
     )
     resource_constraints: dict[str, dict[str, Any]] = Field(
@@ -43,10 +47,14 @@ class DispatchRequest(BaseModel):
         ),
     )
     interval_minutes: int = Field(
-        15, ge=1, le=240,
+        15,
+        ge=1,
+        le=240,
         description="Dispatch interval; bounds battery output by the energy available over it",
     )
-    wear_cost: bool = Field(True, description="Price battery throughput with the SOH-aware wear cost")
+    wear_cost: bool = Field(
+        True, description="Price battery throughput with the SOH-aware wear cost"
+    )
     replacement_cost_per_kwh: float = Field(250.0, gt=0, le=10_000)
     timeout_ms: int = Field(5000, gt=0, le=60_000, description="Solver timeout in ms")
     force_fallback: bool = Field(False, description="Force rule-based fallback")
@@ -62,7 +70,8 @@ class ResourceAllocation(BaseModel):
     resource_type: str | None = None
     min_power_kw: float | None = None
     available_power_kw: float | None = Field(
-        None, description="Upper bound actually used for this interval (after SOC/availability limits)"
+        None,
+        description="Upper bound actually used for this interval (after SOC/availability limits)",
     )
     marginal_cost_per_kwh: float | None = None
     state_of_charge: float | None = None
@@ -83,15 +92,19 @@ class DispatchResponse(BaseModel):
     run_id: str | None = None
     status: str = ""
     method: str = Field(
-        "", description="Solver path used, e.g. pyomo_highs_allocation or proportional_allocation_rules"
+        "",
+        description="Solver path used, e.g. pyomo_highs_allocation or proportional_allocation_rules",
     )
     shortfall_kw: float = 0.0
-    objective_value: float = Field(0.0, description="Linear marginal cost of the allocation over the interval")
+    objective_value: float = Field(
+        0.0, description="Linear marginal cost of the allocation over the interval"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Generic optimization
 # ---------------------------------------------------------------------------
+
 
 class OptimizationRequest(BaseModel):
     """Generic optimization request."""
@@ -120,21 +133,30 @@ class OptimizationResponse(BaseModel):
 # Stochastic optimization
 # ---------------------------------------------------------------------------
 
+
 class StochasticRequest(BaseModel):
     """Request for stochastic (CVaR) battery dispatch over price scenarios."""
 
     num_scenarios: int = Field(50, ge=1, le=10_000, description="Number of scenarios")
     time_horizon_hours: int = Field(24, ge=1, le=168)
-    risk_level: float = Field(0.05, gt=0, lt=1, description="CVaR tail probability (alpha = 1 - risk_level)")
+    risk_level: float = Field(
+        0.05, gt=0, lt=1, description="CVaR tail probability (alpha = 1 - risk_level)"
+    )
     base_prices: list[float] = Field(default_factory=list)
     base_load: list[float] = Field(default_factory=list)
-    volatility: float = Field(0.2, ge=0, le=5, description="Price volatility factor (log-normal sigma)")
+    volatility: float = Field(
+        0.2, ge=0, le=5, description="Price volatility factor (log-normal sigma)"
+    )
     risk_weight: float = Field(
-        0.5, ge=0, le=100,
+        0.5,
+        ge=0,
+        le=100,
         description="lambda in  E[cost] + lambda * CVaR_(1-risk_level)[cost]",
     )
     seed: int | None = Field(None, description="Seed for reproducible scenario generation")
-    resource_id: str | None = Field(None, description="Battery resource to optimise (default: inline parameters)")
+    resource_id: str | None = Field(
+        None, description="Battery resource to optimise (default: inline parameters)"
+    )
     battery_capacity_kwh: float = Field(1000.0, gt=0, le=1_000_000)
     max_power_kw: float = Field(250.0, gt=0, le=1_000_000)
     soc_init: float = Field(0.5, ge=0, le=1)
@@ -165,6 +187,7 @@ class StochasticRequest(BaseModel):
 # Real-time optimization
 # ---------------------------------------------------------------------------
 
+
 class RealTimeRequest(BaseModel):
     """Request for real-time / fast-dispatch optimization."""
 
@@ -181,6 +204,7 @@ class RealTimeRequest(BaseModel):
 # Distributed optimization
 # ---------------------------------------------------------------------------
 
+
 class SiteData(BaseModel):
     """Data for a single VPP site in distributed optimization."""
 
@@ -196,7 +220,9 @@ class DistributedRequest(BaseModel):
     sites: list[SiteData] = Field(..., min_length=1)
     target_power_kw: float = 0.0
     target_reserve_kw: float = 0.0
-    coordination_mode: str = Field("merit_order", description="merit_order | equal_split | priority")
+    coordination_mode: str = Field(
+        "merit_order", description="merit_order | equal_split | priority"
+    )
     timeout_ms: int = Field(30_000, gt=0, le=300_000)
     force_fallback: bool = False
 
@@ -204,6 +230,7 @@ class DistributedRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Schedule (horizon MPC) optimization
 # ---------------------------------------------------------------------------
+
 
 def _check_series(name: str, values: list[float] | None, n: int) -> None:
     if values is not None and len(values) != n:
@@ -229,14 +256,21 @@ class ScheduleRequest(BaseModel):
     )
     prices: list[float] | None = Field(None, min_length=1, max_length=MAX_SCHEDULE_STEPS)
     tariff_id: str | None = None
-    horizon_start: datetime | None = Field(None, description="Tariff mode: first interval start (default: now)")
-    horizon_hours: int | None = Field(None, ge=1, le=168, description="Tariff mode: horizon length (default 24)")
-    nem: Literal["none", "nem2", "nem3"] = Field("nem2", description="Tariff mode: export compensation regime")
+    horizon_start: datetime | None = Field(
+        None, description="Tariff mode: first interval start (default: now)"
+    )
+    horizon_hours: int | None = Field(
+        None, ge=1, le=168, description="Tariff mode: horizon length (default 24)"
+    )
+    nem: Literal["none", "nem2", "nem3"] = Field(
+        "nem2", description="Tariff mode: export compensation regime"
+    )
     interval_minutes: int = Field(60, ge=5, le=60)
     load_kw: list[float] | None = Field(None, max_length=MAX_SCHEDULE_STEPS)
     solar_kw: list[float] | None = Field(None, max_length=MAX_SCHEDULE_STEPS)
     degradation_aware: bool = Field(
-        False, description="Add the SOH-aware battery wear cost (from each battery's persisted SOH/chemistry)"
+        False,
+        description="Add the SOH-aware battery wear cost (from each battery's persisted SOH/chemistry)",
     )
     replacement_cost_per_kwh: float = Field(250.0, gt=0, le=10_000)
     feeder_max_import_kw: float | None = Field(None, ge=0)
@@ -306,6 +340,7 @@ class ScheduleResponse(BaseModel):
 # Backtest
 # ---------------------------------------------------------------------------
 
+
 class BatterySpec(BaseModel):
     """Inline battery description (used when no resource_id is given)."""
 
@@ -328,7 +363,9 @@ class BatterySpec(BaseModel):
 class BacktestRequest(BaseModel):
     """Closed-loop receding-horizon MPC replay over a historical price series."""
 
-    resource_id: str | None = Field(None, description="Battery to backtest (uses its persisted capacity/SOC/SOH)")
+    resource_id: str | None = Field(
+        None, description="Battery to backtest (uses its persisted capacity/SOC/SOH)"
+    )
     battery: BatterySpec | None = None
     prices: list[float] = Field(..., min_length=2, max_length=MAX_BACKTEST_STEPS)
     load_kw: list[float] | None = Field(None, max_length=MAX_BACKTEST_STEPS)
@@ -339,8 +376,12 @@ class BacktestRequest(BaseModel):
     noise_sigma: float = Field(0.1, ge=0, le=2)
     seed: int | None = None
     terminal_soc_policy: Literal["value", "hold"] = "value"
-    compare_offline: bool = Field(True, description="Also solve the perfect-foresight offline optimum")
-    solver_timeout_ms: int = Field(2_000, gt=0, le=10_000, description="Per-tick solver time limit")
+    compare_offline: bool = Field(
+        True, description="Also solve the perfect-foresight offline optimum"
+    )
+    solver_timeout_ms: int = Field(
+        2_000, gt=0, le=10_000, description="Per-tick solver time limit"
+    )
     start: datetime | None = None
 
     @field_validator("interval_minutes")
@@ -392,6 +433,7 @@ class BacktestResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Run history / explainer
 # ---------------------------------------------------------------------------
+
 
 class OptimizationRunRead(BaseModel):
     """A persisted optimization run (``DispatchRun`` in the web UI)."""

@@ -1,10 +1,11 @@
 """Tests for the M1 Pyomo + HiGHS battery dispatch plugin."""
+
 from __future__ import annotations
 
 import builtins
 import importlib
 import sys
-from typing import Dict, Any, List
+from typing import Any
 
 import pytest
 
@@ -19,7 +20,7 @@ from vpp.optimization.solvers import PyomoPlugin, SimpleBatteryDispatchRules
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
-def _two_peak_prices() -> List[float]:
+def _two_peak_prices() -> list[float]:
     """24-step price vector with a clear morning + evening peak."""
     base = 0.10
     p = [base] * 24
@@ -34,7 +35,7 @@ def _two_peak_prices() -> List[float]:
     return p
 
 
-def _problem_params(prices: List[float] | None = None) -> Dict[str, Any]:
+def _problem_params(prices: list[float] | None = None) -> dict[str, Any]:
     return {
         "battery_capacity_kwh": 100.0,
         "max_charge_kw": 25.0,
@@ -49,7 +50,7 @@ def _problem_params(prices: List[float] | None = None) -> Dict[str, Any]:
     }
 
 
-def _make_problem(prices: List[float] | None = None) -> OptimizationProblem:
+def _make_problem(prices: list[float] | None = None) -> OptimizationProblem:
     return OptimizationProblem(
         variables={},
         objectives=[],
@@ -105,9 +106,7 @@ def test_solve_simple_arbitrage():
 
     assert result.status == OptimizationStatus.SUCCESS
     # Net revenue (cost is negative).
-    assert result.objective_value < 0, (
-        f"expected net revenue, got cost={result.objective_value}"
-    )
+    assert result.objective_value < 0, f"expected net revenue, got cost={result.objective_value}"
 
     sol = result.solution
     assert "p_discharge" in sol and "p_charge" in sol and "soc" in sol
@@ -147,9 +146,7 @@ def test_solve_beats_rulebased():
     # threshold relative to magnitude of rule-based cost.
     improvement = rules_cost - pyomo_cost  # >0 if pyomo better
     rel = improvement / max(1e-6, abs(rules_cost))
-    assert improvement > 0, (
-        f"pyomo did not beat rules: pyomo={pyomo_cost}, rules={rules_cost}"
-    )
+    assert improvement > 0, f"pyomo did not beat rules: pyomo={pyomo_cost}, rules={rules_cost}"
     assert rel >= 0.05, (
         f"pyomo improvement {rel:.2%} < 5% (pyomo={pyomo_cost}, rules={rules_cost})"
     )

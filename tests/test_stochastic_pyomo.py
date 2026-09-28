@@ -1,7 +1,8 @@
 """Tests for the M2 stochastic CVaR extensive-form solver."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -10,19 +11,17 @@ from vpp.optimization import (
     OptimizationStatus,
     solve_with_fallback,
 )
-from vpp.optimization.solvers import PyomoPlugin, StochasticCVaRPlugin
+from vpp.optimization.solvers import StochasticCVaRPlugin
 from vpp.optimization.stochastic import Scenario
 
 pyomo_available = StochasticCVaRPlugin().is_available()
-pytestmark = pytest.mark.skipif(
-    not pyomo_available, reason="pyomo + HiGHS not installed"
-)
+pytestmark = pytest.mark.skipif(not pyomo_available, reason="pyomo + HiGHS not installed")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _det_params() -> Dict[str, Any]:
+def _det_params() -> dict[str, Any]:
     return {
         "battery_capacity_kwh": 100.0,
         "max_charge_kw": 25.0,
@@ -36,11 +35,11 @@ def _det_params() -> Dict[str, Any]:
     }
 
 
-def _scenario(sid: str, prob: float, prices: List[float]) -> Scenario:
+def _scenario(sid: str, prob: float, prices: list[float]) -> Scenario:
     return Scenario(id=sid, probability=prob, data={"prices": prices})
 
 
-def _three_scenarios_24h() -> List[Scenario]:
+def _three_scenarios_24h() -> list[Scenario]:
     base = [0.10] * 24
     cheap = (0, 1, 2, 3, 4)
     peak_a = (8, 9)
@@ -78,10 +77,10 @@ def _three_scenarios_24h() -> List[Scenario]:
 
 
 def _make_problem(
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     cvar_alpha: float = 0.95,
     cvar_lambda: float = 0.0,
-    extra: Dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> OptimizationProblem:
     params = _det_params()
     params["scenarios"] = scenarios
@@ -171,9 +170,7 @@ def test_cvar_alpha_extreme():
     r0 = plugin.solve(p_alpha0, timeout_ms=30_000)
     assert r0.status == OptimizationStatus.SUCCESS
     # Total objective equals (1+lambda)*E[cost] when CVaR == E[cost]
-    assert r0.solution["cvar"] == pytest.approx(
-        r0.solution["expected_cost"], rel=1e-5, abs=1e-5
-    )
+    assert r0.solution["cvar"] == pytest.approx(r0.solution["expected_cost"], rel=1e-5, abs=1e-5)
 
     # alpha very close to 1 -> CVaR ~ worst-case cost.
     p_alpha_hi = _make_problem(scenarios, cvar_alpha=0.999, cvar_lambda=1.0)
@@ -187,11 +184,12 @@ def test_cvar_alpha_extreme():
 # ---------------------------------------------------------------------------
 # 5. EEV >= stochastic optimum >= wait-and-see
 # ---------------------------------------------------------------------------
-def _solve_det(prices: List[float]) -> float:
+def _solve_det(prices: list[float]) -> float:
     """Deterministic single-scenario optimum (per-scenario perfect foresight)."""
-    from vpp.optimization.formulations.dispatch import build_battery_dispatch_model
-    from pyomo.contrib.appsi.solvers.highs import Highs
     import pyomo.environ as pyo
+    from pyomo.contrib.appsi.solvers.highs import Highs
+
+    from vpp.optimization.formulations.dispatch import build_battery_dispatch_model
 
     params = _det_params()
     params["prices"] = prices
@@ -257,9 +255,10 @@ def test_eevpi_lower_bound():
 
     # Easiest: solve the stochastic problem with stage-1 pinned via params.
     # We rebuild manually here:
-    from vpp.optimization.formulations.stochastic import build_stochastic_dispatch_model
-    from pyomo.contrib.appsi.solvers.highs import Highs
     import pyomo.environ as pyo
+    from pyomo.contrib.appsi.solvers.highs import Highs
+
+    from vpp.optimization.formulations.stochastic import build_stochastic_dispatch_model
 
     params_eev = dict(eev_prob.parameters)
     params_eev.pop("_force_stage1", None)

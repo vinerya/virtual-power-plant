@@ -53,10 +53,12 @@ of the un-used charge/discharge power capacity must exceed
 ``reserve_capacity_kw`` at each binding timestep. This conflates up- and
 down-regulation; M5 will refine to per-direction reserves.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any
 
 import pyomo.environ as pyo
 
@@ -72,19 +74,19 @@ class FleetBattery:
     soc_max: float = 0.95
     eta_charge: float = 0.95
     eta_discharge: float = 0.95
-    terminal_soc: Optional[float] = None  # defaults to soc_init
+    terminal_soc: float | None = None  # defaults to soc_init
 
 
 @dataclass
 class FleetCoupling:
-    feeder_max_import_kw: Optional[float] = None
-    feeder_max_export_kw: Optional[float] = None
+    feeder_max_import_kw: float | None = None
+    feeder_max_export_kw: float | None = None
     reserve_capacity_kw: float = 0.0
-    reserve_window: Optional[List[bool]] = None
+    reserve_window: list[bool] | None = None
 
 
-ObjectiveTerm = Callable[[pyo.ConcreteModel, Dict[str, Any]], Any]
-ConstraintBuilder = Callable[[pyo.ConcreteModel, Dict[str, Any]], None]
+ObjectiveTerm = Callable[[pyo.ConcreteModel, dict[str, Any]], Any]
+ConstraintBuilder = Callable[[pyo.ConcreteModel, dict[str, Any]], None]
 
 
 def _validate_battery(b: FleetBattery) -> None:
@@ -93,28 +95,24 @@ def _validate_battery(b: FleetBattery) -> None:
     if b.max_charge_kw <= 0 or b.max_discharge_kw <= 0:
         raise ValueError(f"battery {b.id}: max charge/discharge must be > 0")
     if not (0 <= b.soc_min < b.soc_max <= 1):
-        raise ValueError(
-            f"battery {b.id}: soc_min/soc_max invalid [{b.soc_min}, {b.soc_max}]"
-        )
+        raise ValueError(f"battery {b.id}: soc_min/soc_max invalid [{b.soc_min}, {b.soc_max}]")
     if not (b.soc_min <= b.soc_init <= b.soc_max):
-        raise ValueError(
-            f"battery {b.id}: soc_init {b.soc_init} not in [{b.soc_min},{b.soc_max}]"
-        )
+        raise ValueError(f"battery {b.id}: soc_init {b.soc_init} not in [{b.soc_min},{b.soc_max}]")
     for v, n in ((b.eta_charge, "eta_charge"), (b.eta_discharge, "eta_discharge")):
         if not (0 < v <= 1):
             raise ValueError(f"battery {b.id}: {n} must be in (0,1], got {v}")
 
 
 def build_fleet_dispatch_model(
-    batteries: List[FleetBattery],
+    batteries: list[FleetBattery],
     horizon_steps: int,
     dt_hours: float,
-    prices: List[float],
-    load_kw: Optional[List[float]] = None,
-    solar_kw: Optional[List[float]] = None,
-    coupling: Optional[FleetCoupling] = None,
-    objective_terms: Optional[Sequence[ObjectiveTerm]] = None,
-    constraint_builders: Optional[Sequence[ConstraintBuilder]] = None,
+    prices: list[float],
+    load_kw: list[float] | None = None,
+    solar_kw: list[float] | None = None,
+    coupling: FleetCoupling | None = None,
+    objective_terms: Sequence[ObjectiveTerm] | None = None,
+    constraint_builders: Sequence[ConstraintBuilder] | None = None,
 ) -> pyo.ConcreteModel:
     """Build a Pyomo ConcreteModel for multi-resource fleet dispatch."""
     if not batteries:
@@ -165,8 +163,8 @@ def build_fleet_dispatch_model(
     m.soc_terminal = pyo.Param(
         m.R,
         initialize={
-            r: (by_id[r].terminal_soc if by_id[r].terminal_soc is not None
-                else by_id[r].soc_init) * by_id[r].capacity_kwh
+            r: (by_id[r].terminal_soc if by_id[r].terminal_soc is not None else by_id[r].soc_init)
+            * by_id[r].capacity_kwh
             for r in ids
         },
     )
@@ -181,13 +179,11 @@ def build_fleet_dispatch_model(
         if len(rw) < T:
             rw = rw + [False] * (T - len(rw))
         rw = rw[:T]
-        m.reserve_window = pyo.Param(
-            m.T, initialize={t: 1 if rw[t] else 0 for t in range(T)}
-        )
+        m.reserve_window = pyo.Param(m.T, initialize={t: 1 if rw[t] else 0 for t in range(T)})
     else:
         # Default: reserve binding at every timestep iff capacity > 0
         flag = 1 if m.reserve_capacity_kw > 0 else 0
-        m.reserve_window = pyo.Param(m.T, initialize={t: flag for t in range(T)})
+        m.reserve_window = pyo.Param(m.T, initialize=dict.fromkeys(range(T), flag))
 
     # Optional load/solar surface
     if load_kw is not None:
@@ -195,17 +191,13 @@ def build_fleet_dispatch_model(
         if len(ld) < T:
             ld = ld + [ld[-1]] * (T - len(ld))
         ld = ld[:T]
-        m.load_kw = pyo.Param(
-            m.T, initialize={t: float(ld[t]) for t in range(T)}, mutable=True
-        )
+        m.load_kw = pyo.Param(m.T, initialize={t: float(ld[t]) for t in range(T)}, mutable=True)
     if solar_kw is not None:
         sl = list(solar_kw)
         if len(sl) < T:
             sl = sl + [sl[-1]] * (T - len(sl))
         sl = sl[:T]
-        m.solar_kw = pyo.Param(
-            m.T, initialize={t: float(sl[t]) for t in range(T)}, mutable=True
-        )
+        m.solar_kw = pyo.Param(m.T, initialize={t: float(sl[t]) for t in range(T)}, mutable=True)
 
     # Variables
     def _chg_bounds(model, r, t):
@@ -324,7 +316,7 @@ def build_fleet_dispatch_model(
         m.reserve_headroom = pyo.Constraint(m.T, rule=_reserve)
 
     # ---- M4 hook: constraint_builders run before objective is declared ----
-    params_view: Dict[str, Any] = {
+    params_view: dict[str, Any] = {
         "batteries": batteries,
         "horizon_steps": T,
         "dt_hours": dt_hours,
@@ -343,9 +335,7 @@ def build_fleet_dispatch_model(
                 ) from e
 
     # Base energy cost: pay for imports, get paid for exports at price[t].
-    base_cost_expr = sum(
-        m.price[t] * (m.p_import[t] - m.p_export[t]) * m.dt for t in m.T
-    )
+    base_cost_expr = sum(m.price[t] * (m.p_import[t] - m.p_export[t]) * m.dt for t in m.T)
     m.energy_cost = pyo.Expression(expr=base_cost_expr)
 
     extra_terms = []
@@ -360,9 +350,7 @@ def build_fleet_dispatch_model(
             extra_terms.append(e)
 
     if extra_terms:
-        m.cost = pyo.Objective(
-            expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize
-        )
+        m.cost = pyo.Objective(expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize)
     else:
         m.cost = pyo.Objective(expr=m.energy_cost, sense=pyo.minimize)
 

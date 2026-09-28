@@ -8,7 +8,6 @@ from vpp.alerts import (
     AlertSeverity,
     AlertState,
     RuleType,
-    LogAlertChannel,
 )
 
 
@@ -61,6 +60,7 @@ class TestAlertRules:
         )
         # Feed values
         import time
+
         rule._value_history.clear()
         now = time.time()
         rule._value_history.append((now - 5, 50.0))
@@ -83,6 +83,7 @@ class TestAlertRules:
         )
         # Feed normal values
         import time
+
         rule._value_history.clear()
         now = time.time()
         for i in range(20):
@@ -108,15 +109,17 @@ class TestAlertManager:
     @pytest.mark.asyncio
     async def test_evaluate_triggers_alert(self):
         mgr = AlertManager()
-        mgr.add_rule(AlertRule(
-            name="test_rule",
-            rule_type=RuleType.THRESHOLD,
-            metric_name="power",
-            threshold=100.0,
-            comparison=">",
-            cooldown_s=0,
-            severity=AlertSeverity.WARNING,
-        ))
+        mgr.add_rule(
+            AlertRule(
+                name="test_rule",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="power",
+                threshold=100.0,
+                comparison=">",
+                cooldown_s=0,
+                severity=AlertSeverity.WARNING,
+            )
+        )
 
         alerts = await mgr.evaluate("power", 150.0)
         assert len(alerts) == 1
@@ -126,14 +129,16 @@ class TestAlertManager:
     @pytest.mark.asyncio
     async def test_no_trigger(self):
         mgr = AlertManager()
-        mgr.add_rule(AlertRule(
-            name="test_rule",
-            rule_type=RuleType.THRESHOLD,
-            metric_name="power",
-            threshold=100.0,
-            comparison=">",
-            cooldown_s=0,
-        ))
+        mgr.add_rule(
+            AlertRule(
+                name="test_rule",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="power",
+                threshold=100.0,
+                comparison=">",
+                cooldown_s=0,
+            )
+        )
 
         alerts = await mgr.evaluate("power", 50.0)
         assert len(alerts) == 0
@@ -141,14 +146,16 @@ class TestAlertManager:
     @pytest.mark.asyncio
     async def test_resolve_alert(self):
         mgr = AlertManager()
-        mgr.add_rule(AlertRule(
-            name="rule1",
-            rule_type=RuleType.THRESHOLD,
-            metric_name="x",
-            threshold=0,
-            comparison=">",
-            cooldown_s=0,
-        ))
+        mgr.add_rule(
+            AlertRule(
+                name="rule1",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="x",
+                threshold=0,
+                comparison=">",
+                cooldown_s=0,
+            )
+        )
         alerts = await mgr.evaluate("x", 10.0)
         assert mgr.active_count == 1
 
@@ -159,14 +166,16 @@ class TestAlertManager:
     @pytest.mark.asyncio
     async def test_acknowledge_alert(self):
         mgr = AlertManager()
-        mgr.add_rule(AlertRule(
-            name="rule1",
-            rule_type=RuleType.THRESHOLD,
-            metric_name="x",
-            threshold=0,
-            comparison=">",
-            cooldown_s=0,
-        ))
+        mgr.add_rule(
+            AlertRule(
+                name="rule1",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="x",
+                threshold=0,
+                comparison=">",
+                cooldown_s=0,
+            )
+        )
         alerts = await mgr.evaluate("x", 10.0)
         ok = mgr.acknowledge(alerts[0].alert_id)
         assert ok
@@ -175,14 +184,28 @@ class TestAlertManager:
     @pytest.mark.asyncio
     async def test_filter_by_severity(self):
         mgr = AlertManager()
-        mgr.add_rule(AlertRule(
-            name="warn", rule_type=RuleType.THRESHOLD, metric_name="a",
-            threshold=0, comparison=">", cooldown_s=0, severity=AlertSeverity.WARNING,
-        ))
-        mgr.add_rule(AlertRule(
-            name="crit", rule_type=RuleType.THRESHOLD, metric_name="b",
-            threshold=0, comparison=">", cooldown_s=0, severity=AlertSeverity.CRITICAL,
-        ))
+        mgr.add_rule(
+            AlertRule(
+                name="warn",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="a",
+                threshold=0,
+                comparison=">",
+                cooldown_s=0,
+                severity=AlertSeverity.WARNING,
+            )
+        )
+        mgr.add_rule(
+            AlertRule(
+                name="crit",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="b",
+                threshold=0,
+                comparison=">",
+                cooldown_s=0,
+                severity=AlertSeverity.CRITICAL,
+            )
+        )
 
         await mgr.evaluate("a", 1.0)
         await mgr.evaluate("b", 1.0)
@@ -193,10 +216,16 @@ class TestAlertManager:
     @pytest.mark.asyncio
     async def test_alert_history(self):
         mgr = AlertManager()
-        mgr.add_rule(AlertRule(
-            name="r", rule_type=RuleType.THRESHOLD, metric_name="x",
-            threshold=0, comparison=">", cooldown_s=0,
-        ))
+        mgr.add_rule(
+            AlertRule(
+                name="r",
+                rule_type=RuleType.THRESHOLD,
+                metric_name="x",
+                threshold=0,
+                comparison=">",
+                cooldown_s=0,
+            )
+        )
         await mgr.evaluate("x", 1.0)
         history = mgr.get_alert_history()
         assert len(history) >= 1

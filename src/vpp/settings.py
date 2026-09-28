@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -76,7 +75,9 @@ class Settings(BaseSettings):
     alert_webhook_max_retries: int = 3
 
     # Migrations / database init
-    use_alembic: bool = False  # VPP_USE_ALEMBIC=1 -> run alembic upgrade head instead of create_all
+    use_alembic: bool = (
+        False  # VPP_USE_ALEMBIC=1 -> run alembic upgrade head instead of create_all
+    )
 
     # Battery degradation periodic updater (M4)
     degradation_updater_enabled: bool = True
@@ -89,8 +90,8 @@ class Settings(BaseSettings):
     mqtt_broker_host: str = "localhost"
     mqtt_broker_port: int = 1883
     mqtt_topic_prefix: str = "vpp/#"
-    mqtt_username: Optional[str] = None
-    mqtt_password: Optional[str] = None
+    mqtt_username: str | None = None
+    mqtt_password: str | None = None
 
     # Modbus inverter/meter telemetry ingestion. Disabled by default --
     # dials out to physical devices. Per-device connection config (host,
@@ -145,7 +146,7 @@ class Settings(BaseSettings):
     trading_market_data_interval_seconds: float = 5.0
 
     # VPP Config
-    config_path: Optional[str] = None
+    config_path: str | None = None
     default_timezone: str = "UTC"
 
     @field_validator("log_level")
@@ -174,7 +175,7 @@ class Settings(BaseSettings):
         return "sqlite" in self.database_url
 
     @property
-    def config_file_path(self) -> Optional[Path]:
+    def config_file_path(self) -> Path | None:
         if self.config_path:
             return Path(self.config_path)
         return None

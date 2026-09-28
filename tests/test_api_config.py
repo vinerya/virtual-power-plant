@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from httpx import AsyncClient
 
 
-
 @pytest_asyncio.fixture
 async def client(app):
     """Per-test client IP so these API-heavy tests don't drain the shared rate limit."""
@@ -90,7 +89,6 @@ def test_json_schema_is_draft07_compatible():
 # ---------------------------------------------------------------------------
 
 
-
 @pytest.mark.asyncio
 async def test_get_config_document_shape(client: AsyncClient, auth_headers: dict):
     for path in ("/api/v1/config", "/api/v1/config/"):
@@ -117,14 +115,19 @@ async def test_get_schema(client: AsyncClient, auth_headers: dict, db_session):
 @pytest.mark.asyncio
 async def test_apply_config_round_trip(client: AsyncClient, auth_headers: dict):
     before = (await client.get("/api/v1/config", headers=auth_headers)).json()
-    text = "# operator comment survives\n" + _doc(name="Austin VPP", **{"optimization.time_horizon": 48})
+    text = "# operator comment survives\n" + _doc(
+        name="Austin VPP", **{"optimization.time_horizon": 48}
+    )
     resp = await client.put("/api/v1/config", json={"yaml": text}, headers=auth_headers)
     assert resp.status_code == 200, resp.text
     applied = resp.json()
     assert applied["yaml"] == text
     assert applied["version"] == before["version"] + 1
     assert applied["updated_at"] is not None
-    assert applied["updated_by"] == (await client.get("/api/v1/auth/me", headers=auth_headers)).json()["id"]
+    assert (
+        applied["updated_by"]
+        == (await client.get("/api/v1/auth/me", headers=auth_headers)).json()["id"]
+    )
     assert get_vpp().config.name == "Austin VPP"
     assert get_vpp().config.optimization.time_horizon == 48
 
@@ -136,11 +139,17 @@ async def test_apply_config_round_trip(client: AsyncClient, auth_headers: dict):
     assert same["version"] == applied["version"]
 
     # Optimistic concurrency.
-    stale = await client.put("/api/v1/config", json={"yaml": _doc(name="Other"), "base_hash": before["hash"]},
-                             headers=auth_headers)
+    stale = await client.put(
+        "/api/v1/config",
+        json={"yaml": _doc(name="Other"), "base_hash": before["hash"]},
+        headers=auth_headers,
+    )
     assert stale.status_code == 409
-    fresh = await client.put("/api/v1/config", json={"yaml": _doc(name="Other"), "base_hash": live["hash"]},
-                             headers=auth_headers)
+    fresh = await client.put(
+        "/api/v1/config",
+        json={"yaml": _doc(name="Other"), "base_hash": live["hash"]},
+        headers=auth_headers,
+    )
     assert fresh.status_code == 200
     assert fresh.json()["version"] == applied["version"] + 1
 
@@ -188,11 +197,15 @@ async def test_apply_config_size_limit(client: AsyncClient, auth_headers: dict):
 
 @pytest.mark.asyncio
 async def test_validate_endpoint_uses_same_rules(client: AsyncClient, auth_headers: dict):
-    ok = await client.post("/api/v1/config/validate", json={"optimization": {"time_horizon": 200}},
-                           headers=auth_headers)
+    ok = await client.post(
+        "/api/v1/config/validate",
+        json={"optimization": {"time_horizon": 200}},
+        headers=auth_headers,
+    )
     assert ok.json()["valid"] is True
     assert "time_horizon > 168h may be slow" in ok.json()["warnings"]
-    bad = await client.post("/api/v1/config/validate", json={"optimization": {"time_step": -1}},
-                            headers=auth_headers)
+    bad = await client.post(
+        "/api/v1/config/validate", json={"optimization": {"time_step": -1}}, headers=auth_headers
+    )
     assert bad.json()["valid"] is False
     assert any("/optimization/time_step" in e for e in bad.json()["errors"])

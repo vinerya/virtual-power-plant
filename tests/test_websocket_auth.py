@@ -48,69 +48,66 @@ def _token(sub: str = "u-1") -> str:
 
 @pytest.mark.parametrize("path", ["/api/v1/ws", "/ws"])
 def test_unauthenticated_socket_is_rejected(ws_app, path):
-    with TestClient(ws_app) as tc:
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with tc.websocket_connect(path) as ws:
-                ws.receive_text()
+    with TestClient(ws_app) as tc, pytest.raises(WebSocketDisconnect) as exc:
+        with tc.websocket_connect(path) as ws:
+            ws.receive_text()
     assert exc.value.code == ws_module.WS_POLICY_VIOLATION
 
 
 def test_invalid_token_is_rejected(ws_app):
-    with TestClient(ws_app) as tc:
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with tc.websocket_connect("/api/v1/ws?token=not.a.jwt") as ws:
-                ws.receive_text()
+    with TestClient(ws_app) as tc, pytest.raises(WebSocketDisconnect) as exc:
+        with tc.websocket_connect("/api/v1/ws?token=not.a.jwt") as ws:
+            ws.receive_text()
     assert exc.value.code == ws_module.WS_POLICY_VIOLATION
 
 
 def test_token_for_unknown_user_is_rejected(ws_app):
-    with TestClient(ws_app) as tc:
-        with pytest.raises(WebSocketDisconnect):
-            with tc.websocket_connect(f"/api/v1/ws?token={_token('ghost')}") as ws:
-                ws.receive_text()
+    with TestClient(ws_app) as tc, pytest.raises(WebSocketDisconnect):
+        with tc.websocket_connect(f"/api/v1/ws?token={_token('ghost')}") as ws:
+            ws.receive_text()
 
 
 @pytest.mark.parametrize("path", ["/api/v1/ws", "/ws"])
 def test_query_token_and_initial_channels(ws_app, path):
     url = f"{path}?token={_token()}&channels=resource_updates,alerts,bogus"
-    with TestClient(ws_app) as tc:
-        with tc.websocket_connect(url) as ws:
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:resource_updates"}
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
-            assert "bogus" in json.loads(ws.receive_text())["error"]
-            # Message protocol still works after the handshake.
-            ws.send_text(json.dumps({"action": "subscribe", "channel": "market_data"}))
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:market_data"}
-            ws.send_text(json.dumps({"action": "ping"}))
-            assert "pong" in json.loads(ws.receive_text())
+    with TestClient(ws_app) as tc, tc.websocket_connect(url) as ws:
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:resource_updates"}
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
+        assert "bogus" in json.loads(ws.receive_text())["error"]
+        # Message protocol still works after the handshake.
+        ws.send_text(json.dumps({"action": "subscribe", "channel": "market_data"}))
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:market_data"}
+        ws.send_text(json.dumps({"action": "ping"}))
+        assert "pong" in json.loads(ws.receive_text())
 
 
 def test_subprotocol_token_selects_bearer(ws_app):
-    with TestClient(ws_app) as tc:
-        with tc.websocket_connect(
+    with (
+        TestClient(ws_app) as tc,
+        tc.websocket_connect(
             "/api/v1/ws?channels=alerts", subprotocols=["bearer", _token()]
-        ) as ws:
-            assert ws.accepted_subprotocol == "bearer"
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
+        ) as ws,
+    ):
+        assert ws.accepted_subprotocol == "bearer"
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
 
 
 def test_authorization_header_is_accepted(ws_app):
-    with TestClient(ws_app) as tc:
-        with tc.websocket_connect(
-            "/api/v1/ws", headers={"Authorization": f"Bearer {_token()}"}
-        ) as ws:
-            ws.send_text(json.dumps({"action": "subscribe", "channel": "alerts"}))
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
+    with (
+        TestClient(ws_app) as tc,
+        tc.websocket_connect("/api/v1/ws", headers={"Authorization": f"Bearer {_token()}"}) as ws,
+    ):
+        ws.send_text(json.dumps({"action": "subscribe", "channel": "alerts"}))
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
 
 
 def test_auth_can_be_disabled(ws_app, monkeypatch):
     from vpp.settings import get_settings
 
     monkeypatch.setattr(get_settings(), "ws_auth_required", False)
-    with TestClient(ws_app) as tc:
-        with tc.websocket_connect("/ws") as ws:
-            ws.send_text(json.dumps({"action": "subscribe", "channel": "alerts"}))
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
+    with TestClient(ws_app) as tc, tc.websocket_connect("/ws") as ws:
+        ws.send_text(json.dumps({"action": "subscribe", "channel": "alerts"}))
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
 
 
 def test_broadcast_reaches_socket_subscribed_via_query(ws_app):
@@ -174,7 +171,9 @@ def test_customer_token_is_rejected(monkeypatch):
     app = FastAPI()
     app.add_api_websocket_route("/api/v1/ws", ws_module.websocket_endpoint)
     token = create_access_token({"sub": "c-1", "username": "carol", "role": "customer"})
-    with TestClient(app) as tc, pytest.raises(WebSocketDisconnect), tc.websocket_connect(
-        f"/api/v1/ws?token={token}"
-    ) as ws:
+    with (
+        TestClient(app) as tc,
+        pytest.raises(WebSocketDisconnect),
+        tc.websocket_connect(f"/api/v1/ws?token={token}") as ws,
+    ):
         ws.receive_text()

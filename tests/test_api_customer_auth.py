@@ -52,10 +52,18 @@ async def test_operator_login_issues_operator_audience(client: AsyncClient, admi
 
 @pytest.mark.parametrize(
     "path",
-    ["/api/v1/resources/", "/api/v1/tariffs", "/api/v1/config", "/api/v1/config/schema",
-     "/api/v1/customers", "/api/v1/programs"],
+    [
+        "/api/v1/resources/",
+        "/api/v1/tariffs",
+        "/api/v1/config",
+        "/api/v1/config/schema",
+        "/api/v1/customers",
+        "/api/v1/programs",
+    ],
 )
-async def test_customer_denied_on_operator_endpoints(client: AsyncClient, auth_headers: dict, path):
+async def test_customer_denied_on_operator_endpoints(
+    client: AsyncClient, auth_headers: dict, path
+):
     _cid, headers = await create_customer(client, auth_headers)
     resp = await client.get(path, headers=headers)
     assert resp.status_code == 403, (path, resp.text)
@@ -63,27 +71,39 @@ async def test_customer_denied_on_operator_endpoints(client: AsyncClient, auth_h
 
 async def test_operator_denied_on_customer_portal(client: AsyncClient, db_session):
     headers = await user_headers(db_session, "operator")
-    for path in ("/api/v1/customer/me", "/api/v1/customer/me/bill", "/api/v1/customer/me/devices",
-                 "/api/v1/customer/programs"):
+    for path in (
+        "/api/v1/customer/me",
+        "/api/v1/customer/me/bill",
+        "/api/v1/customer/me/devices",
+        "/api/v1/customer/programs",
+    ):
         resp = await client.get(path, headers=headers)
         assert resp.status_code == 403, path
 
 
 async def test_audience_mismatch_rejected(client: AsyncClient, admin_user):
     # A token claiming the customer audience for an admin account is refused.
-    token = create_access_token({
-        "sub": admin_user.id, "username": admin_user.username, "role": admin_user.role,
-        "aud": "customer",
-    })
+    token = create_access_token(
+        {
+            "sub": admin_user.id,
+            "username": admin_user.username,
+            "role": admin_user.role,
+            "aud": "customer",
+        }
+    )
     resp = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
 
 
 async def test_unknown_audience_rejected(client: AsyncClient, admin_user):
-    token = create_access_token({
-        "sub": admin_user.id, "username": admin_user.username, "role": admin_user.role,
-        "aud": "somebody-else",
-    })
+    token = create_access_token(
+        {
+            "sub": admin_user.id,
+            "username": admin_user.username,
+            "role": admin_user.role,
+            "aud": "somebody-else",
+        }
+    )
     resp = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 401
 

@@ -13,10 +13,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------
+
 
 class EVConnectionState(str, Enum):
     DISCONNECTED = "disconnected"
@@ -36,6 +36,7 @@ class ScheduleStatus(str, Enum):
 # EV Battery
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EVBattery:
     """An electric vehicle battery with V2G capability.
@@ -45,8 +46,8 @@ class EVBattery:
 
     ev_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     capacity_kwh: float = 60.0
-    current_soc: float = 0.5        # 0.0–1.0
-    min_soc: float = 0.2            # never drain below this
+    current_soc: float = 0.5  # 0.0–1.0
+    min_soc: float = 0.2  # never drain below this
     max_charge_kw: float = 11.0
     max_discharge_kw: float = 11.0  # V2G discharge limit
     charge_efficiency: float = 0.92
@@ -153,6 +154,7 @@ class EVBattery:
 # Flexibility window
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FlexibilityWindow:
     """Time window during which an EV can provide V2G services."""
@@ -163,7 +165,7 @@ class FlexibilityWindow:
     max_charge_kw: float
     max_discharge_kw: float
     available_energy_kwh: float  # for discharge
-    needed_energy_kwh: float     # must be charged by end
+    needed_energy_kwh: float  # must be charged by end
 
     @property
     def duration_hours(self) -> float:
@@ -185,6 +187,7 @@ class FlexibilityWindow:
 # ---------------------------------------------------------------------------
 # Charging session
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ChargingSession:
@@ -226,6 +229,7 @@ class ChargingSession:
 # EV Fleet
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class EVFleet:
     """Aggregation of EVs for fleet-level V2G management."""
@@ -263,7 +267,8 @@ class EVFleet:
     @property
     def connected_count(self) -> int:
         return sum(
-            1 for ev in self.vehicles.values()
+            1
+            for ev in self.vehicles.values()
             if ev.connection_state != EVConnectionState.DISCONNECTED
         )
 
@@ -298,7 +303,8 @@ class EVFleet:
     def flexible_vehicles(self) -> list[EVBattery]:
         """EVs with time flexibility for V2G."""
         return [
-            ev for ev in self.vehicles.values()
+            ev
+            for ev in self.vehicles.values()
             if ev.has_flexibility
             and ev.connection_state != EVConnectionState.DISCONNECTED
             and ev.v2g_capable
@@ -310,15 +316,17 @@ class EVFleet:
         now = time.time()
         for ev in self.flexible_vehicles:
             end = ev.departure_time or (now + 24 * 3600)
-            windows.append(FlexibilityWindow(
-                ev_id=ev.ev_id,
-                start_time=now,
-                end_time=end,
-                max_charge_kw=ev.max_charge_kw,
-                max_discharge_kw=ev.max_discharge_kw,
-                available_energy_kwh=ev.available_discharge_kwh,
-                needed_energy_kwh=ev.energy_needed_kwh,
-            ))
+            windows.append(
+                FlexibilityWindow(
+                    ev_id=ev.ev_id,
+                    start_time=now,
+                    end_time=end,
+                    max_charge_kw=ev.max_charge_kw,
+                    max_discharge_kw=ev.max_discharge_kw,
+                    available_energy_kwh=ev.available_discharge_kwh,
+                    needed_energy_kwh=ev.energy_needed_kwh,
+                )
+            )
         return windows
 
     def to_dict(self) -> dict[str, Any]:

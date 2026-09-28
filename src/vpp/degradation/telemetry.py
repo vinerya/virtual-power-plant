@@ -10,9 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -33,7 +32,7 @@ class TelemetryWindow:
     battery_id: str
     soc_trace: list[float]
     timestamps: list[datetime]
-    temperatures_c: Optional[list[float]] = None
+    temperatures_c: list[float] | None = None
 
     def dt_hours(self) -> float:
         """Average sample interval, in hours.  Defaults to 1 minute if undefined."""
@@ -90,7 +89,7 @@ def _capacity_kwh(obj) -> float:
     return 1.0
 
 
-def _preset_for(chemistry: Optional[str]) -> dict:
+def _preset_for(chemistry: str | None) -> dict:
     if chemistry and chemistry.lower() == "nmc":
         return NMC_PRESET
     return LFP_PRESET  # default LFP
@@ -114,7 +113,7 @@ class DegradationUpdater:
         self._session_factory = session_factory
         self._default_chemistry = default_chemistry
 
-    async def apply_window(self, window: TelemetryWindow) -> Optional[SOHUpdate]:
+    async def apply_window(self, window: TelemetryWindow) -> SOHUpdate | None:
         """Run rainflow + calendar models on the window and update the DB."""
         if len(window.soc_trace) < 2:
             return None
@@ -124,9 +123,7 @@ class DegradationUpdater:
         from vpp.db.repositories import BatteryDegradationRepository
 
         async with self._session_factory() as session:
-            obj: ResourceModel | None = await session.get(
-                ResourceModel, window.battery_id
-            )
+            obj: ResourceModel | None = await session.get(ResourceModel, window.battery_id)
             if obj is None or obj.resource_type != "battery":
                 return None
 
@@ -140,14 +137,10 @@ class DegradationUpdater:
             temp_c = window.mean_temperature_c()
 
             cycle_loss = float(
-                rainflow_model.predict_capacity_loss(
-                    window.soc_trace, dt_h, temperature_c=temp_c
-                )
+                rainflow_model.predict_capacity_loss(window.soc_trace, dt_h, temperature_c=temp_c)
             )
             calendar_loss = float(
-                calendar_model.predict_capacity_loss(
-                    window.soc_trace, dt_h, temperature_c=temp_c
-                )
+                calendar_model.predict_capacity_loss(window.soc_trace, dt_h, temperature_c=temp_c)
             )
             loss = cycle_loss + calendar_loss
 
@@ -164,9 +157,7 @@ class DegradationUpdater:
                 throughput_frac * capacity_kwh
             )
 
-            ts = window.timestamps[-1] if window.timestamps else datetime.now(
-                timezone.utc
-            )
+            ts = window.timestamps[-1] if window.timestamps else datetime.now(timezone.utc)
 
             await BatteryDegradationRepository.update_battery_soh(
                 session,
@@ -194,7 +185,7 @@ class DegradationUpdater:
         fetch_telemetry: Callable[[str], Awaitable[TelemetryWindow] | TelemetryWindow],
         battery_ids: list[str],
         interval_minutes: int = 60,
-        max_ticks: Optional[int] = None,
+        max_ticks: int | None = None,
     ) -> None:
         """Long-running async loop that processes one window per battery per tick.
 
@@ -211,9 +202,7 @@ class DegradationUpdater:
                     if window is not None:
                         await self.apply_window(window)
                 except Exception:  # pragma: no cover - defensive
-                    logger.exception(
-                        "Degradation update failed for battery %s", bid
-                    )
+                    logger.exception("Degradation update failed for battery %s", bid)
             tick += 1
             if max_ticks is not None and tick >= max_ticks:
                 return

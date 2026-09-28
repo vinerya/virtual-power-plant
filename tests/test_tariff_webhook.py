@@ -1,4 +1,5 @@
 """Webhook events on tariff PUT/DELETE (M4)."""
+
 from __future__ import annotations
 
 import json
@@ -9,14 +10,8 @@ from httpx import AsyncClient
 
 from vpp.events import EventType, get_event_bus, reset_event_bus
 
-
 PRESET = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "vpp"
-    / "tariffs"
-    / "presets"
-    / "pge_etouc.json"
+    Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
 )
 
 

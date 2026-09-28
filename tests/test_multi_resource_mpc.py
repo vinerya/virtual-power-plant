@@ -1,4 +1,5 @@
 """Tests for MultiResourceMPCController (M4)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -7,12 +8,12 @@ import pytest
 
 pyo = pytest.importorskip("pyomo.environ")
 
+from vpp.optimization.formulations.fleet_dispatch import FleetBattery
 from vpp.optimization.mpc import (
     MultiResourceMPCConfig,
     MultiResourceMPCController,
     MultiResourceMPCStep,
 )
-from vpp.optimization.formulations.fleet_dispatch import FleetBattery, FleetCoupling
 from vpp.optimization.solvers.pyomo_plugin import _try_import_pyomo
 
 
@@ -53,7 +54,7 @@ def test_multi_resource_mpc_basic(solver_available):
     decisions = []
     for tick in range(24):
         # Rolling forecast: shift prices
-        prices = base_prices[tick % len(base_prices):] + base_prices[: tick % len(base_prices)]
+        prices = base_prices[tick % len(base_prices) :] + base_prices[: tick % len(base_prices)]
         prices = (prices * 2)[: cfg.horizon_steps]
         step = MultiResourceMPCStep(
             timestamp=t0 + timedelta(hours=tick),
@@ -68,8 +69,9 @@ def test_multi_resource_mpc_basic(solver_available):
     assert len(decisions) == 24
     # At least one decision should have non-trivial dispatch
     any_dispatch = any(
-        any(pr["p_charge_kw"] > 0.1 or pr["p_discharge_kw"] > 0.1
-            for pr in d.per_resource.values())
+        any(
+            pr["p_charge_kw"] > 0.1 or pr["p_discharge_kw"] > 0.1 for pr in d.per_resource.values()
+        )
         for d in decisions
     )
     assert any_dispatch

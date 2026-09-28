@@ -94,7 +94,9 @@ async def resource_to_asset(session: AsyncSession, row: ResourceModel) -> FleetA
         metadata=meta,
     )
     if asset.is_battery:
-        cap = _first_number(row.nominal_energy_kwh, cfg.get("capacity_kwh"), meta.get("capacity_kwh"))
+        cap = _first_number(
+            row.nominal_energy_kwh, cfg.get("capacity_kwh"), meta.get("capacity_kwh")
+        )
         if cap is not None and cap > 0:
             asset.capacity_kwh = cap
             asset.capacity_source = "recorded"
@@ -109,9 +111,11 @@ async def resource_to_asset(session: AsyncSession, row: ResourceModel) -> FleetA
             if charge is not None and asset.capacity_kwh:
                 soc, source = charge / asset.capacity_kwh, "config"
         if soc is None:
-            soc = _fraction(_first_number(
-                cfg.get("state_of_charge"), meta.get("state_of_charge"), meta.get("soc")
-            ))
+            soc = _fraction(
+                _first_number(
+                    cfg.get("state_of_charge"), meta.get("state_of_charge"), meta.get("soc")
+                )
+            )
             source = "config"
         if soc is None:
             soc, source = 0.5, "assumed"
@@ -171,9 +175,11 @@ async def load_fleet_assets(
     rows = list((await session.execute(stmt.limit(limit))).scalars().all())
     missing: list[str] = []
     if ids:
-        found_any = set((
-                await session.execute(select(ResourceModel.id).where(ResourceModel.id.in_(ids)))
-            ).scalars().all())
+        found_any = set(
+            (await session.execute(select(ResourceModel.id).where(ResourceModel.id.in_(ids))))
+            .scalars()
+            .all()
+        )
         missing = [i for i in ids if i not in found_any]
     assets = [await resource_to_asset(session, r) for r in rows]
     return assets, missing
@@ -205,20 +211,26 @@ def _json_safe(obj: Any) -> Any:
     return obj
 
 
-async def publish_optimization_event(event_type: EventType, data: dict[str, Any],
-                                     severity: str = "info") -> None:
+async def publish_optimization_event(
+    event_type: EventType, data: dict[str, Any], severity: str = "info"
+) -> None:
     """Publish on the EventBus; failures are logged, never raised."""
     try:
         await get_event_bus().publish(
-            Event(event_type=event_type, data=_json_safe(data),
-                  source="api.optimization", severity=severity)
+            Event(
+                event_type=event_type,
+                data=_json_safe(data),
+                source="api.optimization",
+                severity=severity,
+            )
         )
     except Exception:
         logger.warning("failed to publish %s", event_type, exc_info=True)
 
 
-async def start_run(session: AsyncSession, problem_type: str,
-                    parameters: dict[str, Any]) -> OptimizationRunModel:
+async def start_run(
+    session: AsyncSession, problem_type: str, parameters: dict[str, Any]
+) -> OptimizationRunModel:
     """Persist a ``running`` row, commit it and announce the run."""
     row = await OptimizationRepository.record_run(
         session,

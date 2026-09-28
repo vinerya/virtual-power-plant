@@ -1,9 +1,9 @@
 """Tests for the MPC controller and backtest harness (Milestone 3)."""
+
 from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Dict, List
 
 import pytest
 
@@ -11,7 +11,6 @@ from vpp.optimization.backtest import BacktestConfig, run_backtest
 from vpp.optimization.formulations.dispatch import build_battery_dispatch_model
 from vpp.optimization.mpc import MPCConfig, MPCController, MPCStep
 from vpp.optimization.solvers.pyomo_plugin import _try_import_pyomo
-
 
 # Skip the whole file if Pyomo/HiGHS isn't usable (CI fallback).
 _PYO, _FAC = _try_import_pyomo()
@@ -37,12 +36,12 @@ BATTERY = {
 }
 
 
-def _price_series(n: int, seed: int = 0) -> List[float]:
+def _price_series(n: int, seed: int = 0) -> list[float]:
     """Deterministic synthetic diurnal price pattern."""
-    out: List[float] = []
+    out: list[float] = []
     for k in range(n):
         # Two cycles per 24 ticks: peak around 5pm, trough around 4am.
-        hour = (k % 24)
+        hour = k % 24
         base = 50.0 + 30.0 * math.sin(2 * math.pi * (hour - 4) / 24.0)
         # Mild noise determined by seed (deterministic).
         noise = ((k * 9301 + seed * 49297) % 233280) / 233280.0
@@ -50,13 +49,11 @@ def _price_series(n: int, seed: int = 0) -> List[float]:
     return out
 
 
-def _zeros(n: int) -> List[float]:
+def _zeros(n: int) -> list[float]:
     return [0.0] * n
 
 
-def _solve_offline_optimum(
-    prices: List[float], dt_hours: float = 0.25
-) -> float:
+def _solve_offline_optimum(prices: list[float], dt_hours: float = 0.25) -> float:
     """Single deterministic solve over the whole window — the offline optimum."""
     import pyomo.environ as pyo
 
@@ -77,6 +74,7 @@ def _solve_offline_optimum(
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_mpc_perfect_foresight_matches_offline_optimum():
     n_ticks = 12
     horizon = 12  # full-window MPC == offline optimum at tick 0
@@ -95,7 +93,7 @@ def test_mpc_perfect_foresight_matches_offline_optimum():
     battery["terminal_soc"] = BATTERY["soc_min"]
     ctrl = MPCController(cfg, battery)
 
-    def perfect(now: datetime, H: int) -> Dict[str, List[float]]:
+    def perfect(now: datetime, H: int) -> dict[str, list[float]]:
         # Map timestamp back to index k.
         k = int((now - start).total_seconds() // (dt_min * 60))
         end = min(len(prices), k + H)
@@ -110,9 +108,7 @@ def test_mpc_perfect_foresight_matches_offline_optimum():
         end=start + timedelta(minutes=dt_min * n_ticks),
         interval_minutes=dt_min,
     )
-    res = run_backtest(
-        ctrl, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect
-    )
+    res = run_backtest(ctrl, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect)
 
     # Offline optimum over the same window.
     offline = _solve_offline_optimum(prices[:n_ticks], dt_hours=dt_min / 60.0)
@@ -142,7 +138,7 @@ def test_mpc_naive_forecast_underperforms_perfect():
         interval_minutes=dt_min,
     )
 
-    def perfect(now: datetime, H: int) -> Dict[str, List[float]]:
+    def perfect(now: datetime, H: int) -> dict[str, list[float]]:
         k = int((now - start).total_seconds() // (dt_min * 60))
         # Use today's truth, padded with full[48:] tail.
         sl = (today + full[48:])[k : k + H]
@@ -150,7 +146,7 @@ def test_mpc_naive_forecast_underperforms_perfect():
             sl = sl + [sl[-1]] * (H - len(sl))
         return {"prices": sl}
 
-    def naive(now: datetime, H: int) -> Dict[str, List[float]]:
+    def naive(now: datetime, H: int) -> dict[str, list[float]]:
         # Replay yesterday's same-hour prices.
         k = int((now - start).total_seconds() // (dt_min * 60))
         sl = []
@@ -198,7 +194,7 @@ def test_mpc_warm_start_speedup():
         interval_minutes=dt_min,
     )
 
-    def perfect(now: datetime, H: int) -> Dict[str, List[float]]:
+    def perfect(now: datetime, H: int) -> dict[str, list[float]]:
         k = int((now - start).total_seconds() // (dt_min * 60))
         sl = prices[k : k + H]
         if len(sl) < H:
@@ -209,9 +205,13 @@ def test_mpc_warm_start_speedup():
     cfg_cold = MPCConfig(horizon_steps=horizon, interval_minutes=dt_min, warm_start=False)
 
     ctrl_w = MPCController(cfg_warm, BATTERY)
-    res_w = run_backtest(ctrl_w, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect)
+    res_w = run_backtest(
+        ctrl_w, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect
+    )
     ctrl_c = MPCController(cfg_cold, BATTERY)
-    res_c = run_backtest(ctrl_c, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect)
+    res_c = run_backtest(
+        ctrl_c, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect
+    )
 
     avg_warm_ms = res_w.cumulative_solve_time_ms / n_ticks
     avg_cold_ms = res_c.cumulative_solve_time_ms / n_ticks
@@ -226,8 +226,7 @@ def test_mpc_warm_start_speedup():
 
     if iters_cold > 0 or iters_warm > 0:
         assert iters_warm <= iters_cold * 1.25, (
-            f"warm-start regressed: warm={iters_warm} simplex iterations, "
-            f"cold={iters_cold}"
+            f"warm-start regressed: warm={iters_warm} simplex iterations, cold={iters_cold}"
         )
     else:
         # Iteration counts unavailable (non-appsi solver backend) -- fall
@@ -266,7 +265,6 @@ def test_mpc_fallback_on_solver_timeout():
 
 def test_mpc_with_external_hooks():
     """Throughput penalty hook should reduce cycling vs. the baseline."""
-    import pyomo.environ as pyo
 
     horizon = 24
     dt_min = 60
@@ -278,9 +276,7 @@ def test_mpc_with_external_hooks():
 
     def throughput_penalty(model, params):
         # Big penalty per kWh of throughput — should suppress cycling.
-        return 1000.0 * sum(
-            (model.p_charge[t] + model.p_discharge[t]) * model.dt for t in model.T
-        )
+        return 1000.0 * sum((model.p_charge[t] + model.p_discharge[t]) * model.dt for t in model.T)
 
     base_step = MPCStep(
         timestamp=datetime(2025, 5, 1),
@@ -369,16 +365,14 @@ def test_backtest_harness():
         interval_minutes=dt_min,
     )
 
-    def perfect(now: datetime, H: int) -> Dict[str, List[float]]:
+    def perfect(now: datetime, H: int) -> dict[str, list[float]]:
         k = int((now - start).total_seconds() // (dt_min * 60))
         sl = prices[k : k + H]
         if len(sl) < H:
             sl = sl + [sl[-1]] * (H - len(sl))
         return {"prices": sl}
 
-    res = run_backtest(
-        ctrl, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect
-    )
+    res = run_backtest(ctrl, bt_cfg, prices[:n_ticks], _zeros(n_ticks), _zeros(n_ticks), perfect)
 
     # 1) realized_cost equals sum of step costs.
     summed = sum(d["step_cost"] for d in res.realized_dispatch)
@@ -391,9 +385,7 @@ def test_backtest_harness():
     dt_h = dt_min / 60.0
     soc = BATTERY["soc_init"] * cap
     for d in res.realized_dispatch:
-        expected = (
-            soc + eta_c * d["p_charge_kw"] * dt_h - d["p_discharge_kw"] * dt_h / eta_d
-        )
+        expected = soc + eta_c * d["p_charge_kw"] * dt_h - d["p_discharge_kw"] * dt_h / eta_d
         # Allow clipping to bounds.
         expected = min(BATTERY["soc_max"] * cap, max(BATTERY["soc_min"] * cap, expected))
         assert d["soc_kwh"] == pytest.approx(expected, abs=1e-6)

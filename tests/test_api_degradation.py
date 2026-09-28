@@ -28,9 +28,7 @@ async def viewer_headers(db_session):
             role="viewer",
         )
         await db_session.commit()
-    token = create_access_token(
-        {"sub": user.id, "username": user.username, "role": user.role}
-    )
+    token = create_access_token({"sub": user.id, "username": user.username, "role": user.role})
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -50,19 +48,19 @@ async def seeded_battery(db_session):
 
     ts = datetime.now(timezone.utc)
     await BatteryDegradationRepository.update_battery_soh(
-        db_session, battery.id, soh=0.97, cum_throughput_kwh=250.0, ts=ts,
+        db_session,
+        battery.id,
+        soh=0.97,
+        cum_throughput_kwh=250.0,
+        ts=ts,
     )
     await db_session.commit()
     return battery
 
 
 @pytest.mark.asyncio
-async def test_get_soh_endpoint(
-    client: AsyncClient, auth_headers: dict, seeded_battery
-):
-    resp = await client.get(
-        f"/api/v1/batteries/{seeded_battery.id}/soh", headers=auth_headers
-    )
+async def test_get_soh_endpoint(client: AsyncClient, auth_headers: dict, seeded_battery):
+    resp = await client.get(f"/api/v1/batteries/{seeded_battery.id}/soh", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["battery_id"] == seeded_battery.id
@@ -94,9 +92,7 @@ async def test_post_soh_update_requires_admin(
 
 
 @pytest.mark.asyncio
-async def test_projected_eol_date_calculation(
-    client: AsyncClient, auth_headers: dict, db_session
-):
+async def test_projected_eol_date_calculation(client: AsyncClient, auth_headers: dict, db_session):
     """A battery with a known daily_efc should yield a deterministic EOL date.
 
     Formula: days_left = (SOH - 0.8) / (loss_per_efc * daily_efc),
@@ -124,9 +120,7 @@ async def test_projected_eol_date_calculation(
     battery.last_degradation_update = datetime.now(timezone.utc)
     await db_session.commit()
 
-    resp = await client.get(
-        f"/api/v1/batteries/{battery.id}/soh", headers=auth_headers
-    )
+    resp = await client.get(f"/api/v1/batteries/{battery.id}/soh", headers=auth_headers)
     assert resp.status_code == 200
     body = resp.json()
 
@@ -137,9 +131,7 @@ async def test_projected_eol_date_calculation(
     days_left = (soh - 0.8) / (loss_per_efc * daily_efc)
 
     assert body["projected_eol_date"] is not None
-    projected = datetime.fromisoformat(
-        body["projected_eol_date"].replace("Z", "+00:00")
-    )
+    projected = datetime.fromisoformat(body["projected_eol_date"].replace("Z", "+00:00"))
     expected = datetime.now(timezone.utc) + timedelta(days=days_left)
     delta_seconds = abs((projected - expected).total_seconds())
     # Allow up to a few seconds of clock drift between server-side now()

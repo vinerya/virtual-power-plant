@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from typing import Any
 
 from vpp.auth.security import get_current_user, require_role
-from vpp.v2g.models import EVBattery, EVFleet, EVConnectionState
+from vpp.v2g.aggregator import DispatchSignal, GridService, V2GAggregator
+from vpp.v2g.models import EVBattery, EVConnectionState, EVFleet
 from vpp.v2g.scheduler import V2GScheduler
-from vpp.v2g.aggregator import V2GAggregator, DispatchSignal, GridService
 
 router = APIRouter(prefix="/api/v1/v2g", tags=["v2g"])
 
@@ -30,6 +29,7 @@ def get_aggregator() -> V2GAggregator:
 
 
 # -- Schemas -----------------------------------------------------------------
+
 
 class EVCreate(BaseModel):
     ev_id: str | None = None
@@ -81,6 +81,7 @@ class BidRequest(BaseModel):
 
 
 # -- Endpoints ---------------------------------------------------------------
+
 
 @router.post("/vehicles", response_model=EVResponse, status_code=status.HTTP_201_CREATED)
 async def add_vehicle(
@@ -250,6 +251,7 @@ async def aggregator_metrics(
 
 
 # -- Helpers -----------------------------------------------------------------
+
 
 def _ev_to_response(ev: EVBattery) -> EVResponse:
     return EVResponse(

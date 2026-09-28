@@ -90,26 +90,34 @@ if _HAS_PROMETHEUS:
 
     # -- Resource metrics
     RESOURCE_COUNT = Gauge(
-        "vpp_resource_count", "Number of registered resources",
-        ["resource_type"], registry=REGISTRY,
+        "vpp_resource_count",
+        "Number of registered resources",
+        ["resource_type"],
+        registry=REGISTRY,
     )
     RESOURCE_POWER = Gauge(
-        "vpp_resource_power_kw", "Current power output (kW)",
-        ["resource_id", "resource_type"], registry=REGISTRY,
+        "vpp_resource_power_kw",
+        "Current power output (kW)",
+        ["resource_id", "resource_type"],
+        registry=REGISTRY,
     )
     BATTERY_SOC = Gauge(
-        "vpp_battery_soc", "Battery state of charge (0-1)",
-        ["resource_id"], registry=REGISTRY,
+        "vpp_battery_soc",
+        "Battery state of charge (0-1)",
+        ["resource_id"],
+        registry=REGISTRY,
     )
     RESOURCE_LAST_UPDATE = Gauge(
         "vpp_resource_last_update_timestamp_seconds",
         "Unix time of the last telemetry update received for a resource",
-        ["resource_id"], registry=REGISTRY,
+        ["resource_id"],
+        registry=REGISTRY,
     )
     TELEMETRY_EVENTS = Counter(
         "vpp_telemetry_events_total",
         "RESOURCE_UPDATED telemetry events observed on the event bus",
-        ["source"], registry=REGISTRY,
+        ["source"],
+        registry=REGISTRY,
     )
 
     # -- Optimization metrics
@@ -221,6 +229,7 @@ def prometheus_available() -> bool:
 # Metrics collector
 # ---------------------------------------------------------------------------
 
+
 class MetricsCollector:
     """Thin, no-op-safe facade over the module's Prometheus metrics."""
 
@@ -238,7 +247,10 @@ class MetricsCollector:
     # -- Optimization ---------------------------------------------------
 
     def record_optimization(
-        self, problem_type: str, status: str, duration_seconds: float | None = None,
+        self,
+        problem_type: str,
+        status: str,
+        duration_seconds: float | None = None,
     ) -> None:
         if not self._enabled:
             return
@@ -298,10 +310,14 @@ class MetricsCollector:
             return
         RESOURCE_COUNT.labels(resource_type=resource_type).set(count)
 
-    def mark_resource_updated(self, resource_id: str, source: str, ts: float | None = None) -> None:
+    def mark_resource_updated(
+        self, resource_id: str, source: str, ts: float | None = None
+    ) -> None:
         if not self._enabled:
             return
-        RESOURCE_LAST_UPDATE.labels(resource_id=resource_id).set(ts if ts is not None else time.time())
+        RESOURCE_LAST_UPDATE.labels(resource_id=resource_id).set(
+            ts if ts is not None else time.time()
+        )
         TELEMETRY_EVENTS.labels(source=source or "unknown").inc()
 
     def forget_resource(self, resource_id: str) -> None:
@@ -379,8 +395,11 @@ metrics_collector = MetricsCollector()
 # Module-level helpers (stable hooks for other modules)
 # ---------------------------------------------------------------------------
 
+
 def record_optimization(
-    problem_type: str, status: str, duration_seconds: float | None = None,
+    problem_type: str,
+    status: str,
+    duration_seconds: float | None = None,
 ) -> None:
     """Count one optimization run (and observe its duration if given)."""
     metrics_collector.record_optimization(problem_type, status, duration_seconds)
@@ -466,9 +485,7 @@ def observe_event(event: Event, collector: MetricsCollector | None = None) -> No
             return
         resource_id = str(resource_id)
         resource_type = (
-            data.get("resource_type")
-            or c.known_resource_type(resource_id)
-            or "unknown"
+            data.get("resource_type") or c.known_resource_type(resource_id) or "unknown"
         )
         power = _first_float(data, _POWER_KEYS)
         if power is not None:

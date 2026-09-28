@@ -10,6 +10,7 @@ Public API
 * Adapters: :class:`CAISOLMPFeed`, :class:`ComEdHourlyFeed`,
   :class:`OpenADRPriceFeed`, :class:`SyntheticFeed`.
 """
+
 from .base import PriceFeed, PricePoint
 from .cache import FeedCache
 from .caiso_lmp import CAISOLMPFeed
@@ -18,11 +19,11 @@ from .openadr_price import OpenADRPriceFeed
 from .synthetic import SyntheticFeed
 
 __all__ = [
-    "PriceFeed",
-    "PricePoint",
-    "FeedCache",
     "CAISOLMPFeed",
     "ComEdHourlyFeed",
+    "FeedCache",
     "OpenADRPriceFeed",
+    "PriceFeed",
+    "PricePoint",
     "SyntheticFeed",
 ]

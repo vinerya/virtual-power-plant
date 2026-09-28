@@ -19,24 +19,25 @@ formulations from M1/M2. Each ``step()`` call:
 The controller does NOT advance physical SOC itself — callers (or the
 backtest harness) provide a fresh ``soc_init`` from telemetry on each tick.
 """
+
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any
 
+from .base import (
+    OptimizationProblem,
+    OptimizationStatus,
+)
 from .formulations.dispatch import build_battery_dispatch_model
 from .formulations.stochastic import build_stochastic_dispatch_model
 from .solvers.pyomo_plugin import (
     SimpleBatteryDispatchRules,
     _try_import_pyomo,
 )
-from .base import (
-    OptimizationProblem,
-    OptimizationStatus,
-)
-
 
 # Try Scenario import only for typing; not strictly required at runtime since
 # the stochastic builder accepts dicts too.
@@ -62,17 +63,19 @@ class MPCConfig:
 @dataclass
 class MPCStep:
     """Inputs to one MPC tick."""
+
     timestamp: datetime
     soc_init: float
-    forecast: Dict[str, List[float]] = field(default_factory=dict)
-    scenarios: Optional[List[Any]] = None
-    additional_objective_terms: List[Callable] = field(default_factory=list)
-    additional_constraint_builders: List[Callable] = field(default_factory=list)
+    forecast: dict[str, list[float]] = field(default_factory=dict)
+    scenarios: list[Any] | None = None
+    additional_objective_terms: list[Callable] = field(default_factory=list)
+    additional_constraint_builders: list[Callable] = field(default_factory=list)
 
 
 @dataclass
 class MPCDecision:
     """Output of one MPC tick — only the first-step decision is binding."""
+
     timestamp: datetime
     p_charge_kw: float
     p_discharge_kw: float
@@ -80,25 +83,25 @@ class MPCDecision:
     expected_cost_remaining: float
     solve_time_ms: float
     fallback_used: bool
-    solver_iterations: Optional[int] = None
+    solver_iterations: int | None = None
     """Simplex iterations the solver reported for this solve (appsi HiGHS
     only; ``None`` for other backends, fallback decisions, or the
     stochastic/ADMM paths). Deterministic given the same model and warm
     start -- unlike ``solve_time_ms``, safe to compare across runs without
     being sensitive to system load."""
-    full_horizon_plan: Dict[str, Any] = field(default_factory=dict)
+    full_horizon_plan: dict[str, Any] = field(default_factory=dict)
 
 
 class MPCController:
     """Receding-horizon MPC driver around the M1/M2 dispatch formulations."""
 
-    def __init__(self, config: MPCConfig, battery_params: Dict[str, Any]) -> None:
+    def __init__(self, config: MPCConfig, battery_params: dict[str, Any]) -> None:
         self.config = config
         self.battery_params = dict(battery_params)
         self._pyo, self._solver_factory = _try_import_pyomo()
         # Warm-start cache: list of dicts {p_charge, p_discharge, is_charging, soc}
         # taken from the previous solve, shifted by one step on use.
-        self._last_plan: Optional[Dict[str, List[float]]] = None
+        self._last_plan: dict[str, list[float]] | None = None
         self._fallback = SimpleBatteryDispatchRules()
 
     # ------------------------------------------------------------------ public
@@ -156,11 +159,11 @@ class MPCController:
 
     def _solve_deterministic(
         self,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         mpc_step: MPCStep,
         t_start: float,
-        load: List[float],
-        solar: List[float],
+        load: list[float],
+        solar: list[float],
     ) -> MPCDecision:
         cfg = self.config
 
@@ -195,6 +198,7 @@ class MPCController:
 
         # Status check
         from .solvers.pyomo_plugin import PyomoPlugin
+
         status, _ = PyomoPlugin._extract_status(results)
         if status != OptimizationStatus.SUCCESS:
             if cfg.fallback_on_failure:
@@ -251,7 +255,7 @@ class MPCController:
         )
 
     @staticmethod
-    def _extract_solver_iterations(solver: Any) -> Optional[int]:
+    def _extract_solver_iterations(solver: Any) -> int | None:
         """Best-effort simplex iteration count from an appsi HiGHS solver.
 
         Only the appsi ``Highs`` interface (the preferred path in
@@ -267,7 +271,7 @@ class MPCController:
     def _step_stochastic(
         self,
         mpc_step: MPCStep,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         t_start: float,
     ) -> MPCDecision:
         cfg = self.config
@@ -315,6 +319,7 @@ class MPCController:
             return self._do_fallback(mpc_step, params, t_start, reason="solve_exc")
 
         from .solvers.pyomo_plugin import PyomoPlugin
+
         status, _ = PyomoPlugin._extract_status(results)
         if status != OptimizationStatus.SUCCESS:
             if cfg.fallback_on_failure:
@@ -347,7 +352,7 @@ class MPCController:
     def _do_fallback(
         self,
         mpc_step: MPCStep,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         t_start: float,
         reason: str,
     ) -> MPCDecision:
@@ -405,6 +410,7 @@ class MPCController:
         prev_soc = self._last_plan.get("soc", [])
         if not prev_bin:
             return
+
         # Shift by 1; for the tail, replicate the last decision.
         # Helper to clip into [lb, ub] respecting Var bounds (avoids Pyomo
         # warnings when prior solutions sit on boundary with float jitter).
@@ -433,7 +439,7 @@ class MPCController:
                 # Pyomo doesn't error on stale indices, but be defensive.
                 continue
 
-    def _attach_load_solar(self, model, load: List[float], solar: List[float], T: int) -> None:
+    def _attach_load_solar(self, model, load: list[float], solar: list[float], T: int) -> None:
         """Expose ``m.load_kw[t]`` and ``m.solar_kw[t]`` Params if forecast supplied.
 
         These are part of the M2 stable surface; downstream hooks may reference
@@ -441,6 +447,7 @@ class MPCController:
         """
         try:
             import pyomo.environ as pyo
+
             if load and len(load) >= T and not hasattr(model, "load_kw"):
                 model.load_kw = pyo.Param(
                     model.T,
@@ -461,12 +468,12 @@ class MPCController:
 # Multi-resource MPC controller (Milestone 4)
 ###############################################################################
 
+from .formulations.admm import admm_fleet_solve
 from .formulations.fleet_dispatch import (
     FleetBattery,
     FleetCoupling,
     build_fleet_dispatch_model,
 )
-from .formulations.admm import admm_fleet_solve
 
 
 @dataclass
@@ -498,23 +505,24 @@ class MultiResourceMPCStep:
     ``load_kw_<id>`` / ``solar_kw_<id>``; for the prototype we only consume
     shared prices + shared load/solar.
     """
+
     timestamp: datetime
-    soc_init_per_resource: Dict[str, float] = field(default_factory=dict)
-    forecast: Dict[str, List[float]] = field(default_factory=dict)
-    additional_objective_terms: List[Callable] = field(default_factory=list)
-    additional_constraint_builders: List[Callable] = field(default_factory=list)
+    soc_init_per_resource: dict[str, float] = field(default_factory=dict)
+    forecast: dict[str, list[float]] = field(default_factory=dict)
+    additional_objective_terms: list[Callable] = field(default_factory=list)
+    additional_constraint_builders: list[Callable] = field(default_factory=list)
 
 
 @dataclass
 class MultiResourceMPCDecision:
     timestamp: datetime
-    per_resource: Dict[str, Dict[str, float]]  # id -> {p_charge_kw, p_discharge_kw, is_charging}
+    per_resource: dict[str, dict[str, float]]  # id -> {p_charge_kw, p_discharge_kw, is_charging}
     aggregate_kw: float  # export-positive
     expected_cost_remaining: float
     solve_time_ms: float
     method: str  # "monolithic" | "admm" | "fallback"
     fallback_used: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class MultiResourceMPCController:
@@ -523,8 +531,8 @@ class MultiResourceMPCController:
     def __init__(
         self,
         config: MultiResourceMPCConfig,
-        batteries: List[FleetBattery],
-        coupling: Optional[FleetCoupling] = None,
+        batteries: list[FleetBattery],
+        coupling: FleetCoupling | None = None,
     ) -> None:
         self.config = config
         self.batteries = list(batteries)
@@ -631,9 +639,7 @@ class MultiResourceMPCController:
             except Exception as e:
                 if not cfg.fallback_on_failure:
                     raise
-                return self._fallback_decision(
-                    step_input, t_start, reason=f"admm_failed:{e}"
-                )
+                return self._fallback_decision(step_input, t_start, reason=f"admm_failed:{e}")
 
         # Monolithic
         if self._pyo is None or self._solver_factory is None:
@@ -654,9 +660,7 @@ class MultiResourceMPCController:
         except Exception as e:
             if not cfg.fallback_on_failure:
                 raise
-            return self._fallback_decision(
-                step_input, t_start, reason=f"build_failed:{e}"
-            )
+            return self._fallback_decision(step_input, t_start, reason=f"build_failed:{e}")
 
         try:
             solver = self._solver_factory(cfg.solver_timeout_ms / 1000.0)
@@ -664,19 +668,16 @@ class MultiResourceMPCController:
         except Exception as e:
             if not cfg.fallback_on_failure:
                 raise
-            return self._fallback_decision(
-                step_input, t_start, reason=f"solve_exc:{e}"
-            )
+            return self._fallback_decision(step_input, t_start, reason=f"solve_exc:{e}")
 
         from .solvers.pyomo_plugin import PyomoPlugin
+
         status, _ = PyomoPlugin._extract_status(results)
         if status != OptimizationStatus.SUCCESS:
-            return self._fallback_decision(
-                step_input, t_start, reason=f"status={status.value}"
-            )
+            return self._fallback_decision(step_input, t_start, reason=f"status={status.value}")
 
         pyo = self._pyo
-        per_resource: Dict[str, Dict[str, float]] = {}
+        per_resource: dict[str, dict[str, float]] = {}
         for b in batts:
             p_chg0 = float(pyo.value(model.p_charge[b.id, 0]))
             p_dis0 = float(pyo.value(model.p_discharge[b.id, 0]))
@@ -718,10 +719,10 @@ class MultiResourceMPCController:
 
     def _fallback_decision(
         self,
-        step_input: "MultiResourceMPCStep",
+        step_input: MultiResourceMPCStep,
         t_start: float,
         reason: str,
-    ) -> "MultiResourceMPCDecision":
+    ) -> MultiResourceMPCDecision:
         # Trivial fallback: hold all resources idle.
         per_resource = {
             b.id: {"p_charge_kw": 0.0, "p_discharge_kw": 0.0, "is_charging": False}
@@ -741,11 +742,11 @@ class MultiResourceMPCController:
 
 __all__ = [
     "MPCConfig",
-    "MPCStep",
-    "MPCDecision",
     "MPCController",
+    "MPCDecision",
+    "MPCStep",
     "MultiResourceMPCConfig",
-    "MultiResourceMPCStep",
-    "MultiResourceMPCDecision",
     "MultiResourceMPCController",
+    "MultiResourceMPCDecision",
+    "MultiResourceMPCStep",
 ]

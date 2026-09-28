@@ -55,12 +55,19 @@ async def create_customer(
 
 
 async def create_resource(
-    client: AsyncClient, admin_headers: dict, *, resource_type: str = "battery",
+    client: AsyncClient,
+    admin_headers: dict,
+    *,
+    resource_type: str = "battery",
     rated_power: float = 5.0,
 ) -> str:
     resp = await client.post(
         "/api/v1/resources/",
-        json={"name": uid(resource_type), "resource_type": resource_type, "rated_power": rated_power},
+        json={
+            "name": uid(resource_type),
+            "resource_type": resource_type,
+            "rated_power": rated_power,
+        },
         headers=admin_headers,
     )
     assert resp.status_code == 201, resp.text

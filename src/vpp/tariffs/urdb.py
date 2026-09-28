@@ -20,6 +20,7 @@ Deferred (TODO):
     - lookback-window fields, demandwindow.
     - non-USD currencies, taxes.
 """
+
 from __future__ import annotations
 
 import json
@@ -37,7 +38,6 @@ from .components import (
     TOUSchedule,
 )
 from .tariff import Tariff
-
 
 ALL_DAYS = (True,) * 7
 WEEKDAYS = (True, True, True, True, True, False, False)
@@ -93,9 +93,7 @@ def _build_tou_schedules(
     n_periods = len(rate_structure)
     # period_idx -> { (mask_kind, month) : list[hour] }
     # mask_kind: 'wd' or 'we'
-    bucket: dict[int, dict[tuple[str, int], list[int]]] = {
-        p: {} for p in range(n_periods)
-    }
+    bucket: dict[int, dict[tuple[str, int], list[int]]] = {p: {} for p in range(n_periods)}
     for month_idx in range(12):
         for hour in range(24):
             wd_p = weekday_sched[month_idx][hour]
@@ -107,8 +105,7 @@ def _build_tou_schedules(
     period_tiers: dict[str, list[tuple[float, float]]] = {}
     referenced_periods = {p for p, b in bucket.items() if b}
     single_period_tiered = (
-        len(referenced_periods) == 1
-        and len(rate_structure[next(iter(referenced_periods))]) > 1
+        len(referenced_periods) == 1 and len(rate_structure[next(iter(referenced_periods))]) > 1
     )
 
     for p in referenced_periods:

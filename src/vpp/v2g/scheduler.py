@@ -16,9 +16,6 @@ from vpp.v2g.models import (
     EVBattery,
     EVFleet,
     FlexibilityWindow,
-    ChargingSession,
-    ScheduleStatus,
-    EVConnectionState,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,15 +25,16 @@ logger = logging.getLogger(__name__)
 # Schedule slot
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ScheduleSlot:
     """One time slot in a V2G schedule."""
 
     start_time: float
     end_time: float
-    power_kw: float          # positive = charge, negative = discharge
+    power_kw: float  # positive = charge, negative = discharge
     ev_id: str = ""
-    price: float = 0.0       # $/kWh at this slot
+    price: float = 0.0  # $/kWh at this slot
 
     @property
     def duration_hours(self) -> float:
@@ -85,6 +83,7 @@ class V2GScheduleResult:
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
+
 
 class V2GScheduler:
     """Production-grade V2G scheduler.
@@ -204,13 +203,15 @@ class V2GScheduler:
 
                 power = slot_energy / (slot_hours * ev.charge_efficiency)
                 slot_start = now + idx * slot_hours * 3600
-                schedule.append(ScheduleSlot(
-                    start_time=slot_start,
-                    end_time=slot_start + slot_hours * 3600,
-                    power_kw=power,
-                    ev_id=ev.ev_id,
-                    price=prices[idx] if idx < len(prices) else 0,
-                ))
+                schedule.append(
+                    ScheduleSlot(
+                        start_time=slot_start,
+                        end_time=slot_start + slot_hours * 3600,
+                        power_kw=power,
+                        ev_id=ev.ev_id,
+                        price=prices[idx] if idx < len(prices) else 0,
+                    )
+                )
                 cost = slot_energy * (prices[idx] if idx < len(prices) else 0)
                 total_cost += cost
                 charged += slot_energy
@@ -240,13 +241,15 @@ class V2GScheduler:
 
                     power = -slot_energy / (slot_hours * ev.discharge_efficiency)
                     slot_start = now + idx * slot_hours * 3600
-                    schedule.append(ScheduleSlot(
-                        start_time=slot_start,
-                        end_time=slot_start + slot_hours * 3600,
-                        power_kw=power,
-                        ev_id=ev.ev_id,
-                        price=price,
-                    ))
+                    schedule.append(
+                        ScheduleSlot(
+                            start_time=slot_start,
+                            end_time=slot_start + slot_hours * 3600,
+                            power_kw=power,
+                            ev_id=ev.ev_id,
+                            price=price,
+                        )
+                    )
                     total_revenue += slot_energy * price
                     discharged += slot_energy
 
@@ -295,7 +298,9 @@ class V2GScheduler:
                 continue
             for t in range(num_slots):
                 charge[eid, t] = pulp.LpVariable(f"chg_{eid}_{t}", 0, ev.max_charge_kw)
-                discharge[eid, t] = pulp.LpVariable(f"dis_{eid}_{t}", 0, ev.max_discharge_kw if ev.v2g_capable else 0)
+                discharge[eid, t] = pulp.LpVariable(
+                    f"dis_{eid}_{t}", 0, ev.max_discharge_kw if ev.v2g_capable else 0
+                )
 
         # Objective
         obj_terms = []
@@ -321,7 +326,11 @@ class V2GScheduler:
 
             # SOC must reach target at departure
             net_energy = pulp.lpSum(
-                (charge[eid, t] * ev.charge_efficiency - discharge[eid, t] / ev.discharge_efficiency) * slot_hours
+                (
+                    charge[eid, t] * ev.charge_efficiency
+                    - discharge[eid, t] / ev.discharge_efficiency
+                )
+                * slot_hours
                 for t in range(window_slots)
             )
             prob += net_energy >= w.needed_energy_kwh, f"target_soc_{eid}"
@@ -329,7 +338,11 @@ class V2GScheduler:
             # SOC never below min at any point
             for t_end in range(1, window_slots + 1):
                 cumulative = pulp.lpSum(
-                    (charge[eid, t] * ev.charge_efficiency - discharge[eid, t] / ev.discharge_efficiency) * slot_hours
+                    (
+                        charge[eid, t] * ev.charge_efficiency
+                        - discharge[eid, t] / ev.discharge_efficiency
+                    )
+                    * slot_hours
                     for t in range(t_end)
                 )
                 min_deficit = (ev.min_soc - ev.current_soc) * ev.capacity_kwh
@@ -338,7 +351,11 @@ class V2GScheduler:
             # SOC never above 1.0
             for t_end in range(1, window_slots + 1):
                 cumulative = pulp.lpSum(
-                    (charge[eid, t] * ev.charge_efficiency - discharge[eid, t] / ev.discharge_efficiency) * slot_hours
+                    (
+                        charge[eid, t] * ev.charge_efficiency
+                        - discharge[eid, t] / ev.discharge_efficiency
+                    )
+                    * slot_hours
                     for t in range(t_end)
                 )
                 max_headroom = (1.0 - ev.current_soc) * ev.capacity_kwh
@@ -369,25 +386,29 @@ class V2GScheduler:
                 if chg > 0.01:
                     slot_start = now + t * slot_hours * 3600
                     p = prices[t] if t < len(prices) else 0
-                    schedule.append(ScheduleSlot(
-                        start_time=slot_start,
-                        end_time=slot_start + slot_hours * 3600,
-                        power_kw=chg,
-                        ev_id=eid,
-                        price=p,
-                    ))
+                    schedule.append(
+                        ScheduleSlot(
+                            start_time=slot_start,
+                            end_time=slot_start + slot_hours * 3600,
+                            power_kw=chg,
+                            ev_id=eid,
+                            price=p,
+                        )
+                    )
                     total_cost += chg * slot_hours * p
 
                 if dis > 0.01:
                     slot_start = now + t * slot_hours * 3600
                     p = prices[t] if t < len(prices) else 0
-                    schedule.append(ScheduleSlot(
-                        start_time=slot_start,
-                        end_time=slot_start + slot_hours * 3600,
-                        power_kw=-dis,
-                        ev_id=eid,
-                        price=p,
-                    ))
+                    schedule.append(
+                        ScheduleSlot(
+                            start_time=slot_start,
+                            end_time=slot_start + slot_hours * 3600,
+                            power_kw=-dis,
+                            ev_id=eid,
+                            price=p,
+                        )
+                    )
                     total_revenue += dis * slot_hours * p
 
         schedule.sort(key=lambda s: (s.ev_id, s.start_time))

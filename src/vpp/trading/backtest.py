@@ -61,8 +61,12 @@ STRATEGY_SPECS: dict[str, StrategySpec] = {
             "market when the price gap exceeds 2x transaction cost plus a threshold."
         ),
         factory=ArbitrageStrategy,
-        parameters={"price_threshold": 2.0, "transaction_cost": 0.07,
-                    "markets": ["day_ahead", "real_time"], **_COMMON},
+        parameters={
+            "price_threshold": 2.0,
+            "transaction_cost": 0.07,
+            "markets": ["day_ahead", "real_time"],
+            **_COMMON,
+        },
         min_markets=2,
     ),
     "momentum": StrategySpec(
@@ -123,14 +127,16 @@ def generate_synthetic_prices(
 ) -> tuple[list[datetime], dict[str, list[float]]]:
     """Seeded synthetic price paths using :class:`SimulatedDataProvider`."""
     start = start or datetime(2025, 1, 1)
-    provider = SimulatedDataProvider({
-        "markets": list(markets),
-        "base_prices": base_prices or {"day_ahead": 45.0, "real_time": 50.0},
-        "volatility": volatility,
-        "mean_reversion": mean_reversion,
-        "seasonal_amplitude": seasonal_amplitude,
-        "seed": seed,
-    })
+    provider = SimulatedDataProvider(
+        {
+            "markets": list(markets),
+            "base_prices": base_prices or {"day_ahead": 45.0, "real_time": 50.0},
+            "volatility": volatility,
+            "mean_reversion": mean_reversion,
+            "seasonal_amplitude": seasonal_amplitude,
+            "seed": seed,
+        }
+    )
     provider.connect()
     timestamps = [start + timedelta(minutes=interval_minutes * i) for i in range(periods)]
     prices: dict[str, list[float]] = {m: [] for m in markets}
@@ -228,8 +234,11 @@ def run_backtest(
         bar = {m: float(series[i]) for m, series in prices.items()}
         market_data = {
             m: MarketData(
-                market=m, timestamp=ts, last_price=p,
-                bid_price=p * (1 - half_spread), ask_price=p * (1 + half_spread),
+                market=m,
+                timestamp=ts,
+                last_price=p,
+                bid_price=p * (1 - half_spread),
+                ask_price=p * (1 + half_spread),
                 source="backtest",
             )
             for m, p in bar.items()
@@ -244,7 +253,11 @@ def run_backtest(
                 continue
             last = bar[market]
             if signal.get("order_type") == "market":
-                fill_price = market_data[market].ask_price if side == "buy" else market_data[market].bid_price
+                fill_price = (
+                    market_data[market].ask_price
+                    if side == "buy"
+                    else market_data[market].bid_price
+                )
             else:
                 limit = float(signal.get("price") or 0.0)
                 marketable = last <= limit if side == "buy" else last >= limit
@@ -252,17 +265,28 @@ def run_backtest(
                     continue
                 fill_price = limit
             trade = Trade(
-                order_id=f"bt-{i}", market=market, side=side, quantity=quantity,
-                price=fill_price, timestamp=ts, fees=quantity * fee_per_unit,
+                order_id=f"bt-{i}",
+                market=market,
+                side=side,
+                quantity=quantity,
+                price=fill_price,
+                timestamp=ts,
+                fees=quantity * fee_per_unit,
                 strategy=strategy.name,
             )
             portfolio.add_trade(trade)
             strategy.trades_executed += 1
-            trade_log.append({
-                "timestamp": ts, "market": market, "side": side,
-                "quantity": quantity, "price": fill_price,
-                "fees": trade.fees, "realized_pnl": trade.realized_pnl,
-            })
+            trade_log.append(
+                {
+                    "timestamp": ts,
+                    "market": market,
+                    "side": side,
+                    "quantity": quantity,
+                    "price": fill_price,
+                    "fees": trade.fees,
+                    "realized_pnl": trade.realized_pnl,
+                }
+            )
         portfolio.update_equity_curve(bar, timestamp=ts)
         equity.append(portfolio.get_equity(bar))
 
@@ -271,12 +295,12 @@ def run_backtest(
     closing = [t for t in trade_log if abs(t["realized_pnl"]) > 1e-12]
     win_rate = (
         sum(1 for t in closing if t["realized_pnl"] - t["fees"] > 0) / len(closing)
-        if closing else None
+        if closing
+        else None
     )
     step = max(1, len(equity) // max(1, equity_curve_points))
     curve = [
-        {"timestamp": timestamps[i], "equity": equity[i]}
-        for i in range(0, len(equity), step)
+        {"timestamp": timestamps[i], "equity": equity[i]} for i in range(0, len(equity), step)
     ]
     if curve[-1]["timestamp"] != timestamps[-1]:
         curve.append({"timestamp": timestamps[-1], "equity": equity[-1]})

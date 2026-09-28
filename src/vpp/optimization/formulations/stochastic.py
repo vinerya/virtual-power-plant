@@ -30,12 +30,13 @@ When alpha == 0 the CVaR term collapses to the expected cost (eta and z self-
 adjust so that CVaR == E[cost] is achievable). When alpha -> 1 the CVaR term
 emphasizes worst-case scenarios.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import pyomo.environ as pyo
-
 
 REQUIRED_DET_KEYS = (
     "battery_capacity_kwh",
@@ -50,7 +51,7 @@ REQUIRED_DET_KEYS = (
 )
 
 
-def _scenario_prices(scenario: Any) -> List[float]:
+def _scenario_prices(scenario: Any) -> list[float]:
     """Extract a price vector from a Scenario or plain dict."""
     if hasattr(scenario, "data") and isinstance(scenario.data, dict):
         prices = scenario.data.get("prices")
@@ -71,7 +72,7 @@ def _scenario_probability(scenario: Any) -> float:
     raise ValueError("scenario has no probability")
 
 
-def _validate(params: Dict[str, Any], scenarios: Sequence[Any]) -> None:
+def _validate(params: dict[str, Any], scenarios: Sequence[Any]) -> None:
     missing = [k for k in REQUIRED_DET_KEYS if k not in params]
     if missing:
         raise ValueError(f"Missing required dispatch params: {missing}")
@@ -96,7 +97,7 @@ def _validate(params: Dict[str, Any], scenarios: Sequence[Any]) -> None:
 
 
 def build_stochastic_dispatch_model(
-    params: Dict[str, Any],
+    params: dict[str, Any],
     scenarios: Sequence[Any],
 ) -> pyo.ConcreteModel:
     """Build the extensive-form stochastic dispatch MILP with CVaR risk term.
@@ -176,10 +177,7 @@ def build_stochastic_dispatch_model(
         return model.p_charge[t, s] <= model.p_chg_max * model.is_charging[t, s]
 
     def _excl_dis(model, t, s):
-        return (
-            model.p_discharge[t, s]
-            <= model.p_dis_max * (1 - model.is_charging[t, s])
-        )
+        return model.p_discharge[t, s] <= model.p_dis_max * (1 - model.is_charging[t, s])
 
     m.excl_charge = pyo.Constraint(m.T, m.S, rule=_excl_chg)
     m.excl_discharge = pyo.Constraint(m.T, m.S, rule=_excl_dis)
@@ -237,9 +235,7 @@ def build_stochastic_dispatch_model(
     m.cost_s = pyo.Expression(m.S, rule=_cost_s)
 
     # Expected cost expression
-    m.expected_cost = pyo.Expression(
-        expr=sum(m.pi[s] * m.cost_s[s] for s in m.S)
-    )
+    m.expected_cost = pyo.Expression(expr=sum(m.pi[s] * m.cost_s[s] for s in m.S))
 
     # CVaR via Rockafellar–Uryasev:
     #   CVaR = eta + (1 / (1 - alpha)) * sum_s pi_s * z_s
@@ -261,13 +257,9 @@ def build_stochastic_dispatch_model(
         m.cvar = pyo.Expression(expr=m.expected_cost)
     else:
         inv_q = 1.0 / (1.0 - alpha)
-        m.cvar = pyo.Expression(
-            expr=m.eta + inv_q * sum(m.pi[s] * m.z[s] for s in m.S)
-        )
+        m.cvar = pyo.Expression(expr=m.eta + inv_q * sum(m.pi[s] * m.z[s] for s in m.S))
 
     # Objective
-    m.total_cost = pyo.Objective(
-        expr=m.expected_cost + m.lam * m.cvar, sense=pyo.minimize
-    )
+    m.total_cost = pyo.Objective(expr=m.expected_cost + m.lam * m.cvar, sense=pyo.minimize)
 
     return m

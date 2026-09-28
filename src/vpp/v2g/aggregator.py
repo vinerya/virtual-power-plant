@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from vpp.v2g.models import EVBattery, EVFleet, EVConnectionState
-from vpp.v2g.scheduler import V2GScheduler, V2GScheduleResult
+from vpp.v2g.models import EVConnectionState, EVFleet
+from vpp.v2g.scheduler import V2GScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Grid service types
 # ---------------------------------------------------------------------------
+
 
 class GridService(str, Enum):
     FREQUENCY_REGULATION = "frequency_regulation"
@@ -66,10 +67,10 @@ class FlexibilityBid:
 class DispatchSignal:
     """A dispatch signal to be distributed across fleet EVs."""
 
-    target_power_kw: float      # positive = charge fleet, negative = discharge
+    target_power_kw: float  # positive = charge fleet, negative = discharge
     duration_seconds: int = 900  # 15 min default
     service: GridService = GridService.ENERGY_ARBITRAGE
-    priority: int = 0            # higher = more urgent
+    priority: int = 0  # higher = more urgent
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -109,6 +110,7 @@ class DispatchResult:
 # Aggregator
 # ---------------------------------------------------------------------------
 
+
 class V2GAggregator:
     """Aggregate EV fleet flexibility and dispatch V2G signals.
 
@@ -132,7 +134,8 @@ class V2GAggregator:
     def assess_flexibility(self) -> dict[str, Any]:
         """Assess current fleet flexibility for grid services."""
         connected = [
-            ev for ev in self.fleet.vehicles.values()
+            ev
+            for ev in self.fleet.vehicles.values()
             if ev.connection_state != EVConnectionState.DISCONNECTED
         ]
         v2g_capable = [ev for ev in connected if ev.v2g_capable and ev.has_flexibility]
@@ -191,9 +194,7 @@ class V2GAggregator:
 
         now = time.time()
         # Select EVs for this bid
-        ev_ids = [
-            ev.ev_id for ev in self.fleet.flexible_vehicles
-        ]
+        ev_ids = [ev.ev_id for ev in self.fleet.flexible_vehicles]
 
         bid = FlexibilityBid(
             service=service,
@@ -208,7 +209,10 @@ class V2GAggregator:
         self._active_bids.append(bid)
         logger.info(
             "Created %s bid: %.1f kW for %.1f hours (value=%.2f)",
-            service.value, bid_capacity, duration_hours, bid.total_value,
+            service.value,
+            bid_capacity,
+            duration_hours,
+            bid.total_value,
         )
         return bid
 
@@ -227,7 +231,8 @@ class V2GAggregator:
         # Select eligible EVs
         if is_discharge:
             eligible = [
-                ev for ev in self.fleet.vehicles.values()
+                ev
+                for ev in self.fleet.vehicles.values()
                 if ev.v2g_capable
                 and ev.connection_state != EVConnectionState.DISCONNECTED
                 and ev.available_discharge_kwh > 0
@@ -235,9 +240,9 @@ class V2GAggregator:
             total_capacity = sum(ev.max_discharge_kw for ev in eligible)
         else:
             eligible = [
-                ev for ev in self.fleet.vehicles.values()
-                if ev.connection_state != EVConnectionState.DISCONNECTED
-                and ev.current_soc < 1.0
+                ev
+                for ev in self.fleet.vehicles.values()
+                if ev.connection_state != EVConnectionState.DISCONNECTED and ev.current_soc < 1.0
             ]
             total_capacity = sum(ev.max_charge_kw for ev in eligible)
 

@@ -38,9 +38,7 @@ async def owned_resources(session: AsyncSession, user_id: str) -> list[ResourceM
     return list(result.scalars().all())
 
 
-async def visible_site(
-    session: AsyncSession, user: UserModel, site_id: str
-) -> SiteModel | None:
+async def visible_site(session: AsyncSession, user: UserModel, site_id: str) -> SiteModel | None:
     """Return the site if ``user`` may see it, else ``None``."""
     site = await session.get(SiteModel, site_id)
     if site is None:

@@ -20,6 +20,7 @@ Returned LMPs are in $/MWh; we divide by 1000 to get $/kWh.
 This adapter does live HTTP via httpx with exponential-backoff retries on
 HTTP 429. Tests must mock the transport — see :mod:`tests.test_feeds_caiso`.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,13 +28,12 @@ import csv
 import io
 import zipfile
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
 from .base import PriceFeed, PricePoint
 from .cache import FeedCache
-
 
 CAISO_URL = "https://oasis.caiso.com/oasisapi/SingleZip"
 
@@ -48,8 +48,8 @@ class CAISOLMPFeed(PriceFeed):
         self,
         node: str = "TH_NP15_GEN-APND",
         market_run_id: str = "DAM",
-        client: Optional[httpx.AsyncClient] = None,
-        cache: Optional[FeedCache] = None,
+        client: httpx.AsyncClient | None = None,
+        cache: FeedCache | None = None,
         max_retries: int = 3,
         backoff_seconds: float = 0.05,
     ) -> None:
@@ -68,9 +68,7 @@ class CAISOLMPFeed(PriceFeed):
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).strftime("%Y%m%dT%H:%M-0000")
 
-    async def fetch(
-        self, start: datetime, end: datetime, **kwargs: Any
-    ) -> list[PricePoint]:
+    async def fetch(self, start: datetime, end: datetime, **kwargs: Any) -> list[PricePoint]:
         if self._cache is not None:
             cached = self._cache.get(self.name + ":" + self.market_run_id, start, end)
             if cached is not None:
@@ -130,11 +128,7 @@ class CAISOLMPFeed(PriceFeed):
                         or row.get("INTERVAL_START_GMT")
                         or row.get("OPR_DT")
                     )
-                    price_raw = (
-                        row.get("LMP_PRC")
-                        or row.get("MW")
-                        or row.get("VALUE")
-                    )
+                    price_raw = row.get("LMP_PRC") or row.get("MW") or row.get("VALUE")
                     if not ts_raw or price_raw is None:
                         continue
                     # OASIS timestamps look like "2024-07-01T00:00:00-00:00".

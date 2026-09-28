@@ -37,11 +37,7 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 async def login(username: str, password: str, session: AsyncSession = Depends(get_db)):
     """Authenticate and receive a JWT access token."""
     user = await UserRepository.get_by_username(session, username)
-    if (
-        user is None
-        or not user.is_active
-        or not verify_password(password, user.hashed_password)
-    ):
+    if user is None or not user.is_active or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     settings = get_settings()

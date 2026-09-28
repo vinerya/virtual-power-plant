@@ -1,19 +1,17 @@
 """Live-price-feed override of TOU rates inside tariff_to_opt_params (M4)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import List
 
 import pytest
 
 from vpp.tariffs import (
-    DemandCharge,
-    MeterTrace,
     Tariff,
     TimeOfUseRate,
     TOUSchedule,
 )
-from vpp.tariffs.feeds import SyntheticFeed, PricePoint
+from vpp.tariffs.feeds import PricePoint, SyntheticFeed
 from vpp.tariffs.optimization import tariff_to_opt_params
 
 ALL_DAYS = (True,) * 7
@@ -23,8 +21,10 @@ ALL_MONTHS = frozenset(range(1, 13))
 def _peak_tou(rate_off: float = 0.10, rate_peak: float = 0.30) -> Tariff:
     tou = TimeOfUseRate(
         periods={
-            "off": [TOUSchedule(ALL_DAYS, (0, 16), ALL_MONTHS, rate_off),
-                    TOUSchedule(ALL_DAYS, (21, 24), ALL_MONTHS, rate_off)],
+            "off": [
+                TOUSchedule(ALL_DAYS, (0, 16), ALL_MONTHS, rate_off),
+                TOUSchedule(ALL_DAYS, (21, 24), ALL_MONTHS, rate_off),
+            ],
             "peak": [TOUSchedule(ALL_DAYS, (16, 21), ALL_MONTHS, rate_peak)],
         }
     )
@@ -44,7 +44,7 @@ async def test_live_price_overrides_tou():
     horizon_hours = 24
 
     # Build PricePoints for each hour: 16-21 = $0.80, else $0.05.
-    overrides: List[PricePoint] = []
+    overrides: list[PricePoint] = []
     for h in range(horizon_hours):
         ts = horizon_start + timedelta(hours=h)
         price = 0.80 if 16 <= h < 21 else 0.05
@@ -97,8 +97,10 @@ async def test_live_override_takes_precedence_over_tou_sell_rate_under_nem2():
     its own explicit (now-stale) URDB `sell` rate."""
     tou = TimeOfUseRate(
         periods={
-            "off": [TOUSchedule(ALL_DAYS, (0, 16), ALL_MONTHS, 0.10, sell_rate=0.08),
-                    TOUSchedule(ALL_DAYS, (21, 24), ALL_MONTHS, 0.10, sell_rate=0.08)],
+            "off": [
+                TOUSchedule(ALL_DAYS, (0, 16), ALL_MONTHS, 0.10, sell_rate=0.08),
+                TOUSchedule(ALL_DAYS, (21, 24), ALL_MONTHS, 0.10, sell_rate=0.08),
+            ],
             "peak": [TOUSchedule(ALL_DAYS, (16, 21), ALL_MONTHS, 0.30, sell_rate=0.25)],
         }
     )
@@ -108,7 +110,7 @@ async def test_live_override_takes_precedence_over_tou_sell_rate_under_nem2():
 
     # Override only the peak window with a real-time price well above both
     # the TOU rate and its sell_rate.
-    overrides: List[PricePoint] = [
+    overrides: list[PricePoint] = [
         PricePoint(timestamp=horizon_start + timedelta(hours=h), price_per_kwh=0.80, feed="live")
         for h in range(16, 21)
     ]

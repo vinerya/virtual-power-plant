@@ -4,15 +4,15 @@ Each component implements ``compute(trace, period) -> list[BillLineItem]``.
 
 URDB schema reference: https://openei.org/services/doc/rest/util_rates/?version=8
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Literal, Protocol
 
 from .calendar import SeasonConfig, is_weekend_or_holiday
 from .meter import MeterTrace
-
 
 # ---------------------------------------------------------------------------
 # Bill data structures

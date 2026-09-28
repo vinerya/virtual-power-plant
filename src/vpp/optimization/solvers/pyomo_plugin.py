@@ -23,10 +23,11 @@ Problem parameter contract (passed via ``OptimizationProblem.parameters``):
 The plugin honours ``timeout_ms`` by passing it as ``time_limit`` (seconds) to
 the HiGHS solver.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..base import (
     OptimizationPlugin,
@@ -47,7 +48,7 @@ def _try_import_pyomo():
     ``solve(model)`` method that returns a Pyomo results object.
     """
     try:
-        import pyomo.environ as pyo  # noqa: F401
+        import pyomo.environ as pyo
     except Exception:
         return None, None
 
@@ -62,7 +63,7 @@ def _try_import_pyomo():
         if not avail:
             raise RuntimeError("appsi Highs reports unavailable")
 
-        def _factory(time_limit_s: Optional[float]):
+        def _factory(time_limit_s: float | None):
             s = _AppsiHighs()
             if time_limit_s is not None:
                 s.config.time_limit = float(time_limit_s)
@@ -81,7 +82,7 @@ def _try_import_pyomo():
                 s = pyo.SolverFactory(name)
                 if s is not None and s.available(exception_flag=False):
 
-                    def _factory(time_limit_s: Optional[float], _name=name):
+                    def _factory(time_limit_s: float | None, _name=name):
                         sv = pyo.SolverFactory(_name)
                         if time_limit_s is not None:
                             try:
@@ -121,7 +122,7 @@ class PyomoPlugin(OptimizationPlugin):
         if missing:
             self.logger.debug(f"Pyomo plugin missing keys: {missing}")
             return False
-        prices: List[float] = list(params["prices"])
+        prices: list[float] = list(params["prices"])
         if len(prices) == 0:
             return False
         return True
@@ -129,7 +130,7 @@ class PyomoPlugin(OptimizationPlugin):
     def solve(
         self,
         problem: OptimizationProblem,
-        timeout_ms: Optional[int] = None,
+        timeout_ms: int | None = None,
     ) -> OptimizationResult:
         start = time.time()
         if not self.is_available():
@@ -202,7 +203,7 @@ class PyomoPlugin(OptimizationPlugin):
         soc = [float(pyo.value(model.soc[t])) for t in range(T)]
         obj = float(pyo.value(model.cost))
 
-        solution: Dict[str, Any] = {
+        solution: dict[str, Any] = {
             "p_charge": p_chg,
             "p_discharge": p_dis,
             "p_net": [c - d for c, d in zip(p_chg, p_dis)],

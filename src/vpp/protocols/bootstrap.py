@@ -110,7 +110,9 @@ async def supervise_adapter(
                 delay = backoff_delay(attempt, base=base_delay_s, maximum=max_delay_s)
                 logger.warning(
                     "Connecting protocol adapter %s failed (%s); retrying in %.0fs",
-                    adapter.name, exc, delay,
+                    adapter.name,
+                    exc,
+                    delay,
                 )
                 await asyncio.sleep(delay)
         await asyncio.Event().wait()  # hold until shutdown cancels us
@@ -151,4 +153,6 @@ async def stop_protocol_adapters(tasks: list[asyncio.Task]) -> None:
             try:
                 await task
             except Exception:
-                logger.exception("Protocol adapter task %s raised during shutdown", task.get_name())
+                logger.exception(
+                    "Protocol adapter task %s raised during shutdown", task.get_name()
+                )

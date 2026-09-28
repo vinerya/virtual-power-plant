@@ -4,12 +4,12 @@ Holidays are hardcoded (observed dates 2020-2030) rather than depending on the
 `holidays` PyPI package — keeps M1 zero-dep. Extend `US_FEDERAL_HOLIDAYS`
 or swap to the `holidays` package later if a longer horizon is needed.
 """
+
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Iterable
-
 
 # Default seasons: Northern Hemisphere convention used by most US IOUs.
 # Summer = May–September inclusive, Winter = the rest.
@@ -23,20 +23,41 @@ DEFAULT_SUMMER_MONTHS = frozenset({5, 6, 7, 8, 9})
 US_FEDERAL_HOLIDAYS: frozenset[date] = frozenset(
     {
         # 2024
-        date(2024, 1, 1), date(2024, 1, 15), date(2024, 2, 19),
-        date(2024, 5, 27), date(2024, 6, 19), date(2024, 7, 4),
-        date(2024, 9, 2), date(2024, 10, 14), date(2024, 11, 11),
-        date(2024, 11, 28), date(2024, 12, 25),
+        date(2024, 1, 1),
+        date(2024, 1, 15),
+        date(2024, 2, 19),
+        date(2024, 5, 27),
+        date(2024, 6, 19),
+        date(2024, 7, 4),
+        date(2024, 9, 2),
+        date(2024, 10, 14),
+        date(2024, 11, 11),
+        date(2024, 11, 28),
+        date(2024, 12, 25),
         # 2025
-        date(2025, 1, 1), date(2025, 1, 20), date(2025, 2, 17),
-        date(2025, 5, 26), date(2025, 6, 19), date(2025, 7, 4),
-        date(2025, 9, 1), date(2025, 10, 13), date(2025, 11, 11),
-        date(2025, 11, 27), date(2025, 12, 25),
+        date(2025, 1, 1),
+        date(2025, 1, 20),
+        date(2025, 2, 17),
+        date(2025, 5, 26),
+        date(2025, 6, 19),
+        date(2025, 7, 4),
+        date(2025, 9, 1),
+        date(2025, 10, 13),
+        date(2025, 11, 11),
+        date(2025, 11, 27),
+        date(2025, 12, 25),
         # 2026
-        date(2026, 1, 1), date(2026, 1, 19), date(2026, 2, 16),
-        date(2026, 5, 25), date(2026, 6, 19), date(2026, 7, 3),
-        date(2026, 9, 7), date(2026, 10, 12), date(2026, 11, 11),
-        date(2026, 11, 26), date(2026, 12, 25),
+        date(2026, 1, 1),
+        date(2026, 1, 19),
+        date(2026, 2, 16),
+        date(2026, 5, 25),
+        date(2026, 6, 19),
+        date(2026, 7, 3),
+        date(2026, 9, 7),
+        date(2026, 10, 12),
+        date(2026, 11, 11),
+        date(2026, 11, 26),
+        date(2026, 12, 25),
     }
 )
 

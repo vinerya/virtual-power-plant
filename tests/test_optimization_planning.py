@@ -24,8 +24,14 @@ PRICES = [0.1] * 6 + [0.3] * 6 + [0.1] * 6 + [0.4] * 6
 
 def _batt(rid="b", soc=0.5, soh=1.0, rated=50.0, cap=200.0, chem=None) -> FleetAsset:
     return FleetAsset(
-        id=rid, name=rid, resource_type="battery", rated_power_kw=rated,
-        capacity_kwh=cap, soc=soc, soh=soh, chemistry=chem,
+        id=rid,
+        name=rid,
+        resource_type="battery",
+        rated_power_kw=rated,
+        capacity_kwh=cap,
+        soc=soc,
+        soh=soh,
+        chemistry=chem,
     )
 
 
@@ -36,7 +42,9 @@ def _batt(rid="b", soc=0.5, soh=1.0, rated=50.0, cap=200.0, chem=None) -> FleetA
 
 def _alloc_problem(resources, target, dt=1.0):
     return OptimizationProblem(
-        variables={}, objectives=[], constraints=[],
+        variables={},
+        objectives=[],
+        constraints=[],
         parameters={"resources": resources, "target_kw": target, "dt_hours": dt},
         metadata={"type": "power_allocation"},
     )
@@ -176,8 +184,12 @@ def test_noisy_forecast_is_seeded():
 @pytest.mark.parametrize("policy", ["value", "hold"])
 def test_backtest_regret_is_non_negative(policy):
     res = run_closed_loop_backtest(
-        _batt(soc=0.5), prices=PRICES, interval_minutes=60, horizon_steps=8,
-        forecast_mode="perfect", terminal_soc_policy=policy,
+        _batt(soc=0.5),
+        prices=PRICES,
+        interval_minutes=60,
+        horizon_steps=8,
+        forecast_mode="perfect",
+        terminal_soc_policy=policy,
     )
     assert res["ticks"] == 24
     assert res["perfect_foresight_status"] == "success"

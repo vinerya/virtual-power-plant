@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -16,10 +15,10 @@ class SOHResponse(BaseModel):
     battery_id: str
     state_of_health: float = Field(..., ge=0.0, le=1.0)
     cumulative_throughput_kwh: float = Field(..., ge=0.0)
-    last_update: Optional[datetime] = None
-    chemistry: Optional[str] = None
+    last_update: datetime | None = None
+    chemistry: str | None = None
     daily_efc: float = Field(0.0, description="Estimated equivalent full cycles per day.")
-    projected_eol_date: Optional[datetime] = Field(
+    projected_eol_date: datetime | None = Field(
         None,
         description="Projected end-of-life date (SOH reaches 0.8) at the current daily_efc.",
     )
@@ -41,4 +40,4 @@ class SOHUpdateRequest(BaseModel):
 
     soc_trace: list[float] = Field(..., min_length=2)
     timestamps: list[datetime] = Field(..., min_length=2)
-    temperatures_c: Optional[list[float]] = None
+    temperatures_c: list[float] | None = None

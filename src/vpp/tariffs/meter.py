@@ -1,9 +1,10 @@
 """Meter trace data structure for tariff billing."""
+
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Iterator
 
 
 @dataclass
@@ -90,7 +91,7 @@ class MeterTrace:
         days: int,
         interval_minutes: int = 60,
         tz: timezone = timezone.utc,
-    ) -> "MeterTrace":
+    ) -> MeterTrace:
         """Build a synthetic constant-kW trace, useful for smoke tests."""
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)

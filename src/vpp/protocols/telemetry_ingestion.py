@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -37,7 +36,7 @@ class TelemetryTopic:
     metric: str
 
 
-def parse_telemetry_topic(topic: str) -> Optional[TelemetryTopic]:
+def parse_telemetry_topic(topic: str) -> TelemetryTopic | None:
     """Parse a telemetry topic, or return ``None`` if it doesn't match."""
     parts = topic.split("/")
     if len(parts) != 5 or parts[0] != "vpp" or not all(parts[1:]):
@@ -133,6 +132,4 @@ class MQTTTelemetryIngestor:
             try:
                 await self.ingest_message(message)
             except Exception:
-                logger.exception(
-                    "MQTT telemetry ingestion failed for topic=%s", message.topic
-                )
+                logger.exception("MQTT telemetry ingestion failed for topic=%s", message.topic)

@@ -56,7 +56,9 @@ class BillingError(Exception):
         self.detail = detail
 
 
-def parse_month(month: str | None, tz: ZoneInfo, *, now: datetime | None = None) -> tuple[int, int]:
+def parse_month(
+    month: str | None, tz: ZoneInfo, *, now: datetime | None = None
+) -> tuple[int, int]:
     if month is None:
         local_now = (now or datetime.now(timezone.utc)).astimezone(tz)
         return local_now.year, local_now.month
@@ -124,7 +126,9 @@ async def _load_series(
     )
 
 
-def _bill_dict(bill, *, tariff_id: str, start: datetime, end: datetime, metadata: dict) -> dict[str, Any]:
+def _bill_dict(
+    bill, *, tariff_id: str, start: datetime, end: datetime, metadata: dict
+) -> dict[str, Any]:
     return {
         "total": round(bill.total, 2),
         "currency": "USD",  # URDB tariffs are US utility rates

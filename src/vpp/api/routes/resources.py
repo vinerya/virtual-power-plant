@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,7 +15,6 @@ from vpp.schemas.resources import (
     ResourceCreate,
     ResourceResponse,
     ResourceUpdate,
-    ResourceType,
 )
 
 router = APIRouter(prefix="/api/v1/resources", tags=["Resources"])
@@ -45,12 +43,14 @@ def _model_to_response(obj) -> dict:
 async def list_resources(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    resource_type: Optional[str] = None,
+    resource_type: str | None = None,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
     """List all registered energy resources."""
-    items = await ResourceRepository.list_all(session, skip=skip, limit=limit, resource_type=resource_type)
+    items = await ResourceRepository.list_all(
+        session, skip=skip, limit=limit, resource_type=resource_type
+    )
     return [_model_to_response(r) for r in items]
 
 
@@ -63,7 +63,9 @@ async def create_resource(
     """Register a new energy resource."""
     existing = await ResourceRepository.get_by_name(session, body.name)
     if existing:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Resource name already exists")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Resource name already exists"
+        )
 
     extra_fields = body.model_dump(exclude={"name", "resource_type", "rated_power", "metadata"})
     obj = await ResourceRepository.create(

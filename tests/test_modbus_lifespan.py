@@ -120,7 +120,10 @@ async def test_modbus_ingestion_skips_resources_without_modbus_metadata(
     session_factory = db_engine._session_factory
     async with session_factory() as session:
         await ResourceRepository.create(
-            session, name="plain-battery", resource_type="battery", rated_power=5.0,
+            session,
+            name="plain-battery",
+            resource_type="battery",
+            rated_power=5.0,
         )
         await session.commit()
 

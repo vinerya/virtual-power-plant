@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Base inverter
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class InverterState:
@@ -23,7 +23,7 @@ class InverterState:
 
     real_power_kw: float = 0.0
     reactive_power_kvar: float = 0.0
-    voltage_pu: float = 1.0        # per-unit
+    voltage_pu: float = 1.0  # per-unit
     frequency_hz: float = 50.0
     current_a: float = 0.0
     power_factor: float = 1.0
@@ -57,7 +57,9 @@ class InverterModel(ABC):
         self.state = InverterState(frequency_hz=nominal_frequency_hz)
 
     @abstractmethod
-    def update(self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float) -> InverterState:
+    def update(
+        self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float
+    ) -> InverterState:
         """Update inverter state for one time step."""
 
     @abstractmethod
@@ -76,6 +78,7 @@ class InverterModel(ABC):
 # ---------------------------------------------------------------------------
 # Grid-following inverter
 # ---------------------------------------------------------------------------
+
 
 class GridFollowingInverter(InverterModel):
     """Grid-following (current-source) inverter.
@@ -102,7 +105,9 @@ class GridFollowingInverter(InverterModel):
         self._p_ref = max(-self.rated_power_kw, min(p_kw, self.rated_power_kw))
         self._q_ref = q_kvar
 
-    def update(self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float) -> InverterState:
+    def update(
+        self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float
+    ) -> InverterState:
         if not self.state.is_online:
             return self.state
 
@@ -128,12 +133,13 @@ class GridFollowingInverter(InverterModel):
 # Grid-forming inverter
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DroopSettings:
     """Droop control parameters."""
 
-    p_droop: float = 0.05      # 5% frequency droop
-    q_droop: float = 0.05      # 5% voltage droop
+    p_droop: float = 0.05  # 5% frequency droop
+    q_droop: float = 0.05  # 5% voltage droop
     deadband_hz: float = 0.02  # frequency deadband
     deadband_pu: float = 0.01  # voltage deadband
 
@@ -142,7 +148,7 @@ class DroopSettings:
 class VSMSettings:
     """Virtual synchronous machine parameters."""
 
-    inertia_constant_s: float = 5.0   # H: seconds of stored energy at rated
+    inertia_constant_s: float = 5.0  # H: seconds of stored energy at rated
     damping_coefficient: float = 20.0  # D: damping torque coefficient
 
 
@@ -180,7 +186,9 @@ class GridFormingInverter(InverterModel):
         self._p_ref = max(-self.rated_power_kw, min(p_kw, self.rated_power_kw))
         self._q_ref = q_kvar
 
-    def update(self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float) -> InverterState:
+    def update(
+        self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float
+    ) -> InverterState:
         if not self.state.is_online:
             return self.state
 
@@ -189,7 +197,10 @@ class GridFormingInverter(InverterModel):
         return self._update_droop(dt_seconds, grid_voltage_pu, grid_frequency_hz)
 
     def _update_droop(
-        self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float,
+        self,
+        dt_seconds: float,
+        grid_voltage_pu: float,
+        grid_frequency_hz: float,
     ) -> InverterState:
         """Droop control: adjust power based on frequency/voltage deviation."""
         f0 = self.nominal_frequency_hz
@@ -228,7 +239,10 @@ class GridFormingInverter(InverterModel):
         return self.state
 
     def _update_vsm(
-        self, dt_seconds: float, grid_voltage_pu: float, grid_frequency_hz: float,
+        self,
+        dt_seconds: float,
+        grid_voltage_pu: float,
+        grid_frequency_hz: float,
     ) -> InverterState:
         """Virtual synchronous machine: emulate inertia + damping."""
         f0 = self.nominal_frequency_hz
@@ -255,17 +269,22 @@ class GridFormingInverter(InverterModel):
         self.state.frequency_hz = new_freq
 
         # Active power follows the swing dynamics
-        self.state.real_power_kw = self._p_ref + D * (self._omega - omega0) / omega0 * self.rated_power_kw
+        self.state.real_power_kw = (
+            self._p_ref + D * (self._omega - omega0) / omega0 * self.rated_power_kw
+        )
 
         # Clamp
         self.state.real_power_kw = max(
-            -self.rated_power_kw, min(self.state.real_power_kw, self.rated_power_kw),
+            -self.rated_power_kw,
+            min(self.state.real_power_kw, self.rated_power_kw),
         )
 
         # Reactive power via Q-droop on voltage
         droop = self.droop
         delta_v = grid_voltage_pu - 1.0
-        self.state.reactive_power_kvar = self._q_ref - (delta_v / droop.q_droop) * self.rated_power_kw
+        self.state.reactive_power_kvar = (
+            self._q_ref - (delta_v / droop.q_droop) * self.rated_power_kw
+        )
         self.state.voltage_pu = grid_voltage_pu
 
         s = math.sqrt(self.state.real_power_kw**2 + self.state.reactive_power_kvar**2)
@@ -278,7 +297,7 @@ class GridFormingInverter(InverterModel):
     def inertia_response(self, frequency_hz: float) -> float:
         """Calculate the virtual inertia power response (kW) to a frequency event."""
         f0 = self.nominal_frequency_hz
-        rocof = (frequency_hz - self.state.frequency_hz)  # simplified
+        rocof = frequency_hz - self.state.frequency_hz  # simplified
         if abs(rocof) < 0.001:
             return 0.0
 

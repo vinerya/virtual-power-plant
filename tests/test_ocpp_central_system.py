@@ -81,6 +81,7 @@ class ChargePointSim:
 # Mode / status honesty
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_unconfigured_adapter_is_simulated_not_connected():
     adapter = OCPPAdapter()
@@ -105,6 +106,7 @@ async def test_central_system_enabled_is_connected_live():
 # ---------------------------------------------------------------------------
 # Handshake
 # ---------------------------------------------------------------------------
+
 
 def test_rejects_when_central_system_not_running():
     adapter = OCPPAdapter()
@@ -170,6 +172,7 @@ def test_allow_list():
 # Charge point -> Central System
 # ---------------------------------------------------------------------------
 
+
 def test_full_charging_session_flow():
     app, adapter = _make_app(heartbeat_interval_s=120, authorized_id_tags=["TAG1"])
     events = []
@@ -183,10 +186,15 @@ def test_full_charging_session_flow():
             with client.websocket_connect("/ocpp/CP1", subprotocols=SUBPROTOCOL) as ws:
                 cp = ChargePointSim(ws)
 
-                boot = cp.call("BootNotification", {
-                    "chargePointVendor": "ABB", "chargePointModel": "Terra AC",
-                    "chargePointSerialNumber": "SN-1", "firmwareVersion": "1.2.3",
-                })
+                boot = cp.call(
+                    "BootNotification",
+                    {
+                        "chargePointVendor": "ABB",
+                        "chargePointModel": "Terra AC",
+                        "chargePointSerialNumber": "SN-1",
+                        "firmwareVersion": "1.2.3",
+                    },
+                )
                 assert boot[0] == 3
                 assert boot[2]["status"] == "Accepted"
                 assert boot[2]["interval"] == 120
@@ -198,36 +206,66 @@ def test_full_charging_session_flow():
                 assert cp.call("Authorize", {"idTag": "TAG1"})[2] == {
                     "idTagInfo": {"status": "Accepted"}
                 }
-                assert cp.call("Authorize", {"idTag": "BAD"})[2]["idTagInfo"]["status"] == "Invalid"
+                assert (
+                    cp.call("Authorize", {"idTag": "BAD"})[2]["idTagInfo"]["status"] == "Invalid"
+                )
 
-                st = cp.call("StatusNotification", {
-                    "connectorId": 1, "errorCode": "NoError", "status": "Preparing",
-                })
+                st = cp.call(
+                    "StatusNotification",
+                    {
+                        "connectorId": 1,
+                        "errorCode": "NoError",
+                        "status": "Preparing",
+                    },
+                )
                 assert st == [3, st[1], {}]
 
-                start = cp.call("StartTransaction", {
-                    "connectorId": 1, "idTag": "TAG1", "meterStart": 1000,
-                    "timestamp": "2026-09-28T10:00:00Z",
-                })
+                start = cp.call(
+                    "StartTransaction",
+                    {
+                        "connectorId": 1,
+                        "idTag": "TAG1",
+                        "meterStart": 1000,
+                        "timestamp": "2026-09-28T10:00:00Z",
+                    },
+                )
                 tx_id = start[2]["transactionId"]
                 assert isinstance(tx_id, int)
                 assert start[2]["idTagInfo"]["status"] == "Accepted"
 
-                cp.call("StatusNotification", {
-                    "connectorId": 1, "errorCode": "NoError", "status": "Charging",
-                })
-                mv = cp.call("MeterValues", {
-                    "connectorId": 1, "transactionId": tx_id,
-                    "meterValue": [{
-                        "timestamp": "2026-09-28T10:05:00Z",
-                        "sampledValue": [
-                            {"value": "7400", "measurand": "Power.Active.Import", "unit": "W"},
-                            {"value": "2500", "measurand": "Energy.Active.Import.Register",
-                             "unit": "Wh"},
-                            {"value": "63", "measurand": "SoC", "unit": "Percent"},
+                cp.call(
+                    "StatusNotification",
+                    {
+                        "connectorId": 1,
+                        "errorCode": "NoError",
+                        "status": "Charging",
+                    },
+                )
+                mv = cp.call(
+                    "MeterValues",
+                    {
+                        "connectorId": 1,
+                        "transactionId": tx_id,
+                        "meterValue": [
+                            {
+                                "timestamp": "2026-09-28T10:05:00Z",
+                                "sampledValue": [
+                                    {
+                                        "value": "7400",
+                                        "measurand": "Power.Active.Import",
+                                        "unit": "W",
+                                    },
+                                    {
+                                        "value": "2500",
+                                        "measurand": "Energy.Active.Import.Register",
+                                        "unit": "Wh",
+                                    },
+                                    {"value": "63", "measurand": "SoC", "unit": "Percent"},
+                                ],
+                            }
                         ],
-                    }],
-                })
+                    },
+                )
                 assert mv[2] == {}
 
                 charger = adapter.get_charge_point("CP1")
@@ -241,10 +279,15 @@ def test_full_charging_session_flow():
                 assert charger.current_soc == pytest.approx(0.63)
                 assert charger.energy_import_kwh == pytest.approx(2.5)
 
-                stop = cp.call("StopTransaction", {
-                    "transactionId": tx_id, "meterStop": 9000,
-                    "timestamp": "2026-09-28T11:00:00Z", "idTag": "TAG1",
-                })
+                stop = cp.call(
+                    "StopTransaction",
+                    {
+                        "transactionId": tx_id,
+                        "meterStop": 9000,
+                        "timestamp": "2026-09-28T11:00:00Z",
+                        "idTag": "TAG1",
+                    },
+                )
                 assert stop[2]["idTagInfo"]["status"] == "Accepted"
                 assert charger.active_transaction_id is None
                 assert charger.metadata["last_session_kwh"] == pytest.approx(8.0)
@@ -252,8 +295,10 @@ def test_full_charging_session_flow():
     finally:
         get_event_bus().unsubscribe(sub)
 
-    assert any(e.data.get("charge_point_id") == "CP1" and e.data.get("power_kw") == pytest.approx(7.4)
-               for e in events)
+    assert any(
+        e.data.get("charge_point_id") == "CP1" and e.data.get("power_kw") == pytest.approx(7.4)
+        for e in events
+    )
     assert not adapter.get_charge_point("CP1").connected
     # 9 inbound CALLs, each counted exactly once
     assert adapter.metrics.messages_received == 9
@@ -287,14 +332,25 @@ def test_call_errors_for_bad_input():
             missing = cp.call("BootNotification", {"chargePointVendor": "X"})
             assert missing[0] == 4 and missing[2] == "OccurenceConstraintViolation"
 
-            bad_status = cp.call("StatusNotification", {
-                "connectorId": 1, "errorCode": "NoError", "status": "Exploded",
-            })
+            bad_status = cp.call(
+                "StatusNotification",
+                {
+                    "connectorId": 1,
+                    "errorCode": "NoError",
+                    "status": "Exploded",
+                },
+            )
             assert bad_status[2] == "PropertyConstraintViolation"
 
-            bad_type = cp.call("StartTransaction", {
-                "connectorId": "one", "idTag": "T", "meterStart": 0, "timestamp": "x",
-            })
+            bad_type = cp.call(
+                "StartTransaction",
+                {
+                    "connectorId": "one",
+                    "idTag": "T",
+                    "meterStart": 0,
+                    "timestamp": "x",
+                },
+            )
             assert bad_type[2] == "TypeConstraintViolation"
 
             # Payload not an object, but uniqueId recoverable -> CALLERROR
@@ -311,11 +367,18 @@ def test_call_errors_for_bad_input():
 # Central System -> Charge point
 # ---------------------------------------------------------------------------
 
+
 def _boot_and_start(cp: ChargePointSim) -> int:
     cp.call("BootNotification", {"chargePointVendor": "V", "chargePointModel": "M"})
-    return cp.call("StartTransaction", {
-        "connectorId": 1, "idTag": "T", "meterStart": 0, "timestamp": "2026-09-28T10:00:00Z",
-    })[2]["transactionId"]
+    return cp.call(
+        "StartTransaction",
+        {
+            "connectorId": 1,
+            "idTag": "T",
+            "meterStart": 0,
+            "timestamp": "2026-09-28T10:00:00Z",
+        },
+    )[2]["transactionId"]
 
 
 def test_remote_start_and_stop_over_the_wire():
@@ -331,10 +394,15 @@ def test_remote_start_and_stop_over_the_wire():
             cp.reply(uid, {"status": "Accepted"})
             assert fut.result(timeout=5) is True
 
-            tx_id = cp.call("StartTransaction", {
-                "connectorId": 2, "idTag": "VPP-DISPATCH", "meterStart": 0,
-                "timestamp": "2026-09-28T10:00:00Z",
-            })[2]["transactionId"]
+            tx_id = cp.call(
+                "StartTransaction",
+                {
+                    "connectorId": 2,
+                    "idTag": "VPP-DISPATCH",
+                    "meterStart": 0,
+                    "timestamp": "2026-09-28T10:00:00Z",
+                },
+            )[2]["transactionId"]
 
             fut = client.portal.start_task_soon(adapter.remote_stop, "CP1")
             uid, payload = cp.expect_call("RemoteStopTransaction")
@@ -437,6 +505,7 @@ def test_reconnect_replaces_session():
 # OCPP-J session unit tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_session_timeout_and_close():
     sent: list[str] = []
@@ -481,7 +550,7 @@ async def test_session_handler_crash_becomes_internal_error():
 
 def test_parse_frame_validation():
     with pytest.raises(OCPPError) as info:
-        parse_frame("[9, \"id\", {}]")
+        parse_frame('[9, "id", {}]')
     assert info.value.code == OCPPErrorCode.PROTOCOL_ERROR
     with pytest.raises(OCPPError):
         parse_frame("{}")
@@ -490,19 +559,40 @@ def test_parse_frame_validation():
 
 
 def test_parse_meter_values_phases_and_units():
-    readings = parse_meter_values([
-        {"timestamp": "t", "sampledValue": [
-            {"value": "1.0", "measurand": "Power.Active.Import", "unit": "kW", "phase": "L1"},
-            {"value": "1.5", "measurand": "Power.Active.Import", "unit": "kW", "phase": "L2"},
-            {"value": "12.5", "unit": "kWh"},  # default measurand = energy register
-            {"value": "abc", "measurand": "SoC"},
-            {"value": "1", "measurand": "Power.Active.Import", "format": "SignedData"},
-        ]},
-    ])
+    readings = parse_meter_values(
+        [
+            {
+                "timestamp": "t",
+                "sampledValue": [
+                    {
+                        "value": "1.0",
+                        "measurand": "Power.Active.Import",
+                        "unit": "kW",
+                        "phase": "L1",
+                    },
+                    {
+                        "value": "1.5",
+                        "measurand": "Power.Active.Import",
+                        "unit": "kW",
+                        "phase": "L2",
+                    },
+                    {"value": "12.5", "unit": "kWh"},  # default measurand = energy register
+                    {"value": "abc", "measurand": "SoC"},
+                    {"value": "1", "measurand": "Power.Active.Import", "format": "SignedData"},
+                ],
+            },
+        ]
+    )
     assert readings == {"power_kw": pytest.approx(2.5), "energy_import_kwh": 12.5}
-    export = parse_meter_values([{"sampledValue": [
-        {"value": "3000", "measurand": "Power.Active.Export", "unit": "W"},
-    ]}])
+    export = parse_meter_values(
+        [
+            {
+                "sampledValue": [
+                    {"value": "3000", "measurand": "Power.Active.Export", "unit": "W"},
+                ]
+            }
+        ]
+    )
     assert export["power_kw"] == pytest.approx(-3.0)
 
 

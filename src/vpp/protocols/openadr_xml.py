@@ -81,8 +81,9 @@ def _serialise(root: etree._Element) -> bytes:
     return bytes(etree.tostring(root, xml_declaration=True, encoding="UTF-8"))
 
 
-def _ei_response(parent: etree._Element, request_id: str, code: int = 200,
-                 description: str = "OK") -> None:
+def _ei_response(
+    parent: etree._Element, request_id: str, code: int = 200, description: str = "OK"
+) -> None:
     resp = _sub(parent, EI, "eiResponse")
     _sub(resp, EI, "responseCode", str(code))
     _sub(resp, EI, "responseDescription", description)
@@ -92,6 +93,7 @@ def _ei_response(parent: etree._Element, request_id: str, code: int = 200,
 # ---------------------------------------------------------------------------
 # VEN -> VTN builders
 # ---------------------------------------------------------------------------
+
 
 def build_query_registration(request_id: str | None = None) -> bytes:
     root, inner = _envelope("oadrQueryRegistration")
@@ -156,7 +158,9 @@ def build_created_event(ven_id: str, responses: list[EventOptResponse]) -> bytes
     return _serialise(root)
 
 
-def build_response(ven_id: str, request_id: str, code: int = 200, description: str = "OK") -> bytes:
+def build_response(
+    ven_id: str, request_id: str, code: int = 200, description: str = "OK"
+) -> bytes:
     root, inner = _envelope("oadrResponse")
     _ei_response(inner, request_id, code, description)
     _sub(inner, EI, "venID", ven_id)
@@ -181,6 +185,7 @@ def build_registered_report(ven_id: str, request_id: str) -> bytes:
 # ---------------------------------------------------------------------------
 # VTN -> VEN parsing
 # ---------------------------------------------------------------------------
+
 
 def parse_payload(data: bytes | str) -> etree._Element:
     """Parse an ``oadrPayload`` document and return the signed message element."""
@@ -226,11 +231,7 @@ def check_ei_response(message: etree._Element) -> None:
 
 
 def request_id_of(message: etree._Element) -> str:
-    return (
-        _text(message, "pyld:requestID")
-        or _text(message, "ei:eiResponse/pyld:requestID")
-        or ""
-    )
+    return _text(message, "pyld:requestID") or _text(message, "ei:eiResponse/pyld:requestID") or ""
 
 
 @dataclass
@@ -300,12 +301,14 @@ def _parse_signal(sig: etree._Element, start_time: float) -> ParsedSignal:
         dur_text = _text(interval, "xcal:duration/xcal:duration")
         duration = parse_iso8601_duration(dur_text) if dur_text else 0.0
         value = _payload_value(interval.find("ei:signalPayload", NSMAP))
-        intervals.append({
-            "uid": _text(interval, "xcal:uid/xcal:text"),
-            "start_time": cursor,
-            "duration_seconds": duration,
-            "value": value,
-        })
+        intervals.append(
+            {
+                "uid": _text(interval, "xcal:uid/xcal:text"),
+                "start_time": cursor,
+                "duration_seconds": duration,
+                "value": value,
+            }
+        )
         cursor += duration
     return ParsedSignal(
         signal_name=_text(sig, "ei:signalName", "simple") or "simple",
@@ -337,9 +340,7 @@ def _parse_event(oadr_event: etree._Element) -> ParsedEvent:
         for sig in ei_event.findall("ei:eiEventSignals/ei:eiEventSignal", NSMAP)
     ]
     if duration <= 0:
-        interval_total = sum(
-            i["duration_seconds"] for s in signals[:1] for i in s.intervals
-        )
+        interval_total = sum(i["duration_seconds"] for s in signals[:1] for i in s.intervals)
         duration = interval_total if interval_total > 0 else 0.0
 
     targets: dict[str, list[str]] = {}

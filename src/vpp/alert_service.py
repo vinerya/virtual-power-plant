@@ -60,20 +60,29 @@ DEFAULT_RULES: tuple[dict[str, Any], ...] = (
     {
         "name": "Battery SOC low",
         "description": "Battery state of charge below 10%.",
-        "metric": "soc", "comparison": "<", "threshold": 0.10,
-        "severity": "warning", "cooldown_s": 900.0,
+        "metric": "soc",
+        "comparison": "<",
+        "threshold": 0.10,
+        "severity": "warning",
+        "cooldown_s": 900.0,
     },
     {
         "name": "Battery over-temperature",
         "description": "Battery temperature above 50 degC.",
-        "metric": "temperature", "comparison": ">", "threshold": 50.0,
-        "severity": "critical", "cooldown_s": 300.0,
+        "metric": "temperature",
+        "comparison": ">",
+        "threshold": 50.0,
+        "severity": "critical",
+        "cooldown_s": 300.0,
     },
     {
         "name": "Battery state of health degraded",
         "description": "Battery state of health below 80% (end-of-life threshold).",
-        "metric": "soh", "comparison": "<", "threshold": 0.80,
-        "severity": "warning", "cooldown_s": 86400.0,
+        "metric": "soh",
+        "comparison": "<",
+        "threshold": 0.80,
+        "severity": "warning",
+        "cooldown_s": 86400.0,
     },
 )
 
@@ -85,6 +94,7 @@ class Broadcaster(Protocol):
 # ---------------------------------------------------------------------------
 # Time helpers
 # ---------------------------------------------------------------------------
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -101,10 +111,13 @@ def as_utc(dt: datetime | None) -> datetime | None:
 # Serialisation
 # ---------------------------------------------------------------------------
 
+
 def api_severity(severity: str) -> str:
     """Map engine severities onto the console's info/warning/critical."""
-    return "critical" if severity in ("error", "critical") else (
-        severity if severity in ("info", "warning") else "warning"
+    return (
+        "critical"
+        if severity in ("error", "critical")
+        else (severity if severity in ("info", "warning") else "warning")
     )
 
 
@@ -118,6 +131,7 @@ def effective_status(row: AlertModel, now: datetime | None = None) -> str:
 
 def serialize_alert(row: AlertModel, now: datetime | None = None) -> dict[str, Any]:
     """Alert row -> ``AlertRead``-shaped dict (JSON-safe, ISO timestamps)."""
+
     def iso(dt: datetime | None) -> str | None:
         dt = as_utc(dt)
         return dt.isoformat() if dt else None
@@ -170,6 +184,7 @@ def rule_from_row(row: AlertRuleModel) -> AlertRule:
 # Repository
 # ---------------------------------------------------------------------------
 
+
 class AlertRepository:
     """DB access for alerts and alert rules."""
 
@@ -221,7 +236,9 @@ class AlertRepository:
 
     @staticmethod
     async def find_open(
-        session: AsyncSession, rule_id: str, source: str,
+        session: AsyncSession,
+        rule_id: str,
+        source: str,
     ) -> list[AlertModel]:
         stmt = select(AlertModel).where(
             AlertModel.rule_id == rule_id,
@@ -298,6 +315,7 @@ class AlertRepository:
 # Service
 # ---------------------------------------------------------------------------
 
+
 def _numeric(value: Any) -> float | None:
     if isinstance(value, bool) or value is None:
         return None
@@ -340,7 +358,8 @@ class AlertService:
         await self.reload_rules()
         self._bus = bus
         self._subscription_id = bus.subscribe(
-            self._on_event, event_types={EventType.RESOURCE_UPDATED},
+            self._on_event,
+            event_types={EventType.RESOURCE_UPDATED},
         )
         self._worker = asyncio.create_task(self._run(), name="vpp-alert-evaluator")
 
@@ -390,7 +409,8 @@ class AlertService:
             self.dropped_events += 1
             logger.warning(
                 "Alert evaluation queue full; dropped telemetry for %s (total dropped=%d)",
-                data.get("resource_id"), self.dropped_events,
+                data.get("resource_id"),
+                self.dropped_events,
             )
 
     async def _run(self) -> None:
@@ -433,7 +453,9 @@ class AlertService:
 
         out: list[dict[str, Any]] = []
         for alert, payload in payloads:
-            record_alert_fired(payload["severity"], payload["rule_name"] or payload["rule_id"] or "")
+            record_alert_fired(
+                payload["severity"], payload["rule_name"] or payload["rule_id"] or ""
+            )
             await self.manager.dispatch(alert)
             if self._broadcaster is not None:
                 try:
@@ -444,7 +466,11 @@ class AlertService:
         return out
 
     async def _persist(
-        self, session: AsyncSession, alert: Alert, metric: str, resource_id: str,
+        self,
+        session: AsyncSession,
+        alert: Alert,
+        metric: str,
+        resource_id: str,
     ) -> tuple[AlertModel, bool]:
         rule_id = alert.rule_name  # engine rule name == DB rule id
         meta = self._rule_meta.get(rule_id)
@@ -489,7 +515,11 @@ class AlertService:
         return row, True
 
     async def _auto_resolve(
-        self, session: AsyncSession, metric: str, value: float, resource_id: str,
+        self,
+        session: AsyncSession,
+        metric: str,
+        value: float,
+        resource_id: str,
     ) -> None:
         for rule in self.manager.matching_rules(metric, source=resource_id):
             meta = self._rule_meta.get(rule.name)
@@ -503,9 +533,17 @@ class AlertService:
 
 def _rule_signature(rule: AlertRule) -> tuple[Any, ...]:
     return (
-        rule.rule_type, rule.severity, rule.metric_name, rule.threshold, rule.comparison,
-        rule.rate_window_s, rule.rate_threshold, rule.z_score_threshold, rule.cooldown_s,
-        rule.enabled, rule.resource_id,
+        rule.rule_type,
+        rule.severity,
+        rule.metric_name,
+        rule.threshold,
+        rule.comparison,
+        rule.rate_window_s,
+        rule.rate_threshold,
+        rule.z_score_threshold,
+        rule.cooldown_s,
+        rule.enabled,
+        rule.resource_id,
     )
 
 
@@ -529,5 +567,9 @@ def set_alert_service(service: AlertService | None) -> None:
 def snooze_until_from(until: datetime | None, duration_ms: int | None, now: datetime) -> datetime:
     """Resolve a snooze request to an absolute UTC deadline (``until`` wins)."""
     if until is not None:
-        return until.replace(tzinfo=timezone.utc) if until.tzinfo is None else until.astimezone(timezone.utc)
+        return (
+            until.replace(tzinfo=timezone.utc)
+            if until.tzinfo is None
+            else until.astimezone(timezone.utc)
+        )
     return now + timedelta(milliseconds=duration_ms or 0)

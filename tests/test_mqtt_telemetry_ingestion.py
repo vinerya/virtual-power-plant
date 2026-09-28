@@ -22,7 +22,6 @@ from vpp.protocols.telemetry_ingestion import (
     parse_telemetry_topic,
 )
 
-
 # ---------------------------------------------------------------------------
 # Topic parsing
 # ---------------------------------------------------------------------------
@@ -265,14 +264,10 @@ async def test_run_ingests_queued_messages_until_cancelled(db_session, app):
     task = asyncio.create_task(ingestor.run())
     try:
         await adapter._message_queue.put(
-            ProtocolMessage(
-                topic=f"vpp/site1/battery/{battery.id}/soc", payload={"soc": 0.3}
-            )
+            ProtocolMessage(topic=f"vpp/site1/battery/{battery.id}/soc", payload={"soc": 0.3})
         )
         await adapter._message_queue.put(
-            ProtocolMessage(
-                topic=f"vpp/site1/battery/{battery.id}/soc", payload={"soc": 0.4}
-            )
+            ProtocolMessage(topic=f"vpp/site1/battery/{battery.id}/soc", payload={"soc": 0.4})
         )
         # Give the loop a moment to drain both messages.
         for _ in range(50):
@@ -313,9 +308,7 @@ async def test_run_skips_bad_message_and_continues(db_session, app):
             ProtocolMessage(topic="garbage-topic", payload={"soc": 1.0})
         )
         await adapter._message_queue.put(
-            ProtocolMessage(
-                topic=f"vpp/site1/battery/{battery.id}/soc", payload={"soc": 0.8}
-            )
+            ProtocolMessage(topic=f"vpp/site1/battery/{battery.id}/soc", payload={"soc": 0.8})
         )
         for _ in range(50):
             rows = await BatteryStateRepository.get_latest(db_session, battery.id, limit=10)

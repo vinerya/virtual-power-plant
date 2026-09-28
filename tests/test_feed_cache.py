@@ -1,4 +1,5 @@
 """Tests for FeedCache TTL semantics (M4)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -9,8 +10,7 @@ from vpp.tariffs.feeds import FeedCache, PricePoint
 def _sample_points() -> list[PricePoint]:
     base = datetime(2024, 7, 1, tzinfo=timezone.utc)
     return [
-        PricePoint(timestamp=base + timedelta(hours=h), price_per_kwh=0.10 + h * 0.01,
-                   feed="t")
+        PricePoint(timestamp=base + timedelta(hours=h), price_per_kwh=0.10 + h * 0.01, feed="t")
         for h in range(3)
     ]
 

@@ -27,6 +27,7 @@ def set_registry(registry: ProtocolRegistry) -> None:
 
 # -- Schemas -----------------------------------------------------------------
 
+
 class ProtocolInfo(BaseModel):
     name: str
     version: str
@@ -52,6 +53,7 @@ class ConnectResponse(BaseModel):
 
 
 # -- Endpoints ---------------------------------------------------------------
+
 
 @router.get("/", response_model=list[ProtocolInfo])
 async def list_protocols(
@@ -85,7 +87,9 @@ async def connect_protocol(
     """Connect a protocol adapter."""
     adapter = registry.get(name)
     if adapter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found"
+        )
 
     if adapter.is_operational:
         return ConnectResponse(
@@ -123,7 +127,9 @@ async def disconnect_protocol(
     """Disconnect a protocol adapter."""
     adapter = registry.get(name)
     if adapter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found"
+        )
 
     await adapter.disconnect()
     return ConnectResponse(name=name, status=adapter.status.value, message="Disconnected")
@@ -138,7 +144,9 @@ async def protocol_metrics(
     """Get detailed metrics for a protocol adapter."""
     adapter = registry.get(name)
     if adapter is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found"
+        )
 
     m = adapter.metrics
     return {

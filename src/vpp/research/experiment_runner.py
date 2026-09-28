@@ -7,12 +7,11 @@ automated comparison tables (rule-based vs ML).
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 import numpy as np
 
-from vpp.research.base import ResearchModel, ResearchExperiment
+from vpp.research.base import ResearchExperiment, ResearchModel
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +46,12 @@ class ExperimentRunner:
             train_metrics = model.train(X_train, y_train)
             test_metrics = model.evaluate(X_test, y_test)
 
-            exp.complete({
-                "train": train_metrics,
-                "test": test_metrics,
-            })
+            exp.complete(
+                {
+                    "train": train_metrics,
+                    "test": test_metrics,
+                }
+            )
         except Exception as e:
             exp.fail(str(e))
             logger.exception("Experiment %s failed", exp.name)
@@ -71,8 +72,13 @@ class ExperimentRunner:
         results = {}
         for model in models:
             exp = self.run_experiment(
-                model, X_train, y_train, X_test, y_test,
-                name=f"compare_{model.name}", seed=seed,
+                model,
+                X_train,
+                y_train,
+                X_test,
+                y_test,
+                name=f"compare_{model.name}",
+                seed=seed,
             )
             if exp.status == "completed":
                 results[model.name] = exp.results.get("test", {})

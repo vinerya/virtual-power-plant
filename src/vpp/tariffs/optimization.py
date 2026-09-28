@@ -48,11 +48,13 @@ MILP cost note
 makes demand charges cheap to add but tightens the LP relaxation
 considerably; expect solver time to grow with horizon length.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 from .components import (
     DemandCharge,
@@ -63,7 +65,6 @@ from .components import (
 )
 from .tariff import Tariff
 
-
 # ---------------------------------------------------------------------------
 # Parameter container
 # ---------------------------------------------------------------------------
@@ -73,10 +74,10 @@ from .tariff import Tariff
 class TariffOptParams:
     """Tariff parameters resolved against an optimization horizon."""
 
-    energy_buy_per_kwh: List[float]   # length T
-    energy_sell_per_kwh: List[float]  # length T
-    demand_charge_per_kw: Optional[float] = None
-    demand_charge_window: Optional[List[bool]] = None  # length T mask
+    energy_buy_per_kwh: list[float]  # length T
+    energy_sell_per_kwh: list[float]  # length T
+    demand_charge_per_kw: float | None = None
+    demand_charge_window: list[bool] | None = None  # length T mask
     demand_ratchet_floor_kw: float = 0.0
     fixed_charges: float = 0.0
     min_bill: float = 0.0
@@ -111,10 +112,10 @@ def tariff_to_opt_params(
     horizon_hours: int,
     interval_minutes: int = 15,
     nem: Literal["none", "nem2", "nem3"] = "nem2",
-    nem3_avoided_cost: Optional[List[float]] = None,
+    nem3_avoided_cost: list[float] | None = None,
     prior_demand_max_kw: float = 0.0,
     tz: timezone = timezone.utc,
-    live_price_overrides: Optional[List[Any]] = None,
+    live_price_overrides: list[Any] | None = None,
 ) -> TariffOptParams:
     """Project a :class:`Tariff` onto a discrete optimization horizon.
 
@@ -163,30 +164,30 @@ def tariff_to_opt_params(
     step = timedelta(minutes=interval_minutes)
 
     # Pull components out of the tariff.
-    tou_components: List[TimeOfUseRate] = [
+    tou_components: list[TimeOfUseRate] = [
         c for c in tariff.components if isinstance(c, TimeOfUseRate)
     ]
-    tier_components: List[TieredEnergyRate] = [
+    tier_components: list[TieredEnergyRate] = [
         c for c in tariff.components if isinstance(c, TieredEnergyRate)
     ]
-    demand_components: List[DemandCharge] = [
+    demand_components: list[DemandCharge] = [
         c for c in tariff.components if isinstance(c, DemandCharge)
     ]
-    fixed_components: List[FixedCharge] = [
+    fixed_components: list[FixedCharge] = [
         c for c in tariff.components if isinstance(c, FixedCharge)
     ]
-    min_components: List[MinimumBill] = [
+    min_components: list[MinimumBill] = [
         c for c in tariff.components if isinstance(c, MinimumBill)
     ]
 
     # Prefer TOU; fall back to tier-0 of the first TieredEnergyRate; else 0.
-    tier0_rate: Optional[float] = None
+    tier0_rate: float | None = None
     if tier_components:
         tiers = tier_components[0].tiers
         if tiers:
             tier0_rate = float(tiers[0][1])
 
-    energy_buy: List[float] = []
+    energy_buy: list[float] = []
     for t in range(T):
         ts = (horizon_start + t * step).astimezone(tz)
         rate = 0.0
@@ -250,15 +251,14 @@ def tariff_to_opt_params(
         energy_sell = [0.0] * T
 
     # Demand charge: choose first DemandCharge component, build window mask.
-    demand_rate: Optional[float] = None
-    demand_window: Optional[List[bool]] = None
+    demand_rate: float | None = None
+    demand_window: list[bool] | None = None
     ratchet_floor = 0.0
     if demand_components:
         dc = demand_components[0]
         demand_rate = float(dc.rate)
         demand_window = [
-            _demand_in_window(dc, (horizon_start + t * step).astimezone(tz))
-            for t in range(T)
+            _demand_in_window(dc, (horizon_start + t * step).astimezone(tz)) for t in range(T)
         ]
         if dc.ratchet_pct > 0 and prior_demand_max_kw > 0:
             ratchet_floor = float(dc.ratchet_pct) * float(prior_demand_max_kw)
@@ -311,15 +311,11 @@ def add_tariff_constraints(opt_params: TariffOptParams) -> Callable:
     # Big-M: bound by max charge + load magnitude. We compute it inside the
     # builder once we have access to the model's params.
 
-    def _builder(model, params: Dict[str, Any]) -> None:
+    def _builder(model, params: dict[str, Any]) -> None:
         load_max = max(list(params.get("load") or [0.0]) + [0.0])
         solar_max = max(list(params.get("solar") or [0.0]) + [0.0])
         big_m = float(
-            params["max_charge_kw"]
-            + params["max_discharge_kw"]
-            + load_max
-            + solar_max
-            + 1.0
+            params["max_charge_kw"] + params["max_discharge_kw"] + load_max + solar_max + 1.0
         )
         model.p_import = pyo.Var(model.T, domain=pyo.NonNegativeReals, bounds=(0, big_m))
         model.p_export = pyo.Var(model.T, domain=pyo.NonNegativeReals, bounds=(0, big_m))
@@ -353,7 +349,6 @@ def add_tariff_energy_term(opt_params: TariffOptParams) -> Callable:
     ``params['disable_base_energy_cost'] = True`` to suppress the M1
     flat-price energy term.
     """
-    import pyomo.environ as pyo
 
     buy = list(opt_params.energy_buy_per_kwh)
     sell = list(opt_params.energy_sell_per_kwh)
@@ -361,12 +356,9 @@ def add_tariff_energy_term(opt_params: TariffOptParams) -> Callable:
     def _term(model, params):
         T_idx = list(model.T)
         if len(buy) != len(T_idx):
-            raise ValueError(
-                f"tariff buy vector length {len(buy)} != horizon {len(T_idx)}"
-            )
+            raise ValueError(f"tariff buy vector length {len(buy)} != horizon {len(T_idx)}")
         return sum(
-            (buy[t] * model.p_import[t] - sell[t] * model.p_export[t]) * model.dt
-            for t in T_idx
+            (buy[t] * model.p_import[t] - sell[t] * model.p_export[t]) * model.dt for t in T_idx
         )
 
     _term.__name__ = "add_tariff_energy_term"
@@ -375,7 +367,7 @@ def add_tariff_energy_term(opt_params: TariffOptParams) -> Callable:
 
 def add_demand_charge_terms(
     opt_params: TariffOptParams,
-) -> Tuple[Callable, Callable]:
+) -> tuple[Callable, Callable]:
     """Return (objective_term, constraint_builder) for non-coincident demand.
 
     Variable structure
@@ -414,9 +406,7 @@ def add_demand_charge_terms(
 
         T_idx = list(model.T)
         if len(window) != len(T_idx):
-            raise ValueError(
-                f"demand_charge_window length {len(window)} != horizon {len(T_idx)}"
-            )
+            raise ValueError(f"demand_charge_window length {len(window)} != horizon {len(T_idx)}")
 
         def _peak(mm, t):
             if not window[t]:
@@ -426,9 +416,7 @@ def add_demand_charge_terms(
         model.demand_peak_con = pyo.Constraint(model.T, rule=_peak)
 
         if floor_kw > 0:
-            model.demand_ratchet_con = pyo.Constraint(
-                expr=model.peak_demand_kw >= floor_kw
-            )
+            model.demand_ratchet_con = pyo.Constraint(expr=model.peak_demand_kw >= floor_kw)
 
     _builder.__name__ = "add_demand_charge_constraints"
 
@@ -442,10 +430,10 @@ def add_demand_charge_terms(
 
 
 def add_tiered_energy_term(
-    tier_thresholds_kwh: List[float],
-    tier_rates_per_kwh: List[float],
+    tier_thresholds_kwh: list[float],
+    tier_rates_per_kwh: list[float],
     use_native_sos2: bool = False,
-) -> Tuple[Callable, Callable]:
+) -> tuple[Callable, Callable]:
     """SOS2 piecewise-linear tier-aware energy cost.
 
     Replaces the M2 "lowest-tier" approximation. The piecewise-linear total
@@ -494,7 +482,7 @@ def add_tiered_energy_term(
 
     # Build finite breakpoints. The last threshold is conventionally +inf;
     # replace with a generous cap = 2 * (next-to-last threshold or 1000).
-    finite_thresholds: List[float] = []
+    finite_thresholds: list[float] = []
     for th in tier_thresholds_kwh:
         if th == float("inf"):
             break
@@ -508,19 +496,19 @@ def add_tiered_energy_term(
         cap = 10_000.0
 
     # Breakpoints: b_0 = 0, then each finite threshold, then cap.
-    breakpoints: List[float] = [0.0] + list(finite_thresholds)
+    breakpoints: list[float] = [0.0] + list(finite_thresholds)
     if breakpoints[-1] < cap:
         breakpoints.append(cap)
 
     # Costs at each breakpoint via cumulative integral.
-    costs: List[float] = [0.0]
+    costs: list[float] = [0.0]
     for k in range(1, len(breakpoints)):
         rate_k = float(tier_rates_per_kwh[min(k - 1, len(tier_rates_per_kwh) - 1)])
         costs.append(costs[-1] + (breakpoints[k] - breakpoints[k - 1]) * rate_k)
 
     K = len(breakpoints)
 
-    def _builder(model, params: Dict[str, Any]) -> None:
+    def _builder(model, params: dict[str, Any]) -> None:
         # cum_import = sum_t p_import[t] * dt
         model.cum_import_kwh = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0.0, breakpoints[-1]))
         model.tier_lambda = pyo.Var(range(K), domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
@@ -562,6 +550,7 @@ def add_tiered_energy_term(
 
             def _one_seg(mm):
                 return sum(mm.tier_seg[s] for s in range(n_seg)) == 1
+
             model.tier_one_seg = pyo.Constraint(rule=_one_seg)
 
             def _lambda_bound(mm, k):
@@ -569,6 +558,7 @@ def add_tiered_energy_term(
                 left = mm.tier_seg[k - 1] if k - 1 >= 0 else 0
                 right = mm.tier_seg[k] if k < n_seg else 0
                 return mm.tier_lambda[k] <= left + right
+
             model.tier_lambda_bound = pyo.Constraint(range(K), rule=_lambda_bound)
 
     _builder.__name__ = "add_tiered_energy_constraints"
@@ -585,8 +575,8 @@ def add_tiered_energy_term(
 
 def build_tariff_hooks(
     opt_params: TariffOptParams,
-    tariff: Optional[Tariff] = None,
-) -> Tuple[List[Callable], List[Callable]]:
+    tariff: Tariff | None = None,
+) -> tuple[list[Callable], list[Callable]]:
     """Convenience: build (objective_terms, constraint_builders) ready to pass
     to :func:`vpp.optimization.formulations.dispatch.build_battery_dispatch_model`.
 
@@ -606,8 +596,8 @@ def build_tariff_hooks(
     energy_term = add_tariff_energy_term(opt_params)
     tariff_builder = add_tariff_constraints(opt_params)
     demand_term, demand_builder = add_demand_charge_terms(opt_params)
-    obj_terms: List[Callable] = [energy_term, demand_term]
-    builders: List[Callable] = [tariff_builder, demand_builder]
+    obj_terms: list[Callable] = [energy_term, demand_term]
+    builders: list[Callable] = [tariff_builder, demand_builder]
 
     if tariff is not None:
         tier_components = [c for c in tariff.components if isinstance(c, TieredEnergyRate)]
@@ -644,7 +634,7 @@ def build_tariff_hooks(
 # ---------------------------------------------------------------------------
 
 
-def load_nem3_avoided_cost_2024() -> List[float]:
+def load_nem3_avoided_cost_2024() -> list[float]:
     """Return a representative 24-hour $/kWh avoided-cost vector for NEM 3.0.
 
     Values are illustrative weekday averages drawn from the CPUC 2024 Avoided
@@ -664,8 +654,28 @@ def load_nem3_avoided_cost_2024() -> List[float]:
     """
     # 24 hourly $/kWh values, midnight-first.
     return [
-        0.045, 0.040, 0.038, 0.038, 0.040, 0.045,  # 0-5
-        0.052, 0.060, 0.058, 0.052, 0.045, 0.040,  # 6-11
-        0.038, 0.038, 0.040, 0.045, 0.060, 0.110,  # 12-17  (ramp begins)
-        0.180, 0.220, 0.180, 0.110, 0.070, 0.055,  # 18-23  (peak 7-8 PM)
+        0.045,
+        0.040,
+        0.038,
+        0.038,
+        0.040,
+        0.045,  # 0-5
+        0.052,
+        0.060,
+        0.058,
+        0.052,
+        0.045,
+        0.040,  # 6-11
+        0.038,
+        0.038,
+        0.040,
+        0.045,
+        0.060,
+        0.110,  # 12-17  (ramp begins)
+        0.180,
+        0.220,
+        0.180,
+        0.110,
+        0.070,
+        0.055,  # 18-23  (peak 7-8 PM)
     ]

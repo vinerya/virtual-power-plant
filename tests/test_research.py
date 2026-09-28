@@ -1,22 +1,21 @@
 """Tests for the research/AI layer."""
 
 import numpy as np
-import pytest
 
-from vpp.research.base import ResearchModel, ResearchExperiment
-from vpp.research.forecasting import (
-    PersistenceForecaster,
-    LinearForecaster,
-    ExponentialSmoothingForecaster,
-    EnsembleForecaster,
-)
-from vpp.research.anomaly import ZScoreDetector, IQRDetector, MovingAverageDetector
+from vpp.research.anomaly import IQRDetector, MovingAverageDetector, ZScoreDetector
+from vpp.research.base import ResearchExperiment
 from vpp.research.experiment_runner import ExperimentRunner
-
+from vpp.research.forecasting import (
+    EnsembleForecaster,
+    ExponentialSmoothingForecaster,
+    LinearForecaster,
+    PersistenceForecaster,
+)
 
 # ---------------------------------------------------------------------------
 # Base
 # ---------------------------------------------------------------------------
+
 
 class TestResearchModelBase:
     def test_not_production_ready(self):
@@ -47,6 +46,7 @@ class TestResearchModelBase:
 # ---------------------------------------------------------------------------
 # Forecasting
 # ---------------------------------------------------------------------------
+
 
 class TestForecasting:
     def _make_data(self, n=100, features=3):
@@ -109,6 +109,7 @@ class TestForecasting:
 # Anomaly detection
 # ---------------------------------------------------------------------------
 
+
 class TestAnomalyDetection:
     def _make_data(self, n=200, anomaly_frac=0.05):
         np.random.seed(42)
@@ -160,6 +161,7 @@ class TestAnomalyDetection:
 # ---------------------------------------------------------------------------
 # Experiment runner
 # ---------------------------------------------------------------------------
+
 
 class TestExperimentRunner:
     def test_run_experiment(self):

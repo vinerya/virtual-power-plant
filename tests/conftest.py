@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -22,10 +21,9 @@ os.environ.setdefault("VPP_RATE_LIMIT_ENABLED", "false")
 
 from vpp.api.app import create_app
 from vpp.auth.security import create_access_token, get_password_hash
-from vpp.db.engine import init_db, close_db, get_db
+from vpp.db.engine import close_db, get_db, init_db
 from vpp.db.repositories import UserRepository
 from vpp.resources import Battery, Solar, WindTurbine
-from vpp.settings import Settings
 
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
@@ -76,11 +74,13 @@ async def admin_user(db_session: AsyncSession):
 @pytest_asyncio.fixture
 async def auth_headers(admin_user) -> dict[str, str]:
     """JWT auth headers for an admin user."""
-    token = create_access_token({
-        "sub": admin_user.id,
-        "username": admin_user.username,
-        "role": admin_user.role,
-    })
+    token = create_access_token(
+        {
+            "sub": admin_user.id,
+            "username": admin_user.username,
+            "role": admin_user.role,
+        }
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -102,17 +102,20 @@ async def viewer_user(db_session: AsyncSession):
 @pytest_asyncio.fixture
 async def viewer_headers(viewer_user) -> dict[str, str]:
     """JWT auth headers for a viewer (non-admin) user."""
-    token = create_access_token({
-        "sub": viewer_user.id,
-        "username": viewer_user.username,
-        "role": viewer_user.role,
-    })
+    token = create_access_token(
+        {
+            "sub": viewer_user.id,
+            "username": viewer_user.username,
+            "role": viewer_user.role,
+        }
+    )
     return {"Authorization": f"Bearer {token}"}
 
 
 # ---------------------------------------------------------------------------
 # Resource fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def battery() -> Battery:

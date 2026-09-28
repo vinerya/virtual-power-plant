@@ -41,12 +41,13 @@ Order of construction:
 A negative objective therefore corresponds to net revenue (price arbitrage).
 Prices are ``Param(mutable=True)`` so the model can be re-solved without rebuild.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import pyomo.environ as pyo
-
 
 REQUIRED_KEYS = (
     "battery_capacity_kwh",
@@ -70,15 +71,15 @@ REQUIRED_KEYS = (
 #                              (see vpp.tariffs.optimization.add_tariff_energy_term).
 
 # Type alias for hook callables.
-ObjectiveTerm = Callable[[pyo.ConcreteModel, Dict[str, Any]], Any]
-ConstraintBuilder = Callable[[pyo.ConcreteModel, Dict[str, Any]], None]
+ObjectiveTerm = Callable[[pyo.ConcreteModel, dict[str, Any]], Any]
+ConstraintBuilder = Callable[[pyo.ConcreteModel, dict[str, Any]], None]
 
 
-def _validate(params: Dict[str, Any]) -> None:
+def _validate(params: dict[str, Any]) -> None:
     missing = [k for k in REQUIRED_KEYS if k not in params]
     if missing:
         raise ValueError(f"Missing required dispatch params: {missing}")
-    prices: List[float] = list(params["prices"])
+    prices: list[float] = list(params["prices"])
     if len(prices) == 0:
         raise ValueError("prices must be a non-empty sequence")
     for k in (
@@ -101,9 +102,9 @@ def _validate(params: Dict[str, Any]) -> None:
 
 
 def build_battery_dispatch_model(
-    params: Dict[str, Any],
-    objective_terms: Optional[Sequence[ObjectiveTerm]] = None,
-    constraint_builders: Optional[Sequence[ConstraintBuilder]] = None,
+    params: dict[str, Any],
+    objective_terms: Sequence[ObjectiveTerm] | None = None,
+    constraint_builders: Sequence[ConstraintBuilder] | None = None,
 ) -> pyo.ConcreteModel:
     """Build a Pyomo ConcreteModel for deterministic battery dispatch.
 
@@ -164,12 +165,8 @@ def build_battery_dispatch_model(
     if len(solar) != T:
         raise ValueError(f"solar length {len(solar)} != horizon {T}")
     # Note: 'load' is a reserved attribute name on Pyomo Blocks; use load_kw.
-    m.load_kw = pyo.Param(
-        m.T, initialize={t: load[t] for t in range(T)}, mutable=True
-    )
-    m.solar_kw = pyo.Param(
-        m.T, initialize={t: solar[t] for t in range(T)}, mutable=True
-    )
+    m.load_kw = pyo.Param(m.T, initialize={t: load[t] for t in range(T)}, mutable=True)
+    m.solar_kw = pyo.Param(m.T, initialize={t: solar[t] for t in range(T)}, mutable=True)
 
     # Variables
     m.p_charge = pyo.Var(m.T, domain=pyo.NonNegativeReals, bounds=(0, p_chg_max))
@@ -222,9 +219,7 @@ def build_battery_dispatch_model(
     if params.get("disable_base_energy_cost", False):
         base_cost_expr = 0.0
     else:
-        base_cost_expr = sum(
-            m.price[t] * (m.p_charge[t] - m.p_discharge[t]) * m.dt for t in m.T
-        )
+        base_cost_expr = sum(m.price[t] * (m.p_charge[t] - m.p_discharge[t]) * m.dt for t in m.T)
     # Expose as a named Expression for downstream introspection / hooks.
     m.energy_cost = pyo.Expression(expr=base_cost_expr)
 
@@ -240,9 +235,7 @@ def build_battery_dispatch_model(
             extra_terms.append(e)
 
     if extra_terms:
-        m.cost = pyo.Objective(
-            expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize
-        )
+        m.cost = pyo.Objective(expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize)
     else:
         m.cost = pyo.Objective(expr=m.energy_cost, sense=pyo.minimize)
 

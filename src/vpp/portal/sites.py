@@ -62,7 +62,9 @@ async def summarize_sites(session: AsyncSession, sites: list[SiteModel]) -> list
                 .where(ResourceModel.site_id.in_(site_ids))
                 .order_by(ResourceModel.name)
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     by_site: dict[str, list[ResourceModel]] = {sid: [] for sid in site_ids}
     for r in resources:
@@ -72,9 +74,7 @@ async def summarize_sites(session: AsyncSession, sites: list[SiteModel]) -> list
 
     alert_counts: dict[str, int] = {}
     if _alert_count_provider is not None:
-        alert_counts = await _alert_count_provider(
-            session, [r.id for r in resources] + site_ids
-        )
+        alert_counts = await _alert_count_provider(session, [r.id for r in resources] + site_ids)
 
     out: list[dict[str, Any]] = []
     for site in sites:
@@ -98,28 +98,30 @@ async def summarize_sites(session: AsyncSession, sites: list[SiteModel]) -> list
             and r.state_of_health < SOH_WARN
             for r in members
         )
-        out.append({
-            "id": site.id,
-            "name": site.name,
-            "lat": site.lat,
-            "lon": site.lon,
-            "region": site.region,
-            "address": site.address,
-            "timezone": site.timezone or "UTC",
-            "owner_id": site.owner_id,
-            "resource_ids": [r.id for r in members],
-            "total_resources": len(members),
-            "online_count": online,
-            "current_power": sum(r.current_power or 0.0 for r in members),
-            "rated_power": sum(r.rated_power or 0.0 for r in members),
-            "capacity_kwh": cap_total,
-            "state_of_charge": (soc_weighted / soc_weight) if soc_weight else None,
-            "active_alerts": active,
-            "health": score_health(
-                active_alerts=active, soh_low=soh_low, offline=len(members) - online
-            ),
-            "metadata": json.loads(site.metadata_json) if site.metadata_json else {},
-            "created_at": site.created_at,
-            "updated_at": site.updated_at,
-        })
+        out.append(
+            {
+                "id": site.id,
+                "name": site.name,
+                "lat": site.lat,
+                "lon": site.lon,
+                "region": site.region,
+                "address": site.address,
+                "timezone": site.timezone or "UTC",
+                "owner_id": site.owner_id,
+                "resource_ids": [r.id for r in members],
+                "total_resources": len(members),
+                "online_count": online,
+                "current_power": sum(r.current_power or 0.0 for r in members),
+                "rated_power": sum(r.rated_power or 0.0 for r in members),
+                "capacity_kwh": cap_total,
+                "state_of_charge": (soc_weighted / soc_weight) if soc_weight else None,
+                "active_alerts": active,
+                "health": score_health(
+                    active_alerts=active, soh_low=soh_low, offline=len(members) - online
+                ),
+                "metadata": json.loads(site.metadata_json) if site.metadata_json else {},
+                "created_at": site.created_at,
+                "updated_at": site.updated_at,
+            }
+        )
     return out

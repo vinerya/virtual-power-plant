@@ -4,6 +4,7 @@ A :class:`PriceFeed` is an async source of per-interval energy prices.
 Adapters implement :meth:`fetch(start, end)` returning a list of
 :class:`PricePoint`. All timestamps are tz-aware UTC.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -46,8 +47,6 @@ class PriceFeed(ABC):
     timezone: str = "UTC"
 
     @abstractmethod
-    async def fetch(
-        self, start: datetime, end: datetime, **kwargs: Any
-    ) -> list[PricePoint]:
+    async def fetch(self, start: datetime, end: datetime, **kwargs: Any) -> list[PricePoint]:
         """Return prices in the half-open interval ``[start, end)``."""
         raise NotImplementedError

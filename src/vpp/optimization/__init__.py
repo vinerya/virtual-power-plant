@@ -13,38 +13,27 @@ while providing clean interfaces for experts to integrate advanced models.
 """
 
 from .base import (
-    OptimizationStatus,
-    OptimizationResult,
-    OptimizationProblem,
-    OptimizationPlugin,
-    RuleBasedOptimizer,
     OptimizationEngine,
-    OptimizationFactory
+    OptimizationFactory,
+    OptimizationPlugin,
+    OptimizationProblem,
+    OptimizationResult,
+    OptimizationStatus,
+    RuleBasedOptimizer,
 )
-
-from .stochastic import (
-    Scenario,
-    ScenarioSet,
-    ScenarioGenerator,
-    SimpleStochasticRules,
-    CVaRStochasticPlugin,
-    StochasticOptimizationManager
+from .distributed import (
+    ADMMDistributedPlugin,
+    CoordinationSignal,
+    DistributedOptimizationManager,
+    SimpleConsensusRules,
+    SiteState,
 )
-
 from .realtime import (
-    RealTimeState,
-    RealTimeControlSignal,
     FastDispatchRules,
     ModelPredictiveControlPlugin,
-    RealTimeOptimizationManager
-)
-
-from .distributed import (
-    SiteState,
-    CoordinationSignal,
-    SimpleConsensusRules,
-    ADMMDistributedPlugin,
-    DistributedOptimizationManager
+    RealTimeControlSignal,
+    RealTimeOptimizationManager,
+    RealTimeState,
 )
 
 # M1: deterministic battery dispatch via Pyomo + HiGHS.
@@ -57,6 +46,14 @@ from .solvers import (
     SimpleBatteryDispatchRules,
     StochasticCVaRPlugin,
 )
+from .stochastic import (
+    CVaRStochasticPlugin,
+    Scenario,
+    ScenarioGenerator,
+    ScenarioSet,
+    SimpleStochasticRules,
+    StochasticOptimizationManager,
+)
 
 # Package metadata (the version lives in vpp.__version__ only)
 __author__ = "VPP Development Team"
@@ -65,35 +62,31 @@ __author__ = "VPP Development Team"
 __all__ = [
     # Base framework
     "OptimizationStatus",
-    "OptimizationResult", 
+    "OptimizationResult",
     "OptimizationProblem",
     "OptimizationPlugin",
     "RuleBasedOptimizer",
     "OptimizationEngine",
     "OptimizationFactory",
-    
     # Stochastic optimization
     "Scenario",
-    "ScenarioSet", 
+    "ScenarioSet",
     "ScenarioGenerator",
     "SimpleStochasticRules",
     "CVaRStochasticPlugin",
     "StochasticOptimizationManager",
-    
     # Real-time optimization
     "RealTimeState",
     "RealTimeControlSignal",
     "FastDispatchRules",
-    "ModelPredictiveControlPlugin", 
+    "ModelPredictiveControlPlugin",
     "RealTimeOptimizationManager",
-    
     # Distributed optimization
     "SiteState",
     "CoordinationSignal",
     "SimpleConsensusRules",
     "ADMMDistributedPlugin",
     "DistributedOptimizationManager",
-
     # Deterministic dispatch (M1)
     "PyomoPlugin",
     "SimpleBatteryDispatchRules",
@@ -106,13 +99,13 @@ __all__ = [
 def create_optimization_engine(engine_type: str = "standard") -> OptimizationEngine:
     """
     Create a pre-configured optimization engine.
-    
+
     Args:
         engine_type: Type of engine to create ("standard", "research", "production")
-        
+
     Returns:
         Configured OptimizationEngine instance
-        
+
     Example:
         >>> engine = create_optimization_engine("standard")
         >>> engine.register_plugin(CVaRStochasticPlugin())
@@ -122,18 +115,20 @@ def create_optimization_engine(engine_type: str = "standard") -> OptimizationEng
     return OptimizationFactory.create_engine(engine_type)
 
 
-def create_stochastic_problem(base_data: dict, num_scenarios: int = 10, uncertainty_config: dict = None) -> OptimizationProblem:
+def create_stochastic_problem(
+    base_data: dict, num_scenarios: int = 10, uncertainty_config: dict = None
+) -> OptimizationProblem:
     """
     Create a stochastic optimization problem with scenario generation.
-    
+
     Args:
         base_data: Base forecast data (prices, load, renewable generation)
         num_scenarios: Number of scenarios to generate
         uncertainty_config: Configuration for uncertainty parameters
-        
+
     Returns:
         OptimizationProblem configured for stochastic optimization
-        
+
     Example:
         >>> base_data = {
         ...     "base_prices": [0.1, 0.15, 0.12, 0.08],
@@ -149,14 +144,14 @@ def create_stochastic_problem(base_data: dict, num_scenarios: int = 10, uncertai
 def create_realtime_problem(current_state: dict, forecasts: dict = None) -> OptimizationProblem:
     """
     Create a real-time optimization problem for fast grid services.
-    
+
     Args:
         current_state: Current system state (frequency, voltage, SOC, etc.)
         forecasts: Short-term forecasts for MPC (optional)
-        
+
     Returns:
         OptimizationProblem configured for real-time optimization
-        
+
     Example:
         >>> current_state = {
         ...     "grid_frequency": 59.95,
@@ -170,17 +165,19 @@ def create_realtime_problem(current_state: dict, forecasts: dict = None) -> Opti
     return manager.create_realtime_problem(current_state, forecasts)
 
 
-def create_distributed_problem(sites_data: list, coordination_targets: dict = None) -> OptimizationProblem:
+def create_distributed_problem(
+    sites_data: list, coordination_targets: dict = None
+) -> OptimizationProblem:
     """
     Create a distributed optimization problem for multi-site coordination.
-    
+
     Args:
         sites_data: List of site information dictionaries
         coordination_targets: Target power and reserve allocations
-        
+
     Returns:
         OptimizationProblem configured for distributed optimization
-        
+
     Example:
         >>> sites_data = [
         ...     {"site_id": "site1", "total_capacity": 500, "marginal_cost": 0.08},
@@ -194,23 +191,25 @@ def create_distributed_problem(sites_data: list, coordination_targets: dict = No
 
 
 # Convenience functions for common use cases
-def solve_with_fallback(problem: OptimizationProblem, 
-                       plugin: OptimizationPlugin = None,
-                       timeout_ms: int = 5000,
-                       force_fallback: bool = False) -> OptimizationResult:
+def solve_with_fallback(
+    problem: OptimizationProblem,
+    plugin: OptimizationPlugin = None,
+    timeout_ms: int = 5000,
+    force_fallback: bool = False,
+) -> OptimizationResult:
     """
     Solve optimization problem with automatic fallback to rules.
-    
+
     Args:
         problem: Optimization problem to solve
         plugin: Expert plugin to try first (optional)
         timeout_ms: Maximum solve time in milliseconds
         force_fallback: Skip the expert plugin and use the rule-based
             fallback registered for the problem type.
-        
+
     Returns:
         OptimizationResult with solution or fallback result
-        
+
     Example:
         >>> problem = create_stochastic_problem(base_data)
         >>> plugin = CVaRStochasticPlugin(risk_level=0.05)
@@ -264,13 +263,13 @@ def solve_with_fallback(problem: OptimizationProblem,
 def validate_optimization_config(config: dict) -> list:
     """
     Validate optimization configuration parameters.
-    
+
     Args:
         config: Configuration dictionary to validate
-        
+
     Returns:
         List of validation error messages (empty if valid)
-        
+
     Example:
         >>> config = {"strategy": "stochastic", "num_scenarios": 10}
         >>> errors = validate_optimization_config(config)
@@ -278,21 +277,21 @@ def validate_optimization_config(config: dict) -> list:
         ...     print("Configuration is valid")
     """
     errors = []
-    
+
     # Validate strategy
     valid_strategies = ["stochastic", "realtime", "distributed", "deterministic"]
     strategy = config.get("strategy")
     if strategy and strategy not in valid_strategies:
         errors.append(f"Invalid strategy '{strategy}'. Must be one of {valid_strategies}")
-    
+
     # Validate numeric parameters
     numeric_params = {
         "num_scenarios": (1, 1000),
         "timeout_ms": (1, 300000),
         "time_horizon": (0.1, 168),  # 6 minutes to 1 week
-        "time_step": (0.01, 24)      # 36 seconds to 1 day
+        "time_step": (0.01, 24),  # 36 seconds to 1 day
     }
-    
+
     for param, (min_val, max_val) in numeric_params.items():
         value = config.get(param)
         if value is not None:
@@ -300,13 +299,13 @@ def validate_optimization_config(config: dict) -> list:
                 errors.append(f"Parameter '{param}' must be numeric")
             elif not (min_val <= value <= max_val):
                 errors.append(f"Parameter '{param}' must be between {min_val} and {max_val}")
-    
+
     # Validate plugin configurations
     plugins_config = config.get("plugins", {})
     for plugin_name, plugin_config in plugins_config.items():
         if not isinstance(plugin_config, dict):
             errors.append(f"Plugin '{plugin_name}' configuration must be a dictionary")
-    
+
     return errors
 
 
@@ -315,17 +314,17 @@ _default_config = {
     "default_timeout_ms": 5000,
     "enable_fallback": True,
     "validate_solutions": True,
-    "log_performance": True
+    "log_performance": True,
 }
 
 
 def configure_optimization(config: dict) -> None:
     """
     Configure global optimization settings.
-    
+
     Args:
         config: Configuration dictionary
-        
+
     Example:
         >>> configure_optimization({
         ...     "default_timeout_ms": 10000,
@@ -340,7 +339,7 @@ def configure_optimization(config: dict) -> None:
 def get_optimization_config() -> dict:
     """
     Get current global optimization configuration.
-    
+
     Returns:
         Current configuration dictionary
     """
@@ -348,42 +347,38 @@ def get_optimization_config() -> dict:
 
 
 # Performance monitoring utilities
-def benchmark_optimization_methods(problem: OptimizationProblem, 
-                                 methods: list = None,
-                                 num_runs: int = 10) -> dict:
+def benchmark_optimization_methods(
+    problem: OptimizationProblem, methods: list = None, num_runs: int = 10
+) -> dict:
     """
     Benchmark different optimization methods on a problem.
-    
+
     Args:
         problem: Problem to benchmark
         methods: List of method names to test (default: all available)
         num_runs: Number of runs per method for averaging
-        
+
     Returns:
         Dictionary with performance statistics for each method
-        
+
     Example:
         >>> problem = create_stochastic_problem(base_data)
         >>> stats = benchmark_optimization_methods(problem, num_runs=5)
         >>> print(f"Average solve time: {stats['cvar']['avg_solve_time']:.3f}s")
     """
     import time
-    
+
     if methods is None:
         methods = ["rules", "cvar", "mpc"]
-    
+
     results = {}
-    
+
     for method in methods:
-        method_results = {
-            "solve_times": [],
-            "objective_values": [],
-            "success_count": 0
-        }
-        
+        method_results = {"solve_times": [], "objective_values": [], "success_count": 0}
+
         for run in range(num_runs):
             engine = create_optimization_engine("standard")
-            
+
             # Configure method-specific plugin
             if method == "cvar":
                 plugin = CVaRStochasticPlugin()
@@ -392,33 +387,33 @@ def benchmark_optimization_methods(problem: OptimizationProblem,
                 plugin = ModelPredictiveControlPlugin()
                 engine.register_plugin(plugin)
             # "rules" uses fallback only
-            
+
             start_time = time.time()
             result = engine.solve(problem, force_fallback=(method == "rules"))
             solve_time = time.time() - start_time
-            
+
             method_results["solve_times"].append(solve_time)
             method_results["objective_values"].append(result.objective_value)
-            
+
             if result.status in [OptimizationStatus.SUCCESS, OptimizationStatus.FALLBACK_USED]:
                 method_results["success_count"] += 1
-        
+
         # Calculate statistics
         results[method] = {
             "avg_solve_time": sum(method_results["solve_times"]) / num_runs,
             "min_solve_time": min(method_results["solve_times"]),
             "max_solve_time": max(method_results["solve_times"]),
             "avg_objective": sum(method_results["objective_values"]) / num_runs,
-            "success_rate": method_results["success_count"] / num_runs
+            "success_rate": method_results["success_count"] / num_runs,
         }
-    
+
     return results
 
 
 # Documentation and examples
 def print_optimization_examples():
     """Print usage examples for the optimization framework."""
-    
+
     examples = """
     VPP Optimization Framework - Usage Examples
     ==========================================
@@ -531,7 +526,7 @@ def print_optimization_examples():
         engine.register_plugin(MyCustomPlugin())
         result = engine.solve(problem)
     """
-    
+
     print(examples)
 
 

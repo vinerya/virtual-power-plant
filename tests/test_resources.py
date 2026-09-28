@@ -83,8 +83,14 @@ class TestWindTurbine:
 
     def test_invalid_speeds(self):
         with pytest.raises(ResourceError):
-            WindTurbine(rated_power=100, rotor_diameter=20, hub_height=30,
-                        cut_in_speed=15, cut_out_speed=10, rated_speed=12)
+            WindTurbine(
+                rated_power=100,
+                rotor_diameter=20,
+                hub_height=30,
+                cut_in_speed=15,
+                cut_out_speed=10,
+                rated_speed=12,
+            )
 
     def test_below_cut_in(self, wind_turbine):
         wind_turbine.update_wind(wind_speed=1.0)

@@ -30,8 +30,8 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Sequence
 
 # Boltzmann constant in eV/K (Arrhenius with activation energy in eV)
 _K_B_EV_PER_K = 8.617333262e-5
@@ -204,9 +204,7 @@ class CalendarDegradation(DegradationModel):
         elapsed_hours = (len(soc_trace) - 1) * dt_hours
         elapsed_years = elapsed_hours / (24.0 * 365.25)
 
-        loss_per_year_ref = (
-            1.0 - self.eol_capacity_fraction
-        ) / self.calendar_life_years_at_25c
+        loss_per_year_ref = (1.0 - self.eol_capacity_fraction) / self.calendar_life_years_at_25c
         accel = self._arrhenius(temperature_c)
         stress = 1.0 + self.soc_stress_coefficient * (mean_soc - 0.5)
         # Clamp stress to a sensible non-negative range.
@@ -219,7 +217,7 @@ class CalendarDegradation(DegradationModel):
 # ---------------------------------------------------------------------------
 
 
-def _interpolate_cycle_life(curve: Dict[float, float], dod: float) -> float:
+def _interpolate_cycle_life(curve: dict[float, float], dod: float) -> float:
     """Piecewise-linear interpolation of cycles-to-EOL vs. DoD.
 
     The curve is supplied as ``{depth_of_discharge: cycles_to_eol}``.
@@ -269,7 +267,7 @@ class RainflowDegradation(DegradationModel):
         installed. Install via ``pip install virtual-power-plant[degradation]``.
     """
 
-    cycle_life_curve: Dict[float, float]
+    cycle_life_curve: dict[float, float]
     eol_capacity_fraction: float = 0.8
     _rainflow_module: object = field(default=None, init=False, repr=False)
 
@@ -328,7 +326,7 @@ class RainflowDegradation(DegradationModel):
 #   8k at 50 % DoD, 3k at 80 % DoD, 1.5k at 100 % DoD.
 # LFP is well-known for being more robust at high SOC than NMC, so we use
 # a smaller soc_stress_coefficient.
-LFP_PRESET: Dict[str, Dict[str, float]] = {
+LFP_PRESET: dict[str, dict[str, float]] = {
     "throughput": {
         "cycles_to_eol": 6000.0,
         "eol_capacity_fraction": 0.8,
@@ -358,7 +356,7 @@ LFP_PRESET: Dict[str, Dict[str, float]] = {
 #   ~8-10 year calendar life at 25 degC / 50 % SOC.
 # - Schmalstieg 2014 reports stronger SOC-stress sensitivity than LFP and
 #   activation energy ~0.5 eV.
-NMC_PRESET: Dict[str, Dict[str, float]] = {
+NMC_PRESET: dict[str, dict[str, float]] = {
     "throughput": {
         "cycles_to_eol": 3000.0,
         "eol_capacity_fraction": 0.8,

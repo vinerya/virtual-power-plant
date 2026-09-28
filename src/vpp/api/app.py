@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from vpp import __version__
-from vpp.settings import get_settings
-from vpp.db.engine import init_db, close_db, get_session_factory
-from vpp.events import get_event_bus
-from vpp.api.websocket import manager as websocket_manager, subscribe_event_bus_to_websocket
 from vpp.api.observability import install_observability, start_observability, stop_observability
+from vpp.api.websocket import manager as websocket_manager
+from vpp.api.websocket import subscribe_event_bus_to_websocket
+from vpp.db.engine import close_db, get_session_factory, init_db
+from vpp.events import get_event_bus
+from vpp.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,9 @@ async def _degradation_periodic_loop(interval_minutes: int) -> None:
                                 ResourceModel.resource_type == "battery"
                             )
                         )
-                    ).scalars().all()
+                    )
+                    .scalars()
+                    .all()
                 )
             for bid in rows:
                 try:
@@ -174,9 +176,9 @@ async def _modbus_device_loop(
     constructs with name="modbus", which would collide across multiple
     devices in the same registry), and reconnect if the adapter ever drops.
     """
+    from vpp.api.routes.protocols import get_registry
     from vpp.protocols.modbus import ModbusAdapter
     from vpp.protocols.modbus_ingestion import DEFAULT_POWER_REGISTER, ModbusResourcePersister
-    from vpp.api.routes.protocols import get_registry
 
     adapter_config = {k: v for k, v in config.items() if k != "power_register"}
     power_register = config.get("power_register", DEFAULT_POWER_REGISTER)
@@ -276,19 +278,17 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     event_bridge_sub_id = subscribe_event_bus_to_websocket(get_event_bus(), websocket_manager)
     observability = await start_observability(settings, get_event_bus())
 
-    task: Optional[asyncio.Task] = None
+    task: asyncio.Task | None = None
     if settings.degradation_updater_enabled:
         task = asyncio.create_task(
-            _degradation_periodic_loop(
-                settings.degradation_updater_interval_minutes
-            ),
+            _degradation_periodic_loop(settings.degradation_updater_interval_minutes),
             name="vpp-degradation-updater",
         )
         app.state.degradation_task = task
     else:
         app.state.degradation_task = None
 
-    mqtt_task: Optional[asyncio.Task] = None
+    mqtt_task: asyncio.Task | None = None
     if settings.mqtt_ingestion_enabled:
         mqtt_task = asyncio.create_task(
             _mqtt_ingestion_loop(settings),
@@ -298,7 +298,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.mqtt_ingestion_task = None
 
-    modbus_task: Optional[asyncio.Task] = None
+    modbus_task: asyncio.Task | None = None
     if settings.modbus_ingestion_enabled:
         modbus_task = asyncio.create_task(
             _modbus_ingestion_loop(settings),
@@ -369,8 +369,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app(
     *,
-    rate_limit_enabled: Optional[bool] = None,
-    rate_limit_requests_per_minute: Optional[int] = None,
+    rate_limit_enabled: bool | None = None,
+    rate_limit_requests_per_minute: int | None = None,
 ) -> FastAPI:
     """Build and return the configured FastAPI application.
 
@@ -422,8 +422,17 @@ def create_app(
 
     # -- Routes -------------------------------------------------------------
     from .routes import (
-        health, resources, optimization, trading, auth, config, protocols, v2g,
-        tariffs, degradation, ocpp,
+        auth,
+        config,
+        degradation,
+        health,
+        ocpp,
+        optimization,
+        protocols,
+        resources,
+        tariffs,
+        trading,
+        v2g,
     )
 
     app.include_router(health.router)
@@ -447,7 +456,8 @@ def create_app(
     app.include_router(customers.router)
 
     # -- WebSocket ----------------------------------------------------------
-    from .websocket import router as websocket_router, websocket_endpoint
+    from .websocket import router as websocket_router
+    from .websocket import websocket_endpoint
 
     app.include_router(websocket_router)  # POST /api/v1/ws/token
     app.add_api_websocket_route("/api/v1/ws", websocket_endpoint)

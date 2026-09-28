@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 # OpenADR value objects
 # ---------------------------------------------------------------------------
 
+
 class DREventStatus(str, Enum):
     PENDING = "pending"
     ACTIVE = "active"
@@ -65,10 +66,10 @@ class DREventStatus(str, Enum):
 
 
 class DRSignalType(str, Enum):
-    SIMPLE = "SIMPLE"               # 0/1/2/3 levels
+    SIMPLE = "SIMPLE"  # 0/1/2/3 levels
     ELECTRICITY_PRICE = "ELECTRICITY_PRICE"
     LOAD_DISPATCH = "LOAD_DISPATCH"  # absolute kW target
-    LOAD_CONTROL = "LOAD_CONTROL"    # delta kW
+    LOAD_CONTROL = "LOAD_CONTROL"  # delta kW
     LOAD_PERCENTAGE = "LOAD_PERCENTAGE"
 
 
@@ -284,7 +285,9 @@ class OpenADRAdapter(ProtocolAdapter):
             self._poll_task = asyncio.create_task(self._ven_poll_loop())
         logger.info(
             "OpenADR VEN registered with VTN %s (venID=%s, poll every %.0fs)",
-            self.vtn_id, self.ven_id, self.poll_interval_s,
+            self.vtn_id,
+            self.ven_id,
+            self.poll_interval_s,
         )
 
     async def disconnect(self) -> None:
@@ -306,7 +309,9 @@ class OpenADRAdapter(ProtocolAdapter):
         if message.topic.startswith("openadr/event"):
             event = DREvent(**message.payload)
             self._events[event.event_id] = event
-            logger.info("Published DR event %s (signal=%s)", event.event_id, event.signal_type.value)
+            logger.info(
+                "Published DR event %s (signal=%s)", event.event_id, event.signal_type.value
+            )
         elif message.topic.startswith("openadr/response"):
             response = DRResponse(**message.payload)
             self._responses[response.event_id] = response
@@ -433,9 +438,7 @@ class OpenADRAdapter(ProtocolAdapter):
         self._metrics.messages_sent += 1
         self._metrics.last_message_at = time.time()
         if response.status_code >= 400:
-            raise ProtocolTransportError(
-                f"VTN {service} returned HTTP {response.status_code}"
-            )
+            raise ProtocolTransportError(f"VTN {service} returned HTTP {response.status_code}")
         self._metrics.messages_received += 1
         return parse_payload(response.content)
 
@@ -554,9 +557,7 @@ class OpenADRAdapter(ProtocolAdapter):
     async def _send_created_event(self, responses: list[Any]) -> None:
         from vpp.protocols import openadr_xml as ox
 
-        reply = await self._post(
-            "EiEvent", ox.build_created_event(str(self.ven_id), responses)
-        )
+        reply = await self._post("EiEvent", ox.build_created_event(str(self.ven_id), responses))
         ox.check_ei_response(reply)
 
     async def send_opt(self, event_id: str, opt_type: str) -> None:
@@ -569,14 +570,16 @@ class OpenADRAdapter(ProtocolAdapter):
         if event is None or event.metadata.get("source") != "vtn":
             raise ValueError(f"Unknown VTN event {event_id}")
         self._responses[event_id] = DRResponse(event_id=event_id, opt_type=opt_type)
-        await self._send_created_event([
-            ox.EventOptResponse(
-                event_id=event_id,
-                modification_number=int(event.metadata.get("modification_number", 0)),
-                opt_type=opt_type,
-                request_id=str(event.metadata.get("request_id", "")),
-            )
-        ])
+        await self._send_created_event(
+            [
+                ox.EventOptResponse(
+                    event_id=event_id,
+                    modification_number=int(event.metadata.get("modification_number", 0)),
+                    opt_type=opt_type,
+                    request_id=str(event.metadata.get("request_id", "")),
+                )
+            ]
+        )
 
     def _advance_event_states(self) -> None:
         now = time.time()

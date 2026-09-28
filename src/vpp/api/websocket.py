@@ -28,7 +28,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from jose import jwt
@@ -50,7 +50,7 @@ class ConnectionManager:
         self._connections: dict[WebSocket, set[str]] = {}
         self._lock = asyncio.Lock()
 
-    async def connect(self, ws: WebSocket, subprotocol: Optional[str] = None) -> None:
+    async def connect(self, ws: WebSocket, subprotocol: str | None = None) -> None:
         if subprotocol is not None:
             await ws.accept(subprotocol=subprotocol)
         else:
@@ -74,14 +74,17 @@ class ConnectionManager:
 
     async def broadcast(self, channel: str, data: dict[str, Any]) -> None:
         """Send a message to all subscribers of *channel*."""
-        message = json.dumps({
-            "channel": channel,
-            "data": data,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        message = json.dumps(
+            {
+                "channel": channel,
+                "data": data,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         async with self._lock:
             targets = [
-                ws for ws, channels in self._connections.items()
+                ws
+                for ws, channels in self._connections.items()
                 if channel in channels or "*" in channels
             ]
         for ws in targets:
@@ -157,12 +160,10 @@ WS_TOKEN_TYPE = "ws"
 _BEARER_SUBPROTOCOL = "bearer"
 
 
-def _extract_token(ws: WebSocket) -> tuple[Optional[str], Optional[str]]:
+def _extract_token(ws: WebSocket) -> tuple[str | None, str | None]:
     """Return ``(token, subprotocol_to_select)`` from the handshake."""
     protocols = [
-        p.strip()
-        for p in ws.headers.get("sec-websocket-protocol", "").split(",")
-        if p.strip()
+        p.strip() for p in ws.headers.get("sec-websocket-protocol", "").split(",") if p.strip()
     ]
     selected = _BEARER_SUBPROTOCOL if _BEARER_SUBPROTOCOL in protocols else None
 
@@ -181,7 +182,7 @@ def _extract_token(ws: WebSocket) -> tuple[Optional[str], Optional[str]]:
     return None, selected
 
 
-async def _load_active_user(user_id: str) -> Optional[UserModel]:
+async def _load_active_user(user_id: str) -> UserModel | None:
     """Look up an active user by id. Returns None if missing/inactive/no DB."""
     from vpp.db.engine import get_session_factory
     from vpp.db.repositories import UserRepository
@@ -198,7 +199,7 @@ async def _load_active_user(user_id: str) -> Optional[UserModel]:
     return user
 
 
-async def authenticate_websocket(token: str) -> Optional[TokenPayload]:
+async def authenticate_websocket(token: str) -> TokenPayload | None:
     """Validate a JWT for a WebSocket handshake; None if it is not acceptable."""
     try:
         payload = decode_access_token(token)
@@ -254,7 +255,7 @@ async def issue_ws_token(user: UserModel = Depends(get_current_user)) -> WsToken
     return WsTokenResponse(token=token, expires_in=ttl, channels=sorted(VALID_CHANNELS))
 
 
-def _parse_channels(raw: Optional[str]) -> tuple[list[str], list[str]]:
+def _parse_channels(raw: str | None) -> tuple[list[str], list[str]]:
     """Split a ``channels`` query value into (valid, invalid) lists."""
     if not raw:
         return [], []
@@ -325,9 +326,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             channel = msg.get("channel", "")
 
             if action == "ping":
-                await ws.send_text(
-                    json.dumps({"pong": datetime.now(timezone.utc).isoformat()})
-                )
+                await ws.send_text(json.dumps({"pong": datetime.now(timezone.utc).isoformat()}))
             elif action == "subscribe" and channel in VALID_CHANNELS:
                 await manager.subscribe(ws, channel)
                 await ws.send_text(json.dumps({"ack": f"subscribed:{channel}"}))

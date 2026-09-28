@@ -19,16 +19,14 @@ Call :meth:`disable_for_testing` to make all subsequent ``get`` calls
 return ``None`` and ``set`` a no-op — useful in unit tests that should
 never see stale data.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
-import os
 import time
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from .base import PricePoint
 
@@ -47,10 +45,10 @@ class FeedCache:
     def __init__(
         self,
         ttl_seconds: int = 300,
-        persist_dir: Optional[str | Path] = None,
+        persist_dir: str | Path | None = None,
     ) -> None:
         self.ttl_seconds = int(ttl_seconds)
-        self.persist_dir: Optional[Path] = Path(persist_dir) if persist_dir else None
+        self.persist_dir: Path | None = Path(persist_dir) if persist_dir else None
         if self.persist_dir is not None:
             self.persist_dir.mkdir(parents=True, exist_ok=True)
         # key -> (expires_at, points, content_hash)
@@ -82,9 +80,7 @@ class FeedCache:
     def enable(self) -> None:
         self._disabled = False
 
-    def get(
-        self, feed_name: str, start: datetime, end: datetime
-    ) -> Optional[list[PricePoint]]:
+    def get(self, feed_name: str, start: datetime, end: datetime) -> list[PricePoint] | None:
         """Return cached points or ``None`` if absent / expired."""
         if self._disabled:
             return None
@@ -109,7 +105,7 @@ class FeedCache:
         start: datetime,
         end: datetime,
         points: list[PricePoint],
-        ttl_seconds: Optional[int] = None,
+        ttl_seconds: int | None = None,
     ) -> None:
         if self._disabled:
             return
@@ -131,10 +127,10 @@ class FeedCache:
 
     # ----- persistence helpers ----------------------------------------
 
-    def _persist_path(self, key: str) -> Optional[Path]:
+    def _persist_path(self, key: str) -> Path | None:
         if self.persist_dir is None:
             return None
-        safe = hashlib.sha1(key.encode()).hexdigest()  # noqa: S324  (cache key only)
+        safe = hashlib.sha1(key.encode()).hexdigest()
         return self.persist_dir / f"{safe}.json"
 
     def _persist(self, key: str, expires_at: float, points: list[PricePoint]) -> None:
@@ -158,9 +154,7 @@ class FeedCache:
         except OSError:
             pass
 
-    def _load_persisted(
-        self, key: str
-    ) -> Optional[tuple[float, list[PricePoint], str]]:
+    def _load_persisted(self, key: str) -> tuple[float, list[PricePoint], str] | None:
         path = self._persist_path(key)
         if path is None or not path.exists():
             return None

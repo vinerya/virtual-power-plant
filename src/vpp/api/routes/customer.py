@@ -149,10 +149,16 @@ async def list_programs(
 ):
     """Active programs, flagged with whether the caller is enrolled."""
     programs = (
-        await session.execute(
-            select(DRProgramModel).where(DRProgramModel.active.is_(True)).order_by(DRProgramModel.name)
+        (
+            await session.execute(
+                select(DRProgramModel)
+                .where(DRProgramModel.active.is_(True))
+                .order_by(DRProgramModel.name)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     enrolled = set(
         (
             await session.execute(
@@ -160,7 +166,9 @@ async def list_programs(
                     ProgramEnrollmentModel.user_id == user.id
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     return [
         {
@@ -176,7 +184,9 @@ async def list_programs(
     ]
 
 
-@router.post("/enrollments", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/enrollments", response_model=EnrollmentResponse, status_code=status.HTTP_201_CREATED
+)
 async def enroll(
     body: EnrollmentRequest,
     session: AsyncSession = Depends(get_db),
@@ -190,17 +200,23 @@ async def enroll(
     Re-enrolling is idempotent.
     """
     if not body.acknowledged:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Program terms must be acknowledged")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Program terms must be acknowledged"
+        )
     wanted = list(dict.fromkeys(body.program_ids))
     programs = {
         p.id: p
         for p in (
             await session.execute(select(DRProgramModel).where(DRProgramModel.id.in_(wanted)))
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     }
     bad = [pid for pid in wanted if pid not in programs or not programs[pid].active]
     if bad:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"unknown or inactive programs: {bad}")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"unknown or inactive programs: {bad}"
+        )
     devices = await owned_resources(session, user.id)
     if not devices:
         raise HTTPException(
@@ -214,12 +230,16 @@ async def enroll(
                     ProgramEnrollmentModel.user_id == user.id
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     now = datetime.now(timezone.utc)
     for pid in wanted:
         if pid not in existing:
-            session.add(ProgramEnrollmentModel(user_id=user.id, program_id=pid, acknowledged_at=now))
+            session.add(
+                ProgramEnrollmentModel(user_id=user.id, program_id=pid, acknowledged_at=now)
+            )
     await session.flush()
     return {
         "ok": True,

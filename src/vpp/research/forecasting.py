@@ -31,7 +31,7 @@ class PersistenceForecaster(ResearchModel):
         self._last_values: np.ndarray | None = None
 
     def train(self, X: np.ndarray, y: np.ndarray, **kwargs: Any) -> dict[str, Any]:
-        self._last_values = y[-len(X[0]):] if len(y.shape) == 1 else y[-1]
+        self._last_values = y[-len(X[0]) :] if len(y.shape) == 1 else y[-1]
         self._trained = True
         return {"method": "persistence"}
 
@@ -131,15 +131,13 @@ class ExponentialSmoothingForecaster(ResearchModel):
 
     def predict(self, X: np.ndarray, **kwargs: Any) -> np.ndarray:
         n = X.shape[0]
-        forecasts = np.array([
-            self._level + (i + 1) * self._trend for i in range(n)
-        ])
+        forecasts = np.array([self._level + (i + 1) * self._trend for i in range(n)])
         return forecasts
 
     def evaluate(self, X: np.ndarray, y: np.ndarray, **kwargs: Any) -> dict[str, float]:
         pred = self.predict(X)
-        mae = float(np.mean(np.abs(pred[:len(y)] - y)))
-        rmse = float(np.sqrt(np.mean((pred[:len(y)] - y) ** 2)))
+        mae = float(np.mean(np.abs(pred[: len(y)] - y)))
+        rmse = float(np.sqrt(np.mean((pred[: len(y)] - y) ** 2)))
         return {"mae": mae, "rmse": rmse}
 
 

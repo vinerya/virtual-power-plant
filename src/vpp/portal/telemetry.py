@@ -40,8 +40,23 @@ MAX_SPAN = timedelta(days=366)
 #: Bucket sizes are snapped up to one of these so bucket edges line up with
 #: wall-clock boundaries (and consecutive polls return stable buckets).
 _NICE_BUCKETS_S = (
-    1, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600,
-    7200, 10800, 21600, 43200, 86400,
+    1,
+    5,
+    10,
+    15,
+    30,
+    60,
+    120,
+    300,
+    600,
+    900,
+    1800,
+    3600,
+    7200,
+    10800,
+    21600,
+    43200,
+    86400,
 )
 
 
@@ -151,7 +166,11 @@ async def query_history(
         rid_col=BatteryStateModel.resource_id,
         power_col=BatteryStateModel.power,
         soc_col=_normalised_soc(BatteryStateModel.soc),
-        resource_id=resource_id, start=start, end=end, bucket_s=bucket_s, acc=acc,
+        resource_id=resource_id,
+        start=start,
+        end=end,
+        bucket_s=bucket_s,
+        acc=acc,
     )
     await _bucketed(
         session,
@@ -159,7 +178,11 @@ async def query_history(
         rid_col=ResourceTelemetryModel.resource_id,
         power_col=ResourceTelemetryModel.power_kw,
         soc_col=ResourceTelemetryModel.state_of_charge,
-        resource_id=resource_id, start=start, end=end, bucket_s=bucket_s, acc=acc,
+        resource_id=resource_id,
+        start=start,
+        end=end,
+        bucket_s=bucket_s,
+        acc=acc,
     )
     points: list[dict[str, Any]] = []
     for b in sorted(acc):

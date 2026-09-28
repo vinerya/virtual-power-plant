@@ -64,7 +64,7 @@ from vpp.schemas.optimization import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-router =APIRouter(prefix="/api/v1/optimization", tags=["Optimization"])
+router = APIRouter(prefix="/api/v1/optimization", tags=["Optimization"])
 # Dispatch-history aliases consumed by the operator UI (web/lib/api/*.ts).
 dispatches_router = APIRouter(prefix="/api/v1/dispatches", tags=["Optimization"])
 
@@ -106,8 +106,12 @@ async def _run_tracked(
     except Exception as exc:
         solve_ms = (time.perf_counter() - t0) * 1000
         await finish_run(
-            session, run.id, problem_type=problem_type, status="failed",
-            solve_time_ms=solve_ms, metadata={"error": f"{type(exc).__name__}: {exc}"},
+            session,
+            run.id,
+            problem_type=problem_type,
+            status="failed",
+            solve_time_ms=solve_ms,
+            metadata={"error": f"{type(exc).__name__}: {exc}"},
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -136,7 +140,9 @@ async def dispatch(
     """
     assets, missing = await load_fleet_assets(session, body.resource_ids)
     if missing:
-        raise HTTPException(status_code=404, detail={"message": "unknown resource ids", "missing": missing})
+        raise HTTPException(
+            status_code=404, detail={"message": "unknown resource ids", "missing": missing}
+        )
 
     dt_hours = body.interval_minutes / 60.0
     inputs = {
@@ -150,7 +156,9 @@ async def dispatch(
         "resources": [a.summary() for a in assets],
     }
     run_id, result, solve_ms = await _run_tracked(
-        session, "dispatch", inputs,
+        session,
+        "dispatch",
+        inputs,
         lambda: allocate_power(
             assets,
             body.target_power_kw,
@@ -167,19 +175,23 @@ async def dispatch(
     allocations: list[ResourceAllocation] = []
     for rid, b in result["bounds"].items():
         a: FleetAsset = by_id[rid]
-        allocations.append(ResourceAllocation(
-            resource_id=a.id,
-            resource_name=a.name,
-            resource_type=a.resource_type,
-            allocated_power_kw=round(float(result["allocations"].get(rid, 0.0)), 6),
-            max_power_kw=a.rated_power_kw,
-            min_power_kw=b["lo_kw"],
-            available_power_kw=b["hi_kw"],
-            marginal_cost_per_kwh=b["cost_up"] if body.target_power_kw >= 0 else b["cost_down"],
-            state_of_charge=a.soc if a.is_battery else None,
-            soc_source=a.soc_source if a.is_battery else None,
-            availability_basis=None if a.is_battery else a.availability_basis,
-        ))
+        allocations.append(
+            ResourceAllocation(
+                resource_id=a.id,
+                resource_name=a.name,
+                resource_type=a.resource_type,
+                allocated_power_kw=round(float(result["allocations"].get(rid, 0.0)), 6),
+                max_power_kw=a.rated_power_kw,
+                min_power_kw=b["lo_kw"],
+                available_power_kw=b["hi_kw"],
+                marginal_cost_per_kwh=b["cost_up"]
+                if body.target_power_kw >= 0
+                else b["cost_down"],
+                state_of_charge=a.soc if a.is_battery else None,
+                soc_source=a.soc_source if a.is_battery else None,
+                availability_basis=None if a.is_battery else a.availability_basis,
+            )
+        )
 
     shortfall = float(result["shortfall_kw"])
     solved = result["status"] in ("success", "fallback_used")
@@ -198,7 +210,8 @@ async def dispatch(
         )
 
     await finish_run(
-        session, run_id,
+        session,
+        run_id,
         problem_type="dispatch",
         status=run_status,
         objective_value=result["objective_value"],
@@ -298,11 +311,13 @@ async def stochastic(
     scenarios = []
     for _ in range(body.num_scenarios):
         mult = rng.lognormal(mean=0.0, sigma=body.volatility, size=T)
-        scenarios.append({
-            "probability": 1.0 / body.num_scenarios,
-            "prices": [float(p * m) for p, m in zip(base_prices, mult, strict=False)],
-            "load": base_load,
-        })
+        scenarios.append(
+            {
+                "probability": 1.0 / body.num_scenarios,
+                "prices": [float(p * m) for p, m in zip(base_prices, mult, strict=False)],
+                "load": base_load,
+            }
+        )
     alpha = 1.0 - body.risk_level
     problem = OptimizationProblem(
         variables={},
@@ -327,12 +342,20 @@ async def stochastic(
         metadata={"type": "stochastic_dispatch", "num_scenarios": body.num_scenarios},
     )
     battery_summary = (
-        battery.summary() if battery is not None else {
-            "id": "inline", "name": "inline battery", "resource_type": "battery",
+        battery.summary()
+        if battery is not None
+        else {
+            "id": "inline",
+            "name": "inline battery",
+            "resource_type": "battery",
             "capacity_kwh": bp["battery_capacity_kwh"],
-            "max_charge_kw": bp["max_charge_kw"], "max_discharge_kw": bp["max_discharge_kw"],
-            "soc_init": bp["soc_init"], "soc_min": bp["soc_min"], "soc_max": bp["soc_max"],
-            "eta_charge": bp["eta_charge"], "eta_discharge": bp["eta_discharge"],
+            "max_charge_kw": bp["max_charge_kw"],
+            "max_discharge_kw": bp["max_discharge_kw"],
+            "soc_init": bp["soc_init"],
+            "soc_min": bp["soc_min"],
+            "soc_max": bp["soc_max"],
+            "eta_charge": bp["eta_charge"],
+            "eta_discharge": bp["eta_discharge"],
         }
     )
     inputs = {
@@ -349,8 +372,12 @@ async def stochastic(
         "batteries": [battery_summary],
     }
     run_id, result, solve_ms = await _run_tracked(
-        session, "stochastic", inputs,
-        lambda: solve_with_fallback(problem, timeout_ms=body.timeout_ms, force_fallback=body.force_fallback),
+        session,
+        "stochastic",
+        inputs,
+        lambda: solve_with_fallback(
+            problem, timeout_ms=body.timeout_ms, force_fallback=body.force_fallback
+        ),
     )
     status_s = _status_str(result.status)
     solution = dict(result.solution or {})
@@ -359,7 +386,10 @@ async def stochastic(
         solver = "simple_stochastic_rules"
     if solution:
         solution.update(_expected_schedule(solution, bp["battery_capacity_kwh"], T))
-    if isinstance(solution.get("scenarios"), list) and len(solution["scenarios"]) > _MAX_PERSISTED_SCENARIOS:
+    if (
+        isinstance(solution.get("scenarios"), list)
+        and len(solution["scenarios"]) > _MAX_PERSISTED_SCENARIOS
+    ):
         solution["scenarios"] = solution["scenarios"][:_MAX_PERSISTED_SCENARIOS]
         solution["scenarios_truncated"] = True
     metadata = {
@@ -369,7 +399,8 @@ async def stochastic(
         "note": "scenario load is used only by the rule fallback; the CVaR MILP prices battery exchange",
     }
     await finish_run(
-        session, run_id,
+        session,
+        run_id,
         problem_type="stochastic",
         status=status_s,
         objective_value=result.objective_value,
@@ -399,19 +430,28 @@ async def stochastic(
 
 
 async def _solve_framework_problem(
-    session: AsyncSession, problem_type: str, inputs: dict[str, Any], problem: Any,
-    timeout_ms: int, force_fallback: bool,
+    session: AsyncSession,
+    problem_type: str,
+    inputs: dict[str, Any],
+    problem: Any,
+    timeout_ms: int,
+    force_fallback: bool,
 ) -> OptimizationResponse:
     from vpp.optimization import solve_with_fallback
 
     run_id, result, solve_ms = await _run_tracked(
-        session, problem_type, inputs,
+        session,
+        problem_type,
+        inputs,
         lambda: solve_with_fallback(problem, timeout_ms=timeout_ms, force_fallback=force_fallback),
     )
     status_s = _status_str(result.status)
-    solver = str((result.metadata or {}).get("method") or (result.solver_info or {}).get("name") or "")
+    solver = str(
+        (result.metadata or {}).get("method") or (result.solver_info or {}).get("name") or ""
+    )
     await finish_run(
-        session, run_id,
+        session,
+        run_id,
         problem_type=problem_type,
         status=status_s,
         objective_value=result.objective_value,
@@ -451,8 +491,12 @@ async def realtime(
         forecasts=body.forecasts,
     )
     return await _solve_framework_problem(
-        session, "realtime", body.model_dump(exclude={"forecasts"}), problem,
-        body.timeout_ms, body.force_fallback,
+        session,
+        "realtime",
+        body.model_dump(exclude={"forecasts"}),
+        problem,
+        body.timeout_ms,
+        body.force_fallback,
     )
 
 
@@ -481,7 +525,12 @@ async def distributed(
         "coordination_mode": body.coordination_mode,
     }
     return await _solve_framework_problem(
-        session, "distributed", inputs, problem, body.timeout_ms, body.force_fallback,
+        session,
+        "distributed",
+        inputs,
+        problem,
+        body.timeout_ms,
+        body.force_fallback,
     )
 
 
@@ -490,7 +539,9 @@ async def distributed(
 # ---------------------------------------------------------------------------
 
 
-async def _tariff_prices(session: AsyncSession, body: ScheduleRequest) -> tuple[Any, Any, list[float], datetime]:
+async def _tariff_prices(
+    session: AsyncSession, body: ScheduleRequest
+) -> tuple[Any, Any, list[float], datetime]:
     from vpp.tariffs import load_urdb_json
     from vpp.tariffs.optimization import load_nem3_avoided_cost_2024, tariff_to_opt_params
 
@@ -504,7 +555,9 @@ async def _tariff_prices(session: AsyncSession, body: ScheduleRequest) -> tuple[
     start = body.horizon_start
     if start is None:
         now = datetime.now(timezone.utc)
-        start = now.replace(second=0, microsecond=0) - timedelta(minutes=now.minute % body.interval_minutes)
+        start = now.replace(second=0, microsecond=0) - timedelta(
+            minutes=now.minute % body.interval_minutes
+        )
     elif start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     opt = tariff_to_opt_params(
@@ -535,7 +588,9 @@ async def schedule(
     """
     batteries, missing = await load_fleet_assets(session, body.resource_ids, batteries_only=True)
     if missing:
-        raise HTTPException(status_code=404, detail={"message": "unknown resource ids", "missing": missing})
+        raise HTTPException(
+            status_code=404, detail={"message": "unknown resource ids", "missing": missing}
+        )
     if not batteries:
         raise HTTPException(status_code=422, detail="no online battery resources to schedule")
     steps = body.steps
@@ -543,7 +598,7 @@ async def schedule(
         raise HTTPException(
             status_code=422,
             detail=f"batteries x steps must be <= {MAX_SCHEDULE_RESOURCE_STEPS} "
-                   f"(got {len(batteries)} x {steps}); narrow resource_ids or the horizon",
+            f"(got {len(batteries)} x {steps}); narrow resource_ids or the horizon",
         )
 
     tariff = tariff_opt = None
@@ -572,7 +627,9 @@ async def schedule(
         "force_fallback": body.force_fallback,
     }
     run_id, plan, solve_ms = await _run_tracked(
-        session, "schedule", inputs,
+        session,
+        "schedule",
+        inputs,
         lambda: plan_schedule(
             batteries,
             prices=prices,
@@ -594,10 +651,20 @@ async def schedule(
     run_status = "fallback_used" if plan["fallback_used"] else "success"
     solution = {
         k: plan[k]
-        for k in ("method", "objective", "energy_cost", "wear_cost", "charge", "discharge", "power", "per_resource")
+        for k in (
+            "method",
+            "objective",
+            "energy_cost",
+            "wear_cost",
+            "charge",
+            "discharge",
+            "power",
+            "per_resource",
+        )
     }
     await finish_run(
-        session, run_id,
+        session,
+        run_id,
         problem_type="schedule",
         status=run_status,
         objective_value=plan["objective"],
@@ -613,7 +680,8 @@ async def schedule(
             "wear_cost_per_kwh": plan["wear_cost_per_kwh"],
             **plan["solver_meta"],
         },
-        iterations=plan["solver_meta"].get("solver_iterations") or plan["solver_meta"].get("iterations"),
+        iterations=plan["solver_meta"].get("solver_iterations")
+        or plan["solver_meta"].get("iterations"),
     )
     return ScheduleResponse(
         run_id=run_id,
@@ -693,7 +761,9 @@ async def backtest(
         "solar_kw": body.solar_kw,
     }
     run_id, res, solve_ms = await _run_tracked(
-        session, "backtest", inputs,
+        session,
+        "backtest",
+        inputs,
         lambda: run_closed_loop_backtest(
             battery,
             prices=body.prices,
@@ -728,7 +798,8 @@ async def backtest(
     }
     summary = {k: v for k, v in res.items() if not isinstance(v, list)}
     await finish_run(
-        session, run_id,
+        session,
+        run_id,
         problem_type="backtest",
         status=run_status,
         objective_value=res["realized_cost_adjusted"],
@@ -764,13 +835,24 @@ def _utc(dt: datetime | None) -> datetime | None:
 
 
 async def _list_runs(
-    session: AsyncSession, *, skip: int, limit: int, problem_type: str | None,
-    start: datetime | None, end: datetime | None, resource_ids: list[str] | None,
+    session: AsyncSession,
+    *,
+    skip: int,
+    limit: int,
+    problem_type: str | None,
+    start: datetime | None,
+    end: datetime | None,
+    resource_ids: list[str] | None,
     include_details: bool,
 ) -> list[dict[str, Any]]:
     runs = await OptimizationRepository.list_runs(
-        session, skip=skip, limit=limit, problem_type=problem_type,
-        start=_utc(start), end=_utc(end), resource_ids=resource_ids or None,
+        session,
+        skip=skip,
+        limit=limit,
+        problem_type=problem_type,
+        start=_utc(start),
+        end=_utc(end),
+        resource_ids=resource_ids or None,
     )
     return [run_to_dict(r, include_details=include_details) for r in runs]
 
@@ -791,15 +873,22 @@ async def list_runs(
     problem_type: str | None = None,
     start: datetime | None = Query(None, description="Only runs created at or after this time"),
     end: datetime | None = Query(None, description="Only runs created at or before this time"),
-    resource_id: list[str] | None = Query(None, description="Only runs touching these resources (repeatable)"),
+    resource_id: list[str] | None = Query(
+        None, description="Only runs touching these resources (repeatable)"
+    ),
     include_details: bool = Query(True, description="Include inputs / solution / metadata"),
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
     """List persisted optimization runs, newest first."""
     return await _list_runs(
-        session, skip=offset if offset is not None else skip, limit=limit,
-        problem_type=problem_type, start=start, end=end, resource_ids=resource_id,
+        session,
+        skip=offset if offset is not None else skip,
+        limit=limit,
+        problem_type=problem_type,
+        start=start,
+        end=end,
+        resource_ids=resource_id,
         include_details=include_details,
     )
 
@@ -875,8 +964,13 @@ async def list_dispatches(
 ):
     """Alias of ``GET /api/v1/optimization/runs``."""
     return await _list_runs(
-        session, skip=offset if offset is not None else skip, limit=limit,
-        problem_type=problem_type, start=start, end=end, resource_ids=resource_id,
+        session,
+        skip=offset if offset is not None else skip,
+        limit=limit,
+        problem_type=problem_type,
+        start=start,
+        end=end,
+        resource_ids=resource_id,
         include_details=include_details,
     )
 

@@ -5,6 +5,6 @@ comparison against the rule-based production system.  No model here
 should ever be called from a production code path.
 """
 
-from vpp.research.base import ResearchModel, ResearchExperiment
+from vpp.research.base import ResearchExperiment, ResearchModel
 
-__all__ = ["ResearchModel", "ResearchExperiment"]
+__all__ = ["ResearchExperiment", "ResearchModel"]

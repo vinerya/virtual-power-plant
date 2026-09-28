@@ -47,7 +47,11 @@ MAX_FUTURE_SKEW = timedelta(minutes=5)
 LIVE_STATE_MAX_AGE = timedelta(minutes=15)
 
 
-@router.get("/{resource_id}/metrics", response_model=ResourceMetricsResponse, response_model_exclude_none=True)
+@router.get(
+    "/{resource_id}/metrics",
+    response_model=ResourceMetricsResponse,
+    response_model_exclude_none=True,
+)
 async def get_resource_metrics(
     resource_id: str,
     window: str | None = Query(None, description="1h | 6h | 24h | 7d | 30d (default 24h)"),
@@ -69,7 +73,9 @@ async def get_resource_metrics(
             detail=f"window must be one of {sorted(WINDOWS)}",
         )
     if window is not None and start is not None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="pass either window or start, not both")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="pass either window or start, not both"
+        )
 
     end_utc = as_utc(end) if end is not None else datetime.now(timezone.utc)
     if start is not None:
@@ -81,7 +87,9 @@ async def get_resource_metrics(
         if end is not None:
             label = "custom"
     if start_utc >= end_utc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="start must be before end")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail="start must be before end"
+        )
     span = end_utc - start_utc
     if span > MAX_SPAN:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="range exceeds 366 days")
@@ -92,7 +100,9 @@ async def get_resource_metrics(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="bucket_seconds too small for this range (max 5000 points)",
         )
-    points = await query_history(session, resource_id, start=start_utc, end=end_utc, bucket_s=bucket)
+    points = await query_history(
+        session, resource_id, start=start_utc, end=end_utc, bucket_s=bucket
+    )
     return {
         "resource_id": resource_id,
         "window": label,
@@ -103,7 +113,11 @@ async def get_resource_metrics(
     }
 
 
-@router.post("/{resource_id}/telemetry", response_model=TelemetryIngestResult, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{resource_id}/telemetry",
+    response_model=TelemetryIngestResult,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def ingest_resource_telemetry(
     resource_id: str,
     body: TelemetryIngest,
@@ -134,7 +148,11 @@ async def ingest_resource_telemetry(
     current_power = resource.current_power
     if now - newest[0] > LIVE_STATE_MAX_AGE:
         # Historical backfill: keep the live state untouched.
-        return {"resource_id": resource_id, "accepted": len(samples), "current_power": current_power}
+        return {
+            "resource_id": resource_id,
+            "accepted": len(samples),
+            "current_power": current_power,
+        }
     resource.current_power = newest[1]
     await session.flush()
     current_power = resource.current_power

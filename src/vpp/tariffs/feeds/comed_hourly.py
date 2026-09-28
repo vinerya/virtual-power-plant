@@ -12,17 +12,17 @@ Response is a JSON array::
 
 Prices are in cents/kWh. We divide by 100 to normalize to $/kWh.
 """
+
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
 from .base import PriceFeed, PricePoint
 from .cache import FeedCache
-
 
 COMED_URL = "https://hourlypricing.comed.com/api"
 
@@ -36,8 +36,8 @@ class ComEdHourlyFeed(PriceFeed):
     def __init__(
         self,
         feed_type: str = "5minutefeed",
-        client: Optional[httpx.AsyncClient] = None,
-        cache: Optional[FeedCache] = None,
+        client: httpx.AsyncClient | None = None,
+        cache: FeedCache | None = None,
         max_retries: int = 3,
         backoff_seconds: float = 0.05,
     ) -> None:
@@ -53,9 +53,7 @@ class ComEdHourlyFeed(PriceFeed):
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).strftime("%Y%m%d%H%M")
 
-    async def fetch(
-        self, start: datetime, end: datetime, **kwargs: Any
-    ) -> list[PricePoint]:
+    async def fetch(self, start: datetime, end: datetime, **kwargs: Any) -> list[PricePoint]:
         if self._cache is not None:
             cached = self._cache.get(self.name, start, end)
             if cached is not None:

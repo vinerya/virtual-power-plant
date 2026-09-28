@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from typing import List
 
 import pytest
 
@@ -15,16 +14,15 @@ from vpp.degradation import (
     ThroughputDegradation,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _sawtooth(low: float, high: float, n_cycles: int, samples_per_half: int = 10) -> List[float]:
+def _sawtooth(low: float, high: float, n_cycles: int, samples_per_half: int = 10) -> list[float]:
     """Build a triangular SOC trace with ``n_cycles`` round trips between
     ``low`` and ``high``, starting and ending at ``low``."""
-    trace: List[float] = [low]
+    trace: list[float] = [low]
     for _ in range(n_cycles):
         # Up
         for k in range(1, samples_per_half + 1):
@@ -122,12 +120,8 @@ def test_lfp_vs_nmc_presets() -> None:
     soc = _sawtooth(low=0.1, high=0.9, n_cycles=20, samples_per_half=10)
     dt = 0.25
 
-    lfp_tp = ThroughputDegradation(
-        nominal_capacity_kwh=100.0, **LFP_PRESET["throughput"]
-    )
-    nmc_tp = ThroughputDegradation(
-        nominal_capacity_kwh=100.0, **NMC_PRESET["throughput"]
-    )
+    lfp_tp = ThroughputDegradation(nominal_capacity_kwh=100.0, **LFP_PRESET["throughput"])
+    nmc_tp = ThroughputDegradation(nominal_capacity_kwh=100.0, **NMC_PRESET["throughput"])
     assert lfp_tp.predict_capacity_loss(soc, dt) < nmc_tp.predict_capacity_loss(soc, dt)
 
     lfp_cal = CalendarDegradation(**LFP_PRESET["calendar"])

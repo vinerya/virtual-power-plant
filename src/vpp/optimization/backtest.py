@@ -13,12 +13,14 @@ Drives an :class:`MPCController` over a historical window. Each tick:
 The simulator is intentionally tiny — it mirrors the formulation's SOC dynamics
 so that perfect-foresight MPC == offline optimum (within solver tolerance).
 """
+
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 from .mpc import MPCController, MPCDecision, MPCStep
 
@@ -32,8 +34,8 @@ class BacktestConfig:
 
 @dataclass
 class BacktestResult:
-    realized_dispatch: List[Dict[str, Any]] = field(default_factory=list)
-    soc_trajectory: List[float] = field(default_factory=list)
+    realized_dispatch: list[dict[str, Any]] = field(default_factory=list)
+    soc_trajectory: list[float] = field(default_factory=list)
     realized_cost: float = 0.0
     cumulative_solve_time_ms: float = 0.0
     cumulative_solver_iterations: int = 0
@@ -48,10 +50,10 @@ class BacktestResult:
 def run_backtest(
     controller: MPCController,
     config: BacktestConfig,
-    price_series: List[float],
-    load_series: List[float],
-    solar_series: List[float],
-    forecast_fn: Callable[[datetime, int], Dict[str, List[float]]],
+    price_series: list[float],
+    load_series: list[float],
+    solar_series: list[float],
+    forecast_fn: Callable[[datetime, int], dict[str, list[float]]],
 ) -> BacktestResult:
     """Run a closed-loop MPC backtest.
 
@@ -88,9 +90,7 @@ def run_backtest(
         and len(load_series) >= num_ticks
         and len(solar_series) >= num_ticks
     ):
-        raise ValueError(
-            f"price/load/solar series must each cover >= {num_ticks} ticks"
-        )
+        raise ValueError(f"price/load/solar series must each cover >= {num_ticks} ticks")
 
     # Initial SOC is whatever the controller's battery_params says.
     soc = float(bp.get("soc_init", 0.5)) * cap

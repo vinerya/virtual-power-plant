@@ -16,13 +16,14 @@ DELETE marks the row's ``deleted_at`` column. Repository helpers and all
 read endpoints filter out tombstoned rows. We picked soft-delete to keep
 historical bills replayable. Pass ``hard=true`` query param for hard delete.
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -49,7 +50,6 @@ from vpp.tariffs import (
     TimeOfUseRate,
     load_urdb_json,
 )
-
 
 router = APIRouter(prefix="/api/v1/tariffs", tags=["Tariffs"])
 logger = logging.getLogger(__name__)
@@ -94,7 +94,9 @@ def _meter_trace_from_dto(dto) -> MeterTrace:
 
 
 @router.post("", response_model=TariffRead, status_code=status.HTTP_201_CREATED)
-@router.post("/", response_model=TariffRead, status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@router.post(
+    "/", response_model=TariffRead, status_code=status.HTTP_201_CREATED, include_in_schema=False
+)
 async def create_tariff(
     body: TariffCreate,
     session: AsyncSession = Depends(get_db),
@@ -117,7 +119,7 @@ async def create_tariff(
 async def list_tariffs(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    utility: Optional[str] = None,
+    utility: str | None = None,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
@@ -162,7 +164,7 @@ async def update_tariff(
                 source="tariffs.update",
             )
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     return response
 
@@ -186,7 +188,7 @@ async def delete_tariff(
                 source="tariffs.delete",
             )
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -262,7 +264,7 @@ async def _do_simulate(
 
     try:
         tariff = load_urdb_json(urdb_json)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid URDB JSON: {exc}",
@@ -298,9 +300,7 @@ async def _do_simulate(
         if total_export > 0:
             credit_amount = 0.0
             if nem == "nem2":
-                tou_components = [
-                    c for c in tariff.components if isinstance(c, TimeOfUseRate)
-                ]
+                tou_components = [c for c in tariff.components if isinstance(c, TimeOfUseRate)]
                 if tou_components:
                     credit = 0.0
                     uncredited_kwh = 0.0
@@ -355,6 +355,7 @@ async def _do_simulate(
                 credit_amount = round(credit, 4)
             if credit_amount > 0:
                 from vpp.tariffs import BillLineItem  # local import OK
+
                 line_items_out.append(
                     BillLineItem(
                         kind="credit",
@@ -373,14 +374,19 @@ async def _do_simulate(
         tariff_name=bill.tariff_name,
         line_items=[
             BillLineItemDTO(
-                kind=li.kind, label=li.label, quantity=li.quantity,
-                unit=li.unit, rate=li.rate, amount=li.amount,
+                kind=li.kind,
+                label=li.label,
+                quantity=li.quantity,
+                unit=li.unit,
+                rate=li.rate,
+                amount=li.amount,
             )
             for li in line_items_out
         ],
         period_start=start,
         period_end=end,
     )
+
 
 # ---------------------------------------------------------------------------
 # URDB import
@@ -461,7 +467,7 @@ async def import_urdb(
     # Validate by parsing
     try:
         parsed = load_urdb_json(record)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to parse URDB record: {exc}",

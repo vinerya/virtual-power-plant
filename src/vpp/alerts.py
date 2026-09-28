@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Alert severity & state
 # ---------------------------------------------------------------------------
 
+
 class AlertSeverity(str, Enum):
     INFO = "info"
     WARNING = "warning"
@@ -54,6 +55,7 @@ class RuleType(str, Enum):
 # ---------------------------------------------------------------------------
 # Alert & Rule definitions
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Alert:
@@ -94,7 +96,7 @@ class AlertRule:
     severity: AlertSeverity = AlertSeverity.WARNING
     metric_name: str = ""
     threshold: float = 0.0
-    comparison: str = ">"   # >, <, >=, <=, ==
+    comparison: str = ">"  # >, <, >=, <=, ==
     rate_window_s: float = 60.0  # for rate-of-change rules
     rate_threshold: float = 0.0  # max acceptable rate
     z_score_threshold: float = 3.0  # for anomaly rules
@@ -185,7 +187,10 @@ class AlertRule:
             return False, ""
         rate = abs(last_v - first_v) / dt
         if rate > self.rate_threshold:
-            return True, f"{self.metric_name} rate={rate:.3f}/s exceeds {self.rate_threshold:.3f}/s"
+            return (
+                True,
+                f"{self.metric_name} rate={rate:.3f}/s exceeds {self.rate_threshold:.3f}/s",
+            )
         return False, ""
 
     def _check_anomaly(self, value: float) -> tuple[bool, str]:
@@ -194,18 +199,22 @@ class AlertRule:
         values = [v for _, v in self._value_history]
         mean = sum(values) / len(values)
         variance = sum((v - mean) ** 2 for v in values) / len(values)
-        std = variance ** 0.5
+        std = variance**0.5
         if std < 1e-9:
             return False, ""
         z_score = abs(value - mean) / std
         if z_score > self.z_score_threshold:
-            return True, f"{self.metric_name} z-score={z_score:.2f} exceeds {self.z_score_threshold:.1f}"
+            return (
+                True,
+                f"{self.metric_name} z-score={z_score:.2f} exceeds {self.z_score_threshold:.1f}",
+            )
         return False, ""
 
 
 # ---------------------------------------------------------------------------
 # Alert channels
 # ---------------------------------------------------------------------------
+
 
 class AlertChannel(ABC):
     """Abstract alert notification channel."""
@@ -226,7 +235,9 @@ class LogAlertChannel(AlertChannel):
             AlertSeverity.CRITICAL: logging.CRITICAL,
         }.get(alert.severity, logging.WARNING)
 
-        logger.log(level, "ALERT [%s] %s: %s", alert.severity.value, alert.rule_name, alert.message)
+        logger.log(
+            level, "ALERT [%s] %s: %s", alert.severity.value, alert.rule_name, alert.message
+        )
 
 
 class WebhookDeliveryError(RuntimeError):
@@ -299,7 +310,7 @@ class WebhookAlertChannel(AlertChannel):
         return body, headers
 
     def _backoff(self, attempt: int) -> float:
-        return min(self.backoff_max_s, self.backoff_base_s * (2 ** attempt))
+        return min(self.backoff_max_s, self.backoff_base_s * (2**attempt))
 
     async def send(self, alert: Alert) -> None:
         body, headers = self._build_request(alert)
@@ -310,13 +321,19 @@ class WebhookAlertChannel(AlertChannel):
             await self._deliver(client, body, headers)
 
     async def _deliver(
-        self, client: httpx.AsyncClient, body: bytes, headers: dict[str, str],
+        self,
+        client: httpx.AsyncClient,
+        body: bytes,
+        headers: dict[str, str],
     ) -> None:
         last_error = ""
         for attempt in range(self.max_retries + 1):
             try:
                 resp = await client.post(
-                    self.url, content=body, headers=headers, timeout=self.timeout_s,
+                    self.url,
+                    content=body,
+                    headers=headers,
+                    timeout=self.timeout_s,
                 )
             except httpx.HTTPError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
@@ -332,7 +349,11 @@ class WebhookAlertChannel(AlertChannel):
                 delay = self._backoff(attempt)
                 logger.warning(
                     "Webhook delivery to %s failed (%s); retry %d/%d in %.2fs",
-                    self.url, last_error, attempt + 1, self.max_retries, delay,
+                    self.url,
+                    last_error,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
                 )
                 await asyncio.sleep(delay)
         raise WebhookDeliveryError(
@@ -343,6 +364,7 @@ class WebhookAlertChannel(AlertChannel):
 # ---------------------------------------------------------------------------
 # Alert manager
 # ---------------------------------------------------------------------------
+
 
 class AlertManager:
     """Manages alert rules, evaluation, and channel dispatch.
@@ -434,7 +456,10 @@ class AlertManager:
                 logger.exception("Alert channel %s error", type(channel).__name__)
 
     async def evaluate(
-        self, metric_name: str, value: float, source: str | None = None,
+        self,
+        metric_name: str,
+        value: float,
+        source: str | None = None,
     ) -> list[Alert]:
         """Evaluate all rules matching a metric.  Returns triggered alerts.
 

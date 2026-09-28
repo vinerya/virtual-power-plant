@@ -1,25 +1,23 @@
 """Tests for grid-forming/following inverters and microgrid controller."""
 
-import math
 import pytest
 
 from vpp.grid.inverter import (
+    DroopSettings,
     GridFollowingInverter,
     GridFormingInverter,
-    DroopSettings,
     VSMSettings,
-    InverterState,
 )
 from vpp.grid.microgrid import (
+    LoadPriority,
     MicrogridController,
     MicrogridState,
-    LoadPriority,
 )
-
 
 # ---------------------------------------------------------------------------
 # Grid-following inverter tests
 # ---------------------------------------------------------------------------
+
 
 class TestGridFollowingInverter:
     def test_create(self):
@@ -63,6 +61,7 @@ class TestGridFollowingInverter:
 # ---------------------------------------------------------------------------
 # Grid-forming inverter tests
 # ---------------------------------------------------------------------------
+
 
 class TestGridFormingInverter:
     def test_create(self):
@@ -137,6 +136,7 @@ class TestGridFormingInverter:
 # ---------------------------------------------------------------------------
 # Microgrid controller tests
 # ---------------------------------------------------------------------------
+
 
 class TestMicrogridController:
     def _make_controller(self) -> MicrogridController:

@@ -28,7 +28,11 @@ async def test_update_battery_soh_persists(db_session, app):
 
     ts = datetime.now(timezone.utc)
     await BatteryDegradationRepository.update_battery_soh(
-        db_session, battery.id, soh=0.95, cum_throughput_kwh=42.5, ts=ts,
+        db_session,
+        battery.id,
+        soh=0.95,
+        cum_throughput_kwh=42.5,
+        ts=ts,
         loss_fraction=0.05,
     )
     await db_session.commit()
@@ -45,27 +49,41 @@ async def test_get_due_for_update_filters_by_staleness(db_session, app):
     """Only batteries with stale (or missing) updates should be returned."""
     suffix = datetime.now().timestamp()
     fresh_b = await ResourceRepository.create(
-        db_session, name=f"fresh-{suffix}", resource_type="battery",
+        db_session,
+        name=f"fresh-{suffix}",
+        resource_type="battery",
         rated_power=100.0,
     )
     stale_b = await ResourceRepository.create(
-        db_session, name=f"stale-{suffix}", resource_type="battery",
+        db_session,
+        name=f"stale-{suffix}",
+        resource_type="battery",
         rated_power=100.0,
     )
     never_b = await ResourceRepository.create(
-        db_session, name=f"never-{suffix}", resource_type="battery",
+        db_session,
+        name=f"never-{suffix}",
+        resource_type="battery",
         rated_power=100.0,
     )
     await db_session.commit()
 
     now = datetime.now(timezone.utc)
     await BatteryDegradationRepository.update_battery_soh(
-        db_session, fresh_b.id, soh=1.0, cum_throughput_kwh=0.0, ts=now,
+        db_session,
+        fresh_b.id,
+        soh=1.0,
+        cum_throughput_kwh=0.0,
+        ts=now,
         record_sample=False,
     )
     await BatteryDegradationRepository.update_battery_soh(
-        db_session, stale_b.id, soh=1.0, cum_throughput_kwh=0.0,
-        ts=now - timedelta(hours=5), record_sample=False,
+        db_session,
+        stale_b.id,
+        soh=1.0,
+        cum_throughput_kwh=0.0,
+        ts=now - timedelta(hours=5),
+        record_sample=False,
     )
     await db_session.commit()
 
@@ -110,9 +128,10 @@ async def test_apply_window_decreases_soh(db_session, app):
     assert update.new_soh < update.previous_soh
     assert update.loss_fraction > 0
     # Throughput must reflect total |dSOC| * capacity_kwh
-    expected_throughput = sum(
-        abs(soc_trace[i] - soc_trace[i - 1]) for i in range(1, len(soc_trace))
-    ) * battery.nominal_energy_kwh
+    expected_throughput = (
+        sum(abs(soc_trace[i] - soc_trace[i - 1]) for i in range(1, len(soc_trace)))
+        * battery.nominal_energy_kwh
+    )
     assert update.cumulative_throughput_kwh == pytest.approx(expected_throughput)
 
 
@@ -121,11 +140,15 @@ async def test_periodic_loop_processes_all_batteries(db_session, app):
     """The periodic loop should call apply_window once per battery per tick."""
     suffix = datetime.now().timestamp()
     b1 = await ResourceRepository.create(
-        db_session, name=f"loop1-{suffix}", resource_type="battery",
+        db_session,
+        name=f"loop1-{suffix}",
+        resource_type="battery",
         rated_power=100.0,
     )
     b2 = await ResourceRepository.create(
-        db_session, name=f"loop2-{suffix}", resource_type="battery",
+        db_session,
+        name=f"loop2-{suffix}",
+        resource_type="battery",
         rated_power=100.0,
     )
     await db_session.commit()

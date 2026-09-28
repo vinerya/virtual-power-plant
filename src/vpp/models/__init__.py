@@ -12,12 +12,12 @@ while maintaining computational efficiency for optimization.
 """
 
 from .battery import (
-    BatteryState,
-    BatteryParameters,
-    BatteryModel,
-    SimpleEquivalentCircuitModel,
     AdvancedElectrochemicalModel,
-    create_battery_model
+    BatteryModel,
+    BatteryParameters,
+    BatteryState,
+    SimpleEquivalentCircuitModel,
+    create_battery_model,
 )
 
 # Package metadata (the version lives in vpp.__version__ only)
@@ -27,7 +27,7 @@ __author__ = "VPP Development Team"
 __all__ = [
     # Battery models
     "BatteryState",
-    "BatteryParameters", 
+    "BatteryParameters",
     "BatteryModel",
     "SimpleEquivalentCircuitModel",
     "AdvancedElectrochemicalModel",

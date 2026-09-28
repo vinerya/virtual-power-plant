@@ -1,6 +1,6 @@
 """Enhanced event bus with typed subscriptions and async dispatch."""
 
-from vpp.events.bus import EventBus, Event, EventType
+from vpp.events.bus import Event, EventBus, EventType
 
 _global_bus: EventBus | None = None
 
@@ -19,4 +19,4 @@ def reset_event_bus() -> None:
     _global_bus = EventBus()
 
 
-__all__ = ["EventBus", "Event", "EventType", "get_event_bus", "reset_event_bus"]
+__all__ = ["Event", "EventBus", "EventType", "get_event_bus", "reset_event_bus"]

@@ -147,11 +147,17 @@ def validate_config_document(
     if document.monitoring.log_file is not None:
         # VPPConfig opens a FileHandler at construction time; letting an API
         # caller choose an arbitrary server-side path is a file-write primitive.
-        return None, [{
-            "path": "/monitoring/log_file",
-            "message": "log_file cannot be set through the API; configure log "
-                       "destinations in the deployment environment",
-        }], []
+        return (
+            None,
+            [
+                {
+                    "path": "/monitoring/log_file",
+                    "message": "log_file cannot be set through the API; configure log "
+                    "destinations in the deployment environment",
+                }
+            ],
+            [],
+        )
     config = VPPConfig.from_dict(document.model_dump())
     result = config.validate()
     if not result.is_valid:
@@ -242,7 +248,11 @@ async def validate_config(
     """Validate a configuration payload (JSON) without applying it."""
     config, errors, warnings = validate_config_document(body)
     opt = body.get("optimization") if isinstance(body, dict) else None
-    if isinstance(opt, dict) and isinstance(opt.get("time_horizon"), int) and opt["time_horizon"] > 168:
+    if (
+        isinstance(opt, dict)
+        and isinstance(opt.get("time_horizon"), int)
+        and opt["time_horizon"] > 168
+    ):
         warnings.append("time_horizon > 168h may be slow")
     return {
         "valid": config is not None,

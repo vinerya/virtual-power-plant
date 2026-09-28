@@ -11,7 +11,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from vpp.protocols.base import (
     ProtocolAdapter,
@@ -154,12 +155,16 @@ class MQTTAdapter(ProtocolAdapter):
 
     # -- Paho callbacks (run in paho thread) ---------------------------------
 
-    def _on_connect(self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None) -> None:
+    def _on_connect(
+        self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None
+    ) -> None:
         self._status = ProtocolStatus.CONNECTED
         prefix = self._config.get("topic_prefix", "vpp/#")
         client.subscribe(prefix, qos=1)
 
-    def _on_disconnect(self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None) -> None:
+    def _on_disconnect(
+        self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None
+    ) -> None:
         if self._status != ProtocolStatus.DISCONNECTED:
             self._status = ProtocolStatus.RECONNECTING
             logger.warning("MQTT disconnected unexpectedly (rc=%s)", rc)

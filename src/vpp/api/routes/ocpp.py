@@ -40,20 +40,23 @@ async def ocpp_central_system(
 ) -> None:
     adapter = registry.get("ocpp")
     if not isinstance(adapter, OCPPAdapter) or not adapter.is_connected:
-        logger.warning("Refusing OCPP connection from %s: Central System not running",
-                       charge_point_id)
+        logger.warning(
+            "Refusing OCPP connection from %s: Central System not running", charge_point_id
+        )
         await websocket.close(code=1013)
         return
 
     if OCPP16_SUBPROTOCOL not in websocket.scope.get("subprotocols", []):
-        logger.warning("Refusing OCPP connection from %s: subprotocol %s not offered",
-                       charge_point_id, OCPP16_SUBPROTOCOL)
+        logger.warning(
+            "Refusing OCPP connection from %s: subprotocol %s not offered",
+            charge_point_id,
+            OCPP16_SUBPROTOCOL,
+        )
         await websocket.close(code=1002)
         return
 
     if not adapter.authenticate(charge_point_id, websocket.headers.get("authorization")):
-        logger.warning("Refusing OCPP connection from %s: authentication failed",
-                       charge_point_id)
+        logger.warning("Refusing OCPP connection from %s: authentication failed", charge_point_id)
         await websocket.close(code=1008)
         return
 
@@ -68,8 +71,9 @@ async def ocpp_central_system(
         while True:
             text = await websocket.receive_text()
             if len(text) > MAX_FRAME_CHARS:
-                logger.warning("OCPP frame from %s too large (%d chars); closing",
-                               charge_point_id, len(text))
+                logger.warning(
+                    "OCPP frame from %s too large (%d chars); closing", charge_point_id, len(text)
+                )
                 await websocket.close(code=1009)
                 break
             await session.handle_text(text)

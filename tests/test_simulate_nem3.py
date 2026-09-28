@@ -1,4 +1,5 @@
 """NEM3-aware bill simulation (M4)."""
+
 from __future__ import annotations
 
 import json
@@ -8,14 +9,8 @@ from pathlib import Path
 import pytest
 from httpx import AsyncClient
 
-
 PRESET = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "vpp"
-    / "tariffs"
-    / "presets"
-    / "pge_etouc.json"
+    Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
 )
 
 
@@ -25,9 +20,7 @@ def _preset() -> dict:
 
 
 @pytest.mark.asyncio
-async def test_simulate_with_nem3_export_credit(
-    client: AsyncClient, auth_headers: dict
-):
+async def test_simulate_with_nem3_export_credit(client: AsyncClient, auth_headers: dict):
     """A meter trace exporting at peak hours earns NEM3 export credit.
 
     Setup: 24 hours of 1 kWh/hr import + a 50 kWh export concentrated at hour

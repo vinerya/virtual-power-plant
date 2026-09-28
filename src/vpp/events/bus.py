@@ -12,9 +12,10 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class EventBus:
         self._publish_count += 1
         self._history.append(event)
         if len(self._history) > self._max_history:
-            self._history = self._history[-self._max_history:]
+            self._history = self._history[-self._max_history :]
 
         notified = 0
         tasks = []
@@ -205,5 +206,6 @@ class EventBus:
             await callback(event)
         except Exception:
             logger.exception(
-                "Event subscriber error for %s", event.event_type.value,
+                "Event subscriber error for %s",
+                event.event_type.value,
             )

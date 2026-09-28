@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Value objects
 # ---------------------------------------------------------------------------
 
+
 class ProtocolStatus(str, Enum):
     """Lifecycle status of a protocol adapter.
 
@@ -91,6 +92,7 @@ MessageCallback = Callable[[ProtocolMessage], Awaitable[None]]
 # ---------------------------------------------------------------------------
 # Abstract adapter
 # ---------------------------------------------------------------------------
+
 
 class ProtocolAdapter(ABC):
     """Abstract base class for all protocol adapters.
@@ -243,6 +245,7 @@ class ProtocolAdapter(ABC):
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 class ProtocolRegistry:
     """Discover and manage protocol adapter instances."""

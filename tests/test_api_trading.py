@@ -48,8 +48,10 @@ async def operator_headers(db_session) -> dict[str, str]:
     user = await UserRepository.get_by_username(db_session, "testoperator")
     if user is None:
         user = await UserRepository.create_user(
-            db_session, username="testoperator",
-            hashed_password=get_password_hash("operatorpassword123"), role="operator",
+            db_session,
+            username="testoperator",
+            hashed_password=get_password_hash("operatorpassword123"),
+            role="operator",
         )
         await db_session.commit()
     token = create_access_token({"sub": user.id, "username": user.username, "role": user.role})
@@ -85,11 +87,18 @@ async def _order(client, headers, **body):
 
 
 @pytest.mark.asyncio
-async def test_market_buy_fills_and_persists(client: AsyncClient, operator_headers, trading,
-                                             captured_events):
+async def test_market_buy_fills_and_persists(
+    client: AsyncClient, operator_headers, trading, captured_events
+):
     ask = (await _markets(client, operator_headers))["real_time"]["ask"]
-    resp = await _order(client, operator_headers, order_type="market", market="real_time",
-                        side="buy", quantity=10.0)
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="market",
+        market="real_time",
+        side="buy",
+        quantity=10.0,
+    )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "filled"
@@ -101,7 +110,9 @@ async def test_market_buy_fills_and_persists(client: AsyncClient, operator_heade
     notional = sum(f["quantity"] * f["price"] for f in body["fills"])
     assert body["average_price"] == pytest.approx(notional / 10.0)
 
-    trades = (await client.get(f"{BASE}/trades?order_id={body['id']}", headers=operator_headers)).json()
+    trades = (
+        await client.get(f"{BASE}/trades?order_id={body['id']}", headers=operator_headers)
+    ).json()
     assert {t["id"] for t in trades} == {f["id"] for f in body["fills"]}
     fees = sum(t["fees"] for t in trades)
     assert fees == pytest.approx(10.0 * 0.07)
@@ -127,8 +138,14 @@ async def test_market_buy_fills_and_persists(client: AsyncClient, operator_heade
 
 @pytest.mark.asyncio
 async def test_portfolio_reflects_fills(client: AsyncClient, operator_headers, trading):
-    resp = await _order(client, operator_headers, order_type="market", market="real_time",
-                        side="buy", quantity=10.0)
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="market",
+        market="real_time",
+        side="buy",
+        quantity=10.0,
+    )
     fills = resp.json()["fills"]
     notional = sum(f["quantity"] * f["price"] for f in fills)
     fees = sum(f["fees"] for f in fills)
@@ -154,8 +171,14 @@ async def test_portfolio_reflects_fills(client: AsyncClient, operator_headers, t
     assert pf["venue"] == "simulated"
 
     # Closing half realizes P&L.
-    close = await _order(client, operator_headers, order_type="market", market="real_time",
-                         side="sell", quantity=5.0)
+    close = await _order(
+        client,
+        operator_headers,
+        order_type="market",
+        market="real_time",
+        side="sell",
+        quantity=5.0,
+    )
     assert close.status_code == 201
     pf2 = (await client.get(f"{BASE}/portfolio", headers=operator_headers)).json()
     pos2 = {p["market"]: p for p in pf2["positions"]}["real_time"]
@@ -166,10 +189,18 @@ async def test_portfolio_reflects_fills(client: AsyncClient, operator_headers, t
 
 
 @pytest.mark.asyncio
-async def test_passive_limit_rests_and_cancel(client: AsyncClient, operator_headers, trading,
-                                              captured_events):
-    resp = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                        side="buy", quantity=10.0, price=1.00)
+async def test_passive_limit_rests_and_cancel(
+    client: AsyncClient, operator_headers, trading, captured_events
+):
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="buy",
+        quantity=10.0,
+        price=1.00,
+    )
     assert resp.status_code == 201
     body = resp.json()
     assert body["status"] == "pending" and body["fills"] == []
@@ -192,8 +223,15 @@ async def test_passive_limit_rests_and_cancel(client: AsyncClient, operator_head
 
 @pytest.mark.asyncio
 async def test_cancel_via_post_alias(client: AsyncClient, auth_headers, trading):
-    resp = await _order(client, auth_headers, order_type="limit", market="real_time",
-                        side="sell", quantity=1.0, price=2500.00)
+    resp = await _order(
+        client,
+        auth_headers,
+        order_type="limit",
+        market="real_time",
+        side="sell",
+        quantity=1.0,
+        price=2500.00,
+    )
     order_id = resp.json()["id"]
     resp = await client.post(f"{BASE}/orders/{order_id}/cancel", headers=auth_headers)
     assert resp.status_code == 200
@@ -204,19 +242,34 @@ async def test_cancel_via_post_alias(client: AsyncClient, auth_headers, trading)
 async def test_marketable_limit_fills_at_or_better(client: AsyncClient, operator_headers, trading):
     ask = (await _markets(client, operator_headers))["day_ahead"]["ask"]
     limit = round(ask + 5, 2)
-    resp = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                        side="buy", quantity=5.0, price=limit)
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="buy",
+        quantity=5.0,
+        price=limit,
+    )
     body = resp.json()
     assert body["filled_quantity"] > 0
     assert all(f["price"] <= limit for f in body["fills"])
 
 
 @pytest.mark.asyncio
-async def test_resting_order_fills_on_tick(client: AsyncClient, operator_headers, trading,
-                                           captured_events):
+async def test_resting_order_fills_on_tick(
+    client: AsyncClient, operator_headers, trading, captured_events
+):
     last = (await _markets(client, operator_headers))["real_time"]["last_price"]
-    resp = await _order(client, operator_headers, order_type="limit", market="real_time",
-                        side="sell", quantity=2.0, price=round(last * 2, 2))
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="real_time",
+        side="sell",
+        quantity=2.0,
+        price=round(last * 2, 2),
+    )
     order_id = resp.json()["id"]
     assert resp.json()["status"] == "pending"
 
@@ -228,7 +281,9 @@ async def test_resting_order_fills_on_tick(client: AsyncClient, operator_headers
 
     stored = (await client.get(f"{BASE}/orders/{order_id}", headers=operator_headers)).json()
     assert stored["status"] == "filled"
-    trades = (await client.get(f"{BASE}/trades?order_id={order_id}", headers=operator_headers)).json()
+    trades = (
+        await client.get(f"{BASE}/trades?order_id={order_id}", headers=operator_headers)
+    ).json()
     assert sum(t["quantity"] for t in trades) == pytest.approx(2.0)
     assert all(t["price"] >= round(last * 2, 2) for t in trades)
     types = [e.event_type for e in captured_events]
@@ -242,14 +297,29 @@ async def test_ioc_and_fok(client: AsyncClient, operator_headers, trading):
     qty = round(min(available + 1.0, 49.0), 1)
     assert qty > available
 
-    fok = await _order(client, operator_headers, order_type="fok", market="real_time",
-                       side="buy", quantity=qty, price=price)
+    fok = await _order(
+        client,
+        operator_headers,
+        order_type="fok",
+        market="real_time",
+        side="buy",
+        quantity=qty,
+        price=price,
+    )
     assert fok.status_code == 201
     assert fok.json()["status"] == "cancelled"
     assert fok.json()["filled_quantity"] == 0.0 and fok.json()["fills"] == []
 
-    ioc = await _order(client, operator_headers, order_type="limit", time_in_force="IOC",
-                       market="real_time", side="buy", quantity=qty, price=price)
+    ioc = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        time_in_force="IOC",
+        market="real_time",
+        side="buy",
+        quantity=qty,
+        price=price,
+    )
     body = ioc.json()
     assert body["order_type"] == "immediate_or_cancel"
     assert body["status"] == "cancelled"
@@ -259,9 +329,16 @@ async def test_ioc_and_fok(client: AsyncClient, operator_headers, trading):
 @pytest.mark.asyncio
 async def test_stop_limit_rests_with_parameters(client: AsyncClient, operator_headers, trading):
     last = (await _markets(client, operator_headers))["real_time"]["last_price"]
-    resp = await _order(client, operator_headers, order_type="stop_limit", market="real_time",
-                        side="buy", quantity=1.0, stop_price=round(last * 3, 2),
-                        limit_price=round(last * 3.5, 2))
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="stop_limit",
+        market="real_time",
+        side="buy",
+        quantity=1.0,
+        stop_price=round(last * 3, 2),
+        limit_price=round(last * 3.5, 2),
+    )
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["status"] == "pending"
@@ -275,32 +352,62 @@ async def test_stop_limit_rests_with_parameters(client: AsyncClient, operator_he
 
 @pytest.mark.asyncio
 async def test_invalid_orders_rejected(client: AsyncClient, operator_headers, trading):
-    resp = await _order(client, operator_headers, order_type="market", market="nowhere",
-                        side="buy", quantity=1.0)
+    resp = await _order(
+        client, operator_headers, order_type="market", market="nowhere", side="buy", quantity=1.0
+    )
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "unknown_market"
 
-    resp = await _order(client, operator_headers, order_type="limit", market="real_time",
-                        side="buy", quantity=1.0)
+    resp = await _order(
+        client, operator_headers, order_type="limit", market="real_time", side="buy", quantity=1.0
+    )
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "order_invalid"
 
-    resp = await _order(client, operator_headers, order_type="limit", market="real_time",
-                        side="buy", quantity=1.0, price=45.123)
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="real_time",
+        side="buy",
+        quantity=1.0,
+        price=45.123,
+    )
     assert resp.status_code == 422
     assert "tick size" in resp.json()["detail"]["message"]
 
-    resp = await _order(client, operator_headers, order_type="limit", market="real_time",
-                        side="buy", quantity=1.05, price=45.0)
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="real_time",
+        side="buy",
+        quantity=1.05,
+        price=45.0,
+    )
     assert resp.status_code == 422
     assert "lot size" in resp.json()["detail"]["message"]
 
-    resp = await _order(client, operator_headers, order_type="teleport", market="real_time",
-                        side="buy", quantity=1.0)
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="teleport",
+        market="real_time",
+        side="buy",
+        quantity=1.0,
+    )
     assert resp.status_code == 422  # schema validation
 
-    resp = await _order(client, operator_headers, order_type="limit", market="real_time",
-                        side="buy", quantity=1.0, price=45.0, time_in_force="WEEK")
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="real_time",
+        side="buy",
+        quantity=1.0,
+        price=45.0,
+        time_in_force="WEEK",
+    )
     assert resp.status_code == 422
 
     # Nothing was persisted for malformed orders.
@@ -309,16 +416,25 @@ async def test_invalid_orders_rejected(client: AsyncClient, operator_headers, tr
 
 
 @pytest.mark.asyncio
-async def test_position_limit_rejection_is_persisted(client: AsyncClient, operator_headers,
-                                                     trading, captured_events):
-    resp = await _order(client, operator_headers, order_type="market", market="real_time",
-                        side="buy", quantity=60.0)
+async def test_position_limit_rejection_is_persisted(
+    client: AsyncClient, operator_headers, trading, captured_events
+):
+    resp = await _order(
+        client,
+        operator_headers,
+        order_type="market",
+        market="real_time",
+        side="buy",
+        quantity=60.0,
+    )
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     assert detail["code"] == "risk_limit_breached"
     assert any("Position limit" in r for r in detail["reasons"])
 
-    stored = (await client.get(f"{BASE}/orders/{detail['order_id']}", headers=operator_headers)).json()
+    stored = (
+        await client.get(f"{BASE}/orders/{detail['order_id']}", headers=operator_headers)
+    ).json()
     assert stored["status"] == "rejected"
     assert stored["metadata"]["reject_reasons"] == detail["reasons"]
     assert (await client.get(f"{BASE}/trades", headers=operator_headers)).json() == []
@@ -329,37 +445,72 @@ async def test_position_limit_rejection_is_persisted(client: AsyncClient, operat
 
 @pytest.mark.asyncio
 async def test_resting_orders_count_toward_limits(client: AsyncClient, operator_headers, trading):
-    first = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                         side="buy", quantity=30.0, price=1.00)
+    first = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="buy",
+        quantity=30.0,
+        price=1.00,
+    )
     assert first.status_code == 201
-    second = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                          side="buy", quantity=30.0, price=1.00)
+    second = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="buy",
+        quantity=30.0,
+        price=1.00,
+    )
     assert second.status_code == 422
     assert "resting orders" in " ".join(second.json()["detail"]["reasons"])
     # The opposite side is unaffected.
-    other = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                         side="sell", quantity=30.0, price=2500.00)
+    other = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="sell",
+        quantity=30.0,
+        price=2500.00,
+    )
     assert other.status_code == 201
 
 
 @pytest.mark.asyncio
-async def test_var_limit_blocks_risk_but_allows_reduction(client: AsyncClient, operator_headers,
-                                                          trading):
-    opened = await _order(client, operator_headers, order_type="market", market="real_time",
-                          side="buy", quantity=20.0)
+async def test_var_limit_blocks_risk_but_allows_reduction(
+    client: AsyncClient, operator_headers, trading
+):
+    opened = await _order(
+        client,
+        operator_headers,
+        order_type="market",
+        market="real_time",
+        side="buy",
+        quantity=20.0,
+    )
     assert opened.status_code == 201
     trading.risk_limits.var_limit = 1.0
 
-    more = await _order(client, operator_headers, order_type="market", market="real_time",
-                        side="buy", quantity=1.0)
+    more = await _order(
+        client, operator_headers, order_type="market", market="real_time", side="buy", quantity=1.0
+    )
     assert more.status_code == 422
     assert any("VaR" in r for r in more.json()["detail"]["reasons"])
 
     pf = (await client.get(f"{BASE}/portfolio", headers=operator_headers)).json()
     assert pf["risk"]["breach"] is True
 
-    reduce = await _order(client, operator_headers, order_type="market", market="real_time",
-                          side="sell", quantity=10.0)
+    reduce = await _order(
+        client,
+        operator_headers,
+        order_type="market",
+        market="real_time",
+        side="sell",
+        quantity=10.0,
+    )
     assert reduce.status_code == 201
     assert reduce.json()["status"] == "filled"
 
@@ -371,31 +522,55 @@ async def test_var_limit_blocks_risk_but_allows_reduction(client: AsyncClient, o
 
 @pytest.mark.asyncio
 async def test_viewer_is_read_only(client: AsyncClient, viewer_headers, operator_headers, trading):
-    resp = await _order(client, viewer_headers, order_type="market", market="real_time",
-                        side="buy", quantity=1.0)
+    resp = await _order(
+        client, viewer_headers, order_type="market", market="real_time", side="buy", quantity=1.0
+    )
     assert resp.status_code == 403
 
-    resting = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                           side="buy", quantity=1.0, price=1.00)
+    resting = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="buy",
+        quantity=1.0,
+        price=1.00,
+    )
     order_id = resting.json()["id"]
-    assert (await client.delete(f"{BASE}/orders/{order_id}", headers=viewer_headers)).status_code == 403
-    assert (await client.post(f"{BASE}/orders/{order_id}/cancel", headers=viewer_headers)).status_code == 403
+    assert (
+        await client.delete(f"{BASE}/orders/{order_id}", headers=viewer_headers)
+    ).status_code == 403
+    assert (
+        await client.post(f"{BASE}/orders/{order_id}/cancel", headers=viewer_headers)
+    ).status_code == 403
     assert (await client.post(f"{BASE}/markets/tick", headers=viewer_headers)).status_code == 403
     run = await client.post(f"{BASE}/strategies/arbitrage/run", json={}, headers=viewer_headers)
     assert run.status_code == 403
 
-    for path in ("/orders", "/trades", "/portfolio", "/markets", "/strategies", f"/orders/{order_id}"):
+    for path in (
+        "/orders",
+        "/trades",
+        "/portfolio",
+        "/markets",
+        "/strategies",
+        f"/orders/{order_id}",
+    ):
         assert (await client.get(f"{BASE}{path}", headers=viewer_headers)).status_code == 200, path
-    bt = await client.post(f"{BASE}/strategies/momentum/backtest",
-                           json={"synthetic": {"periods": 48}}, headers=viewer_headers)
+    bt = await client.post(
+        f"{BASE}/strategies/momentum/backtest",
+        json={"synthetic": {"periods": 48}},
+        headers=viewer_headers,
+    )
     assert bt.status_code == 200
 
 
 @pytest.mark.asyncio
 async def test_requires_authentication(client: AsyncClient, trading):
     assert (await client.get(f"{BASE}/portfolio")).status_code == 401
-    resp = await client.post(f"{BASE}/orders", json={"order_type": "market", "market": "real_time",
-                                                     "side": "buy", "quantity": 1.0})
+    resp = await client.post(
+        f"{BASE}/orders",
+        json={"order_type": "market", "market": "real_time", "side": "buy", "quantity": 1.0},
+    )
     assert resp.status_code == 401
 
 
@@ -430,10 +605,18 @@ async def test_markets_listing(client: AsyncClient, auth_headers, trading, captu
 
 @pytest.mark.asyncio
 async def test_state_is_rebuilt_from_database(client: AsyncClient, operator_headers, trading):
-    buy = await _order(client, operator_headers, order_type="market", market="real_time",
-                       side="buy", quantity=8.0)
-    resting = await _order(client, operator_headers, order_type="limit", market="day_ahead",
-                           side="buy", quantity=3.0, price=1.00)
+    buy = await _order(
+        client, operator_headers, order_type="market", market="real_time", side="buy", quantity=8.0
+    )
+    resting = await _order(
+        client,
+        operator_headers,
+        order_type="limit",
+        market="day_ahead",
+        side="buy",
+        quantity=3.0,
+        price=1.00,
+    )
     before = (await client.get(f"{BASE}/portfolio", headers=operator_headers)).json()
 
     # Simulate a process restart: a brand-new service instance.
@@ -452,13 +635,19 @@ async def test_state_is_rebuilt_from_database(client: AsyncClient, operator_head
 
 
 @pytest.mark.asyncio
-async def test_unrestorable_resting_order_is_rejected_on_hydration(client, operator_headers,
-                                                                   trading, db_session):
+async def test_unrestorable_resting_order_is_rejected_on_hydration(
+    client, operator_headers, trading, db_session
+):
     from vpp.db.repositories import TradingRepository
 
     row = await TradingRepository.create_order(
-        db_session, order_type="limit", market="legacy_market", side="buy",
-        quantity=1.0, price=10.0, remaining_quantity=1.0,
+        db_session,
+        order_type="limit",
+        market="legacy_market",
+        side="buy",
+        quantity=1.0,
+        price=10.0,
+        remaining_quantity=1.0,
     )
     await db_session.commit()
     reset_trading_service(_config())
@@ -485,7 +674,9 @@ async def test_list_strategies(client: AsyncClient, auth_headers, trading):
 @pytest.mark.asyncio
 async def test_backtest_synthetic(client: AsyncClient, auth_headers, trading):
     body = {"synthetic": {"periods": 96, "interval_minutes": 60, "seed": 3}}
-    resp = await client.post(f"{BASE}/strategies/arbitrage/backtest", json=body, headers=auth_headers)
+    resp = await client.post(
+        f"{BASE}/strategies/arbitrage/backtest", json=body, headers=auth_headers
+    )
     assert resp.status_code == 200, resp.text
     out = resp.json()
     assert out["data_source"] == "synthetic"
@@ -494,7 +685,9 @@ async def test_backtest_synthetic(client: AsyncClient, auth_headers, trading):
         assert key in out
     assert out["total_pnl"] == pytest.approx(out["final_equity"] - out["initial_cash"])
     assert out["assumptions"]
-    again = await client.post(f"{BASE}/strategies/arbitrage/backtest", json=body, headers=auth_headers)
+    again = await client.post(
+        f"{BASE}/strategies/arbitrage/backtest", json=body, headers=auth_headers
+    )
     assert again.json()["total_pnl"] == out["total_pnl"]  # seeded -> reproducible
 
 
@@ -507,7 +700,9 @@ async def test_backtest_provided_prices(client: AsyncClient, auth_headers, tradi
         "interval_minutes": 60,
         "fee_per_unit": 0.0,
     }
-    resp = await client.post(f"{BASE}/strategies/momentum/backtest", json=body, headers=auth_headers)
+    resp = await client.post(
+        f"{BASE}/strategies/momentum/backtest", json=body, headers=auth_headers
+    )
     assert resp.status_code == 200, resp.text
     out = resp.json()
     assert out["data_source"] == "provided" and out["markets"] == ["real_time"]
@@ -519,18 +714,28 @@ async def test_backtest_provided_prices(client: AsyncClient, auth_headers, tradi
 async def test_backtest_errors(client: AsyncClient, auth_headers, trading):
     resp = await client.post(f"{BASE}/strategies/nope/backtest", json={}, headers=auth_headers)
     assert resp.status_code == 404
-    resp = await client.post(f"{BASE}/strategies/momentum/backtest",
-                             json={"params": {"bogus": 1}}, headers=auth_headers)
+    resp = await client.post(
+        f"{BASE}/strategies/momentum/backtest", json={"params": {"bogus": 1}}, headers=auth_headers
+    )
     assert resp.status_code == 422
     assert resp.json()["detail"]["code"] == "backtest_invalid"
-    resp = await client.post(f"{BASE}/strategies/arbitrage/backtest",
-                             json={"prices": {"real_time": [50.0, 51.0, 52.0]}}, headers=auth_headers)
+    resp = await client.post(
+        f"{BASE}/strategies/arbitrage/backtest",
+        json={"prices": {"real_time": [50.0, 51.0, 52.0]}},
+        headers=auth_headers,
+    )
     assert resp.status_code == 422
-    resp = await client.post(f"{BASE}/strategies/momentum/backtest",
-                             json={"prices": {"a": [1.0, 2.0], "b": [1.0]}}, headers=auth_headers)
+    resp = await client.post(
+        f"{BASE}/strategies/momentum/backtest",
+        json={"prices": {"a": [1.0, 2.0], "b": [1.0]}},
+        headers=auth_headers,
+    )
     assert resp.status_code == 422
-    resp = await client.post(f"{BASE}/strategies/momentum/backtest",
-                             json={"prices": {"a": [1.0, -2.0]}}, headers=auth_headers)
+    resp = await client.post(
+        f"{BASE}/strategies/momentum/backtest",
+        json={"prices": {"a": [1.0, -2.0]}},
+        headers=auth_headers,
+    )
     assert resp.status_code == 422
 
 
@@ -540,22 +745,30 @@ async def test_run_strategy_dry_run_and_live(client: AsyncClient, operator_heade
     gap = abs(markets["real_time"]["last_price"] - markets["day_ahead"]["last_price"])
     params = {"price_threshold": max(gap / 4, 0.01), "transaction_cost": 0.0, "base_quantity": 5.0}
 
-    dry = await client.post(f"{BASE}/strategies/arbitrage/run",
-                            json={"params": params, "dry_run": True}, headers=operator_headers)
+    dry = await client.post(
+        f"{BASE}/strategies/arbitrage/run",
+        json={"params": params, "dry_run": True},
+        headers=operator_headers,
+    )
     assert dry.status_code == 200, dry.text
     signals = dry.json()["signals"]
     assert len(signals) == 2
     assert all(s["status"] == "not_submitted" for s in signals)
     assert (await client.get(f"{BASE}/orders", headers=operator_headers)).json() == []
 
-    live = await client.post(f"{BASE}/strategies/arbitrage/run",
-                             json={"params": params, "dry_run": False}, headers=operator_headers)
+    live = await client.post(
+        f"{BASE}/strategies/arbitrage/run",
+        json={"params": params, "dry_run": False},
+        headers=operator_headers,
+    )
     assert live.status_code == 200
     results = live.json()["signals"]
     assert len(results) == 2
     for r in results:
         assert r["order_id"]
-        order = (await client.get(f"{BASE}/orders/{r['order_id']}", headers=operator_headers)).json()
+        order = (
+            await client.get(f"{BASE}/orders/{r['order_id']}", headers=operator_headers)
+        ).json()
         assert order["metadata"]["strategy"] == "arbitrage"
         assert order["status"] == r["status"]
 
@@ -564,13 +777,18 @@ async def test_run_strategy_dry_run_and_live(client: AsyncClient, operator_heade
 
 
 @pytest.mark.asyncio
-async def test_run_strategy_rejections_are_reported(client: AsyncClient, operator_headers, trading):
+async def test_run_strategy_rejections_are_reported(
+    client: AsyncClient, operator_headers, trading
+):
     trading.risk_limits.max_position = 0.5
     markets = await _markets(client, operator_headers)
     gap = abs(markets["real_time"]["last_price"] - markets["day_ahead"]["last_price"])
     params = {"price_threshold": max(gap / 4, 0.01), "transaction_cost": 0.0, "base_quantity": 5.0}
-    live = await client.post(f"{BASE}/strategies/arbitrage/run",
-                             json={"params": params, "dry_run": False}, headers=operator_headers)
+    live = await client.post(
+        f"{BASE}/strategies/arbitrage/run",
+        json={"params": params, "dry_run": False},
+        headers=operator_headers,
+    )
     results = live.json()["signals"]
     assert results and all(r["status"] == "rejected" for r in results)
     assert all(any("Position limit" in reason for reason in r["reasons"]) for r in results)
@@ -579,8 +797,9 @@ async def test_run_strategy_rejections_are_reported(client: AsyncClient, operato
 def test_service_singleton_is_resettable():
     a = reset_trading_service(TradingServiceConfig(seed=1))
     assert get_trading_service() is a
-    b = reset_trading_service(TradingServiceConfig(
-        seed=1, risk_limits=RiskLimits(max_position=5.0)))
+    b = reset_trading_service(
+        TradingServiceConfig(seed=1, risk_limits=RiskLimits(max_position=5.0))
+    )
     assert get_trading_service() is b and b is not a
     assert b.risk_limits.max_position == 5.0
 

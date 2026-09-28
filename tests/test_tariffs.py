@@ -1,4 +1,5 @@
 """Tests for the M1 tariff engine."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -19,7 +20,6 @@ from vpp.tariffs import (
     TOUSchedule,
     load_urdb_json,
 )
-from vpp.tariffs.calendar import SeasonConfig
 
 PRESETS = Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets"
 
@@ -37,7 +37,10 @@ def _trace_30day(kw: float = 1.0, start: datetime | None = None) -> MeterTrace:
 
 
 def _period(trace: MeterTrace) -> BillingPeriod:
-    return BillingPeriod(start=trace.timestamps[0], end=trace.timestamps[-1] + (trace.timestamps[1] - trace.timestamps[0]))
+    return BillingPeriod(
+        start=trace.timestamps[0],
+        end=trace.timestamps[-1] + (trace.timestamps[1] - trace.timestamps[0]),
+    )
 
 
 def test_tou_simple():
@@ -66,9 +69,7 @@ def test_demand_charge_picks_max():
     timestamps = [start.replace(hour=h) for h in range(24)]
     imp = [1.0] * 24
     imp[18] = 5.0  # 6 PM peak
-    trace = MeterTrace(
-        timestamps=timestamps, import_kwh=imp, interval_minutes=60, tz=timezone.utc
-    )
+    trace = MeterTrace(timestamps=timestamps, import_kwh=imp, interval_minutes=60, tz=timezone.utc)
     dc = DemandCharge(rate=20.0, window="monthly_max")
     tariff = Tariff(name="dc-test", components=[dc])
     bill = tariff.bill(trace, _period(trace))
@@ -81,12 +82,8 @@ def test_demand_charge_ratchet():
     start = datetime(2024, 7, 1, tzinfo=timezone.utc)
     timestamps = [start.replace(hour=h) for h in range(24)]
     imp = [1.0] * 24  # peak = 1 kW this month
-    trace = MeterTrace(
-        timestamps=timestamps, import_kwh=imp, interval_minutes=60, tz=timezone.utc
-    )
-    dc = DemandCharge(
-        rate=10.0, window="monthly_max", ratchet_pct=0.75, component_id="d"
-    )
+    trace = MeterTrace(timestamps=timestamps, import_kwh=imp, interval_minutes=60, tz=timezone.utc)
+    dc = DemandCharge(rate=10.0, window="monthly_max", ratchet_pct=0.75, component_id="d")
     period = _period(trace)
     period.prior_peaks_kw["d"] = [10.0, 8.0, 9.5]  # max 10
     tariff = Tariff(name="ratchet-test", components=[dc])
@@ -164,9 +161,7 @@ def test_seasons_switch():
 
 def test_minimum_bill():
     """Bill below minimum is rounded up; line item shows the make-up."""
-    tou = TimeOfUseRate(
-        periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.10)]}
-    )
+    tou = TimeOfUseRate(periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.10)]})
     minimum = MinimumBill(amount=50.0)
     tariff = Tariff(name="min-test", components=[tou, minimum])
     trace = MeterTrace.constant_load(
@@ -192,9 +187,7 @@ def test_fixed_charge_daily_vs_monthly():
 
 
 def test_pretty_bill_renders():
-    tou = TimeOfUseRate(
-        periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.10)]}
-    )
+    tou = TimeOfUseRate(periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.10)]})
     tariff = Tariff(name="pretty", components=[tou])
     trace = _trace_30day()
     bill = tariff.bill(trace, _period(trace))
@@ -224,9 +217,7 @@ def test_tou_schedule_sell_rate_defaults_to_none():
 
 
 def test_export_rate_falls_back_to_import_rate_when_sell_unset():
-    tou = TimeOfUseRate(
-        periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]}
-    )
+    tou = TimeOfUseRate(periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]})
     dt = datetime(2024, 7, 15, 10, tzinfo=timezone.utc)
     assert tou.export_rate(dt) == pytest.approx(0.20)
 
@@ -279,9 +270,7 @@ def test_urdb_parses_sell_field_into_tou_schedule():
 
 
 def test_tou_period_tiers_defaults_to_empty():
-    tou = TimeOfUseRate(
-        periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]}
-    )
+    tou = TimeOfUseRate(periods={"flat": [TOUSchedule(ALL_DAYS, (0, 24), ALL_MONTHS, 0.20)]})
     assert tou.period_tiers == {}
 
 

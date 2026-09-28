@@ -131,12 +131,14 @@ def parse_frame(text: str | bytes) -> Frame:
     if type_id == MessageTypeId.CALL:
         if len(data) != 4 or not isinstance(data[2], str):
             raise OCPPError(
-                OCPPErrorCode.FORMATION_VIOLATION, "CALL must be [2, id, action, payload]",
+                OCPPErrorCode.FORMATION_VIOLATION,
+                "CALL must be [2, id, action, payload]",
                 unique_id=unique_id,
             )
         if not isinstance(data[3], dict):
             raise OCPPError(
-                OCPPErrorCode.FORMATION_VIOLATION, "CALL payload must be an object",
+                OCPPErrorCode.FORMATION_VIOLATION,
+                "CALL payload must be an object",
                 unique_id=unique_id,
             )
         return Call(unique_id, data[2], data[3])

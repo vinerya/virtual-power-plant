@@ -4,6 +4,7 @@ Useful as a fallback when network feeds are unreachable, and as a fixture
 for benchmarks and integration tests. Produces the same prices for the
 same (start, end, seed) tuple — no I/O.
 """
+
 from __future__ import annotations
 
 import math
@@ -47,9 +48,7 @@ class SyntheticFeed(PriceFeed):
         self.interval_minutes = int(interval_minutes)
         self.seed = int(seed)
 
-    async def fetch(
-        self, start: datetime, end: datetime, **kwargs: Any
-    ) -> list[PricePoint]:
+    async def fetch(self, start: datetime, end: datetime, **kwargs: Any) -> list[PricePoint]:
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
         if end.tzinfo is None:

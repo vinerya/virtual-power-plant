@@ -121,7 +121,9 @@ async def update_rule(
     if "name" in changes and changes["name"] != row.name:
         clash = await AlertRepository.get_rule_by_name(session, changes["name"])
         if clash is not None:
-            raise HTTPException(status.HTTP_409_CONFLICT, f"Alert rule '{changes['name']}' already exists")
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, f"Alert rule '{changes['name']}' already exists"
+            )
     for key, value in changes.items():
         setattr(row, key, value)
     await session.flush()

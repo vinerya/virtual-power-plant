@@ -9,20 +9,20 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from vpp.grid.inverter import GridFormingInverter, GridFollowingInverter, InverterModel
+from vpp.grid.inverter import GridFormingInverter, InverterModel
 
 logger = logging.getLogger(__name__)
 
 
 class MicrogridState(str, Enum):
     GRID_CONNECTED = "grid_connected"
-    ISLANDING = "islanding"         # transition in progress
+    ISLANDING = "islanding"  # transition in progress
     ISLANDED = "islanded"
-    RECONNECTING = "reconnecting"   # resync in progress
+    RECONNECTING = "reconnecting"  # resync in progress
     FAULT = "fault"
 
 
@@ -32,7 +32,7 @@ class LoadPriority:
 
     load_id: str
     power_kw: float
-    priority: int = 5   # 1 = critical (never shed), 10 = lowest priority
+    priority: int = 5  # 1 = critical (never shed), 10 = lowest priority
     is_shed: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -243,19 +243,13 @@ class MicrogridController:
             if inv.state.is_online and inv.state.real_power_kw > 0
         )
         rated_capacity = sum(
-            inv.rated_power_kw
-            for inv in self._inverters.values()
-            if inv.state.is_online
+            inv.rated_power_kw for inv in self._inverters.values() if inv.state.is_online
         )
 
         # Use rated capacity as available generation estimate
         available = max(generation, rated_capacity * 0.8)
 
-        demand = sum(
-            load.power_kw
-            for load in self._loads.values()
-            if not load.is_shed
-        )
+        demand = sum(load.power_kw for load in self._loads.values() if not load.is_shed)
 
         if demand <= available:
             return
@@ -273,7 +267,9 @@ class MicrogridController:
             load.is_shed = True
             excess -= load.power_kw
             self._metrics.load_shed_events += 1
-            logger.info("Shed load %s (%.1f kW, priority %d)", load.load_id, load.power_kw, load.priority)
+            logger.info(
+                "Shed load %s (%.1f kW, priority %d)", load.load_id, load.power_kw, load.priority
+            )
 
     def shed_loads_below_priority(self, min_priority: int) -> int:
         """Manually shed all loads with priority >= min_priority."""
@@ -299,7 +295,8 @@ class MicrogridController:
     def _get_microgrid_frequency(self) -> float:
         """Average frequency from grid-forming inverters."""
         gfm = [
-            inv for inv in self._inverters.values()
+            inv
+            for inv in self._inverters.values()
             if isinstance(inv, GridFormingInverter) and inv.state.is_online
         ]
         if not gfm:
@@ -309,7 +306,8 @@ class MicrogridController:
     def _get_microgrid_voltage(self) -> float:
         """Average voltage from grid-forming inverters."""
         gfm = [
-            inv for inv in self._inverters.values()
+            inv
+            for inv in self._inverters.values()
             if isinstance(inv, GridFormingInverter) and inv.state.is_online
         ]
         if not gfm:
@@ -324,14 +322,10 @@ class MicrogridController:
         )
 
     def get_total_demand(self) -> float:
-        return sum(
-            load.power_kw for load in self._loads.values() if not load.is_shed
-        )
+        return sum(load.power_kw for load in self._loads.values() if not load.is_shed)
 
     def get_shed_load_kw(self) -> float:
-        return sum(
-            load.power_kw for load in self._loads.values() if load.is_shed
-        )
+        return sum(load.power_kw for load in self._loads.values() if load.is_shed)
 
     def to_dict(self) -> dict[str, Any]:
         return {

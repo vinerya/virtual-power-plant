@@ -81,7 +81,7 @@ class IQRDetector(ResearchModel):
             return np.zeros(X.shape[0])
         lower = self._q1 - self.k * self._iqr
         upper = self._q3 + self.k * self._iqr
-        outside = (X < lower) | (X > upper)
+        outside = (lower > X) | (upper < X)
         return np.any(outside, axis=1).astype(float)
 
     def evaluate(self, X: np.ndarray, y: np.ndarray, **kwargs: Any) -> dict[str, float]:
@@ -115,7 +115,7 @@ class MovingAverageDetector(ResearchModel):
         else:
             stds = []
             for i in range(self.window_size, X.shape[0]):
-                window = X[i - self.window_size:i]
+                window = X[i - self.window_size : i]
                 stds.append(np.std(window, axis=0))
             self._baseline_std = np.mean(stds, axis=0)
         self._baseline_std[self._baseline_std < 1e-9] = 1.0
@@ -128,7 +128,7 @@ class MovingAverageDetector(ResearchModel):
 
         anomalies = np.zeros(X.shape[0])
         for i in range(self.window_size, X.shape[0]):
-            window = X[i - self.window_size:i]
+            window = X[i - self.window_size : i]
             window_mean = np.mean(window, axis=0)
             deviation = np.abs(X[i] - window_mean)
             if np.any(deviation > self.threshold * self._baseline_std):

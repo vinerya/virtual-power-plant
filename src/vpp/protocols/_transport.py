@@ -44,8 +44,10 @@ def build_ssl_context(
     """
     if not verify and not cert_path:
         return False
-    ctx = ssl.create_default_context(cafile=ca_path) if verify else ssl.SSLContext(
-        ssl.PROTOCOL_TLS_CLIENT
+    ctx = (
+        ssl.create_default_context(cafile=ca_path)
+        if verify
+        else ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     )
     if not verify:
         ctx.check_hostname = False

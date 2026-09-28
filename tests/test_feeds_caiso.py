@@ -1,4 +1,5 @@
 """Tests for the CAISO OASIS LMP feed adapter (M4)."""
+
 from __future__ import annotations
 
 import io

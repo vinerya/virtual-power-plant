@@ -1,4 +1,5 @@
 """Tests for multi-resource fleet dispatch (M4)."""
+
 from __future__ import annotations
 
 import pytest
@@ -129,9 +130,7 @@ def test_hook_api_per_resource(solver):
     # With per-resource throughput penalty (lambda=10)
     def throughput_penalty(model, params):
         return 10.0 * sum(
-            model.p_charge[r, t] + model.p_discharge[r, t]
-            for r in model.R
-            for t in model.T
+            model.p_charge[r, t] + model.p_discharge[r, t] for r in model.R for t in model.T
         )
 
     m2 = build_fleet_dispatch_model(

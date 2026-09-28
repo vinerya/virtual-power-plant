@@ -49,19 +49,20 @@ Returns dict
     aggregate            : list[float], realized sum_r (p_dis_r - p_chg_r).
     p_import / p_export  : projected feeder values.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pyomo.environ as pyo
 
+from ..solvers.pyomo_plugin import _try_import_pyomo
 from .dispatch import build_battery_dispatch_model
 from .fleet_dispatch import FleetBattery, FleetCoupling
-from ..solvers.pyomo_plugin import _try_import_pyomo
 
 
 def _make_l1_consensus_term(
-    target: List[float],
+    target: list[float],
     rho: float,
 ):
     """Closure: returns an objective_term hook that injects L1 ADMM penalty.
@@ -70,6 +71,7 @@ def _make_l1_consensus_term(
     ``m.admm_dev_pos / m.admm_dev_neg`` constraints, then returns the linear
     term ``rho * sum_t admm_dev[t]`` to be added to the objective.
     """
+
     def _builder(model, params):
         T = len(target)
         if not hasattr(model, "admm_dev"):
@@ -96,15 +98,15 @@ def _solve_subproblem(
     battery: FleetBattery,
     horizon_steps: int,
     dt_hours: float,
-    prices: List[float],
-    target: List[float],
+    prices: list[float],
+    target: list[float],
     rho: float,
     solver_factory,
     pyo_mod,
     time_limit_s: float = 5.0,
-) -> Dict[str, List[float]]:
+) -> dict[str, list[float]]:
     """Solve battery r's local augmented Lagrangian subproblem."""
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "battery_capacity_kwh": battery.capacity_kwh,
         "max_charge_kw": battery.max_charge_kw,
         "max_discharge_kw": battery.max_discharge_kw,
@@ -149,8 +151,16 @@ def _solve_subproblem(
 
 def _project_feeder(value: float, coupling: FleetCoupling) -> float:
     """Project export-positive aggregate value onto feeder bounds."""
-    upper = coupling.feeder_max_export_kw if coupling.feeder_max_export_kw is not None else float("inf")
-    lower = -coupling.feeder_max_import_kw if coupling.feeder_max_import_kw is not None else float("-inf")
+    upper = (
+        coupling.feeder_max_export_kw
+        if coupling.feeder_max_export_kw is not None
+        else float("inf")
+    )
+    lower = (
+        -coupling.feeder_max_import_kw
+        if coupling.feeder_max_import_kw is not None
+        else float("-inf")
+    )
     if value > upper:
         return upper
     if value < lower:
@@ -159,18 +169,18 @@ def _project_feeder(value: float, coupling: FleetCoupling) -> float:
 
 
 def admm_fleet_solve(
-    batteries: List[FleetBattery],
+    batteries: list[FleetBattery],
     horizon_steps: int,
     dt_hours: float,
-    prices: List[float],
-    load_kw: Optional[List[float]] = None,
-    solar_kw: Optional[List[float]] = None,
-    coupling: Optional[FleetCoupling] = None,
+    prices: list[float],
+    load_kw: list[float] | None = None,
+    solar_kw: list[float] | None = None,
+    coupling: FleetCoupling | None = None,
     rho: float = 1.0,
     max_iters: int = 50,
     tolerance: float = 1e-3,
     subproblem_time_limit_s: float = 5.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Solve fleet dispatch via ADMM consensus decomposition."""
     if not batteries:
         raise ValueError("batteries must be non-empty")
@@ -192,7 +202,7 @@ def admm_fleet_solve(
     # u[r][t]: per-resource scaled dual.
     z = [0.0] * T
     u = [[0.0] * T for _ in range(R)]
-    per_battery: Dict[str, Dict[str, List[float]]] = {}
+    per_battery: dict[str, dict[str, list[float]]] = {}
 
     primal_res = float("inf")
     dual_res = float("inf")
@@ -224,7 +234,7 @@ def admm_fleet_solve(
 
         # ---- Subproblems ----
         # Each battery's L1 target = z - u_r (consensus form).
-        per_battery_p_local: List[List[float]] = []
+        per_battery_p_local: list[list[float]] = []
         for ri, b in enumerate(batteries):
             target = [z[t] - u[ri][t] for t in range(T)]
             sol = _solve_subproblem(
@@ -243,8 +253,7 @@ def admm_fleet_solve(
 
         # ---- z-update: average of (p_r + u_r), projected onto avg feeder window ----
         p_avg = [
-            sum(per_battery_p_local[ri][t] + u[ri][t] for ri in range(R)) / R
-            for t in range(T)
+            sum(per_battery_p_local[ri][t] + u[ri][t] for ri in range(R)) / R for t in range(T)
         ]
         z = [_project_avg(p_avg[t]) for t in range(T)]
 
@@ -255,9 +264,7 @@ def admm_fleet_solve(
         # ---- Residuals ----
         # Primal: per-resource consensus error
         primal_res = max(
-            abs(per_battery_p_local[ri][t] - z[t])
-            for ri in range(R)
-            for t in range(T)
+            abs(per_battery_p_local[ri][t] - z[t]) for ri in range(R) for t in range(T)
         )
         dual_res = rho * max(abs(z[t] - z_prev[t]) for t in range(T))
 

@@ -62,6 +62,7 @@ SEP_CONTENT_TYPE = "application/sep+xml"
 # IEEE 2030.5 resource types
 # ---------------------------------------------------------------------------
 
+
 class DERControlMode(IntFlag):
     """DER operating modes as per IEEE 2030.5 DERControlBase."""
 
@@ -119,9 +120,9 @@ class DERControl:
 
     control_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     modes: DERControlMode = NO_MODES
-    set_watts: float | None = None           # target W (opModTargetW)
-    set_var: float | None = None             # target var (opModTargetVar)
-    set_pf: float | None = None              # power factor (opModFixedPFInjectW)
+    set_watts: float | None = None  # target W (opModTargetW)
+    set_var: float | None = None  # target var (opModTargetVar)
+    set_pf: float | None = None  # power factor (opModFixedPFInjectW)
     set_gradient_w_per_s: float | None = None  # ramp rate
     start_time: float = 0.0
     duration_seconds: int = 3600
@@ -130,15 +131,15 @@ class DERControl:
     # Fields populated from a 2030.5 server
     description: str = ""
     program_id: str | None = None
-    event_status: int | None = None          # EventStatus.currentStatus
+    event_status: int | None = None  # EventStatus.currentStatus
     creation_time: float | None = None
-    connect: bool | None = None              # opModConnect
-    energize: bool | None = None             # opModEnergize
-    max_limit_pct: float | None = None       # opModMaxLimW, % of setMaxW
-    fixed_w_pct: float | None = None         # opModFixedW, % of setMaxW (signed)
-    gen_limit_w: float | None = None         # opModGenLimW
-    load_limit_w: float | None = None        # opModLoadLimW
-    ramp_time_s: float | None = None         # rampTms
+    connect: bool | None = None  # opModConnect
+    energize: bool | None = None  # opModEnergize
+    max_limit_pct: float | None = None  # opModMaxLimW, % of setMaxW
+    fixed_w_pct: float | None = None  # opModFixedW, % of setMaxW (signed)
+    gen_limit_w: float | None = None  # opModGenLimW
+    load_limit_w: float | None = None  # opModLoadLimW
+    ramp_time_s: float | None = None  # rampTms
     href: str | None = None
     response_required: int = 0
     reply_to: str | None = None
@@ -189,7 +190,7 @@ class DERStatus:
     """DER status report from a device."""
 
     device_id: str
-    state_of_charge: float | None = None   # 0.0-1.0
+    state_of_charge: float | None = None  # 0.0-1.0
     real_power_w: float = 0.0
     reactive_power_var: float = 0.0
     voltage_v: float = 0.0
@@ -237,6 +238,7 @@ class DERCapability:
 # Identity helpers (IEEE 2030.5 section 6.3.4)
 # ---------------------------------------------------------------------------
 
+
 def lfdi_from_cert_der(cert_der: bytes) -> str:
     """Long-form device identifier: first 160 bits of SHA-256(cert), hex."""
     return hashlib.sha256(cert_der).hexdigest()[:40].upper()
@@ -261,6 +263,7 @@ def lfdi_from_cert_file(path: str) -> str:
 # ---------------------------------------------------------------------------
 # XML parsing
 # ---------------------------------------------------------------------------
+
 
 def _q(tag: str) -> str:
     return f"{{{SEP_NS}}}{tag}"
@@ -383,7 +386,8 @@ def parse_der_control(el: Any, program_id: str | None = None) -> DERControl:
         href=el.get("href"),
         reply_to=el.get("replyTo"),
         response_required=int(el.get("responseRequired", "0"), 16)
-        if el.get("responseRequired") else 0,
+        if el.get("responseRequired")
+        else 0,
     )
     created = _int(el, "creationTime")
     ctrl.creation_time = float(created) if created is not None else None
@@ -412,6 +416,7 @@ def parse_default_der_control(el: Any, program_id: str | None = None) -> DERCont
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
+
 
 class IEEE2030_5Adapter(ProtocolAdapter):
     """IEEE 2030.5 (SEP 2.0) client adapter.
@@ -487,7 +492,9 @@ class IEEE2030_5Adapter(ProtocolAdapter):
             self._poll_task = asyncio.create_task(self._poll_loop())
         logger.info(
             "IEEE 2030.5 client connected to %s (EndDevice %s, %d programs)",
-            self._config.get("server_url"), self.end_device_href, len(self._server_programs),
+            self._config.get("server_url"),
+            self.end_device_href,
+            len(self._server_programs),
         )
 
     async def disconnect(self) -> None:
@@ -803,7 +810,8 @@ class IEEE2030_5Adapter(ProtocolAdapter):
                 now = time.time()
                 for program in self._programs.values():
                     expired = [
-                        c for c in program.active_controls
+                        c
+                        for c in program.active_controls
                         if c.start_time + c.duration_seconds < now and c.start_time > 0
                     ]
                     for c in expired:

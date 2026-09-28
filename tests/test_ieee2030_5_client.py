@@ -25,8 +25,9 @@ NS = 'xmlns="urn:ieee:std:2030.5:ns"'
 
 
 def sep(text: str) -> httpx.Response:
-    return httpx.Response(200, content=text.encode(),
-                          headers={"Content-Type": "application/sep+xml"})
+    return httpx.Response(
+        200, content=text.encode(), headers={"Content-Type": "application/sep+xml"}
+    )
 
 
 def dcap(poll_rate: int = 300) -> str:
@@ -95,8 +96,9 @@ DDERC = f"""<DefaultDERControl {NS} href="/derp/0/dderc">
 </DefaultDERControl>"""
 
 
-def derc_item(mrid: str, start: int, duration: int, status: int, base: str,
-              created: int = 1700000000) -> str:
+def derc_item(
+    mrid: str, start: int, duration: int, status: int, base: str, created: int = 1700000000
+) -> str:
     return f"""
   <DERControl href="/derc/{mrid}" replyTo="/rsps/1/rsp" responseRequired="03">
     <mRID>{mrid}</mRID>
@@ -115,8 +117,10 @@ def derc_item(mrid: str, start: int, duration: int, status: int, base: str,
 
 
 def derc_list(href: str, items: list[str]) -> str:
-    return (f'<DERControlList {NS} all="{len(items)}" results="{len(items)}" '
-            f'href="{href}" subscribable="0">' + "".join(items) + "</DERControlList>")
+    return (
+        f'<DERControlList {NS} all="{len(items)}" results="{len(items)}" '
+        f'href="{href}" subscribable="0">' + "".join(items) + "</DERControlList>"
+    )
 
 
 @pytest.fixture
@@ -124,31 +128,67 @@ def server():
     now = int(time.time())
     with respx.mock(base_url=SERVER, assert_all_called=False) as mock:
         mock.get("/dcap").mock(return_value=sep(dcap()))
-        mock.get("/tm").mock(return_value=sep(
-            f"<Time {NS} href=\"/tm\"><currentTime>{now + 120}</currentTime>"
-            "<dstEndTime>0</dstEndTime><dstOffset>0</dstOffset><dstStartTime>0</dstStartTime>"
-            "<quality>7</quality><tzOffset>0</tzOffset></Time>"
-        ))
+        mock.get("/tm").mock(
+            return_value=sep(
+                f'<Time {NS} href="/tm"><currentTime>{now + 120}</currentTime>'
+                "<dstEndTime>0</dstEndTime><dstOffset>0</dstOffset><dstStartTime>0</dstStartTime>"
+                "<quality>7</quality><tzOffset>0</tzOffset></Time>"
+            )
+        )
         mock.get("/edev").mock(return_value=sep(end_devices()))
         mock.get("/edev/1/fsa").mock(return_value=sep(FSA))
         mock.get("/derp").mock(return_value=sep(DERP))
         mock.get("/derp/0/dderc").mock(return_value=sep(DDERC))
-        mock.get("/derp/1/derc").mock(return_value=sep(derc_list("/derp/1/derc", [
-            derc_item("C-CURTAIL", now - 60, 3600, EventStatusCode.ACTIVE,
-                      "<opModGenLimW><multiplier>3</multiplier><value>5</value></opModGenLimW>"
-                      "<opModMaxLimW>5000</opModMaxLimW>"),
-        ])))
-        mock.get("/derp/0/derc").mock(return_value=sep(derc_list("/derp/0/derc", [
-            derc_item("C-TARGET", now - 30, 1800, EventStatusCode.SCHEDULED,
-                      "<opModTargetW><multiplier>0</multiplier><value>-3000</value></opModTargetW>"
-                      "<opModFixedPFInjectW><displacement>95</displacement>"
-                      "<multiplier>-2</multiplier></opModFixedPFInjectW>"
-                      "<rampTms>500</rampTms>"),
-            derc_item("C-FUTURE", now + 7200, 600, EventStatusCode.SCHEDULED,
-                      "<opModEnergize>false</opModEnergize>"),
-            derc_item("C-CANCELLED", now - 60, 3600, EventStatusCode.CANCELLED,
-                      "<opModConnect>false</opModConnect>"),
-        ])))
+        mock.get("/derp/1/derc").mock(
+            return_value=sep(
+                derc_list(
+                    "/derp/1/derc",
+                    [
+                        derc_item(
+                            "C-CURTAIL",
+                            now - 60,
+                            3600,
+                            EventStatusCode.ACTIVE,
+                            "<opModGenLimW><multiplier>3</multiplier><value>5</value></opModGenLimW>"
+                            "<opModMaxLimW>5000</opModMaxLimW>",
+                        ),
+                    ],
+                )
+            )
+        )
+        mock.get("/derp/0/derc").mock(
+            return_value=sep(
+                derc_list(
+                    "/derp/0/derc",
+                    [
+                        derc_item(
+                            "C-TARGET",
+                            now - 30,
+                            1800,
+                            EventStatusCode.SCHEDULED,
+                            "<opModTargetW><multiplier>0</multiplier><value>-3000</value></opModTargetW>"
+                            "<opModFixedPFInjectW><displacement>95</displacement>"
+                            "<multiplier>-2</multiplier></opModFixedPFInjectW>"
+                            "<rampTms>500</rampTms>",
+                        ),
+                        derc_item(
+                            "C-FUTURE",
+                            now + 7200,
+                            600,
+                            EventStatusCode.SCHEDULED,
+                            "<opModEnergize>false</opModEnergize>",
+                        ),
+                        derc_item(
+                            "C-CANCELLED",
+                            now - 60,
+                            3600,
+                            EventStatusCode.CANCELLED,
+                            "<opModConnect>false</opModConnect>",
+                        ),
+                    ],
+                )
+            )
+        )
         yield mock
 
 
@@ -193,7 +233,8 @@ async def test_discovery_walks_resource_tree(server):
 
         programs = adapter.list_programs()
         assert [p.program_id for p in programs] == [
-            "B1000000000000000000000000000002", "B1000000000000000000000000000001",
+            "B1000000000000000000000000000002",
+            "B1000000000000000000000000000001",
         ]
         default = adapter.get_program("B1000000000000000000000000000001").default_control
         assert default.connect is True
@@ -215,10 +256,12 @@ async def test_discovery_walks_resource_tree(server):
         assert DERControlMode.OP_MOD_FIXED_PF in target.modes
         assert DERControlMode.CHARGE in target.modes
 
-        assert sorted(announced) == sorted([
-            "ieee2030_5/control/B1000000000000000000000000000002/C-CURTAIL",
-            "ieee2030_5/control/B1000000000000000000000000000001/C-TARGET",
-        ])
+        assert sorted(announced) == sorted(
+            [
+                "ieee2030_5/control/B1000000000000000000000000000002/C-CURTAIL",
+                "ieee2030_5/control/B1000000000000000000000000000001/C-TARGET",
+            ]
+        )
 
         # Lists are fetched with explicit paging parameters, sep+xml accepted
         edev_call = next(c for c in server.calls if c.request.url.path == "/edev")
@@ -248,9 +291,11 @@ async def test_future_control_becomes_active(server):
 @pytest.mark.asyncio
 async def test_list_paging(server):
     page1 = derc_list("/derp/1/derc", [derc_item("P1", 0, 10, 0, "")]).replace(
-        'all="1"', 'all="2"')
+        'all="1"', 'all="2"'
+    )
     page2 = derc_list("/derp/1/derc", [derc_item("P2", 0, 10, 0, "")]).replace(
-        'all="1"', 'all="2"')
+        'all="1"', 'all="2"'
+    )
     route = server.get("/derp/1/derc").mock(side_effect=[sep(page1), sep(page2)])
     adapter = _adapter(list_page_size=1)
     await adapter.connect()
@@ -306,9 +351,14 @@ async def test_poll_loop_backoff_and_recovery(server, monkeypatch):
     adapter = _adapter(max_backoff_s=100)
     await adapter.connect()
     adapter.configure(poll_interval_s=10)
-    server.get("/dcap").mock(side_effect=[
-        httpx.ConnectError("down"), httpx.ConnectError("down"), sep(dcap()), sep(dcap()),
-    ])
+    server.get("/dcap").mock(
+        side_effect=[
+            httpx.ConnectError("down"),
+            httpx.ConnectError("down"),
+            sep(dcap()),
+            sep(dcap()),
+        ]
+    )
     sleeps: list[float] = []
     real_sleep = mod.asyncio.sleep
 
@@ -352,5 +402,6 @@ def test_control_activity_rules():
     assert DERControl(start_time=now - 10, duration_seconds=60).is_active_at(now)
     assert not DERControl(start_time=now + 10, duration_seconds=60).is_active_at(now)
     assert not DERControl(start_time=now - 100, duration_seconds=60).is_active_at(now)
-    assert not DERControl(start_time=now - 10, duration_seconds=60,
-                          event_status=EventStatusCode.SUPERSEDED).is_active_at(now)
+    assert not DERControl(
+        start_time=now - 10, duration_seconds=60, event_status=EventStatusCode.SUPERSEDED
+    ).is_active_at(now)

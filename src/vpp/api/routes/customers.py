@@ -62,7 +62,9 @@ async def _customer_user(session: AsyncSession, customer_id: str) -> UserModel:
 
 async def _check_tariff(session: AsyncSession, tariff_id: str | None) -> None:
     if tariff_id is not None and await TariffRepository.get(session, tariff_id) is None:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"tariff {tariff_id!r} not found")
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"tariff {tariff_id!r} not found"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +72,9 @@ async def _check_tariff(session: AsyncSession, tariff_id: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-@router.post("/api/v1/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/api/v1/customers", response_model=CustomerResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_customer(
     body: CustomerCreate,
     session: AsyncSession = Depends(get_db),
@@ -85,14 +89,16 @@ async def create_customer(
         hashed_password=get_password_hash(body.password),
         role=UserRole.CUSTOMER.value,
     )
-    session.add(CustomerProfileModel(
-        user_id=user.id,
-        name=body.name,
-        email=body.email,
-        address=body.address,
-        tariff_id=body.tariff_id,
-        baseline_kwh_per_month=body.baseline_kwh_per_month,
-    ))
+    session.add(
+        CustomerProfileModel(
+            user_id=user.id,
+            name=body.name,
+            email=body.email,
+            address=body.address,
+            tariff_id=body.tariff_id,
+            baseline_kwh_per_month=body.baseline_kwh_per_month,
+        )
+    )
     await session.flush()
     await session.refresh(user)
     return await customer_payload(session, user)
@@ -106,14 +112,18 @@ async def list_customers(
     _user: UserModel = Depends(_staff),
 ):
     users = (
-        await session.execute(
-            select(UserModel)
-            .where(UserModel.role == UserRole.CUSTOMER.value)
-            .order_by(UserModel.username)
-            .offset(skip)
-            .limit(limit)
+        (
+            await session.execute(
+                select(UserModel)
+                .where(UserModel.role == UserRole.CUSTOMER.value)
+                .order_by(UserModel.username)
+                .offset(skip)
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [await customer_payload(session, u) for u in users]
 
 
@@ -198,7 +208,9 @@ def _program_out(p: DRProgramModel, enrolled_count: int | None = None) -> dict:
     }
 
 
-@router.get("/api/v1/programs", response_model=list[DRProgramResponse], response_model_exclude_none=True)
+@router.get(
+    "/api/v1/programs", response_model=list[DRProgramResponse], response_model_exclude_none=True
+)
 async def list_all_programs(
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(_staff),
@@ -206,14 +218,17 @@ async def list_all_programs(
     counts = dict(
         (
             await session.execute(
-                select(ProgramEnrollmentModel.program_id, func.count())
-                .group_by(ProgramEnrollmentModel.program_id)
+                select(ProgramEnrollmentModel.program_id, func.count()).group_by(
+                    ProgramEnrollmentModel.program_id
+                )
             )
         ).all()
     )
     programs = (
-        await session.execute(select(DRProgramModel).order_by(DRProgramModel.name))
-    ).scalars().all()
+        (await session.execute(select(DRProgramModel).order_by(DRProgramModel.name)))
+        .scalars()
+        .all()
+    )
     return [_program_out(p, counts.get(p.id, 0)) for p in programs]
 
 
@@ -232,14 +247,20 @@ async def create_program(
         await session.execute(select(DRProgramModel.id).where(DRProgramModel.name == body.name))
     ).scalar_one_or_none()
     if exists is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, detail="A program with this name already exists")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail="A program with this name already exists"
+        )
     program = DRProgramModel(**body.model_dump())
     session.add(program)
     await session.flush()
     return _program_out(program, 0)
 
 
-@router.patch("/api/v1/programs/{program_id}", response_model=DRProgramResponse, response_model_exclude_none=True)
+@router.patch(
+    "/api/v1/programs/{program_id}",
+    response_model=DRProgramResponse,
+    response_model_exclude_none=True,
+)
 async def update_program(
     program_id: str,
     body: DRProgramUpdate,
@@ -252,13 +273,19 @@ async def update_program(
     fields = body.model_dump(exclude_unset=True)
     for key in ("name", "description", "active"):
         if key in fields and fields[key] is None:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"{key} cannot be null")
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"{key} cannot be null"
+            )
     if "name" in fields and fields["name"] != program.name:
         clash = (
-            await session.execute(select(DRProgramModel.id).where(DRProgramModel.name == fields["name"]))
+            await session.execute(
+                select(DRProgramModel.id).where(DRProgramModel.name == fields["name"])
+            )
         ).scalar_one_or_none()
         if clash is not None:
-            raise HTTPException(status.HTTP_409_CONFLICT, detail="A program with this name already exists")
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, detail="A program with this name already exists"
+            )
     for k, v in fields.items():
         setattr(program, k, v)
     await session.flush()

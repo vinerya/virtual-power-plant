@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,10 +28,10 @@ router = APIRouter(prefix="/api/v1/batteries", tags=["Degradation"])
 # ---------------------------------------------------------------------------
 
 _TTL_SECONDS = 300
-_eol_cache: dict[tuple[str, str], tuple[float, tuple[float, Optional[datetime]]]] = {}
+_eol_cache: dict[tuple[str, str], tuple[float, tuple[float, datetime | None]]] = {}
 
 
-def _eol_cache_get(key: tuple[str, str]) -> Optional[tuple[float, Optional[datetime]]]:
+def _eol_cache_get(key: tuple[str, str]) -> tuple[float, datetime | None] | None:
     entry = _eol_cache.get(key)
     if entry is None:
         return None
@@ -44,13 +43,13 @@ def _eol_cache_get(key: tuple[str, str]) -> Optional[tuple[float, Optional[datet
     return value
 
 
-def _eol_cache_set(key: tuple[str, str], value: tuple[float, Optional[datetime]]) -> None:
+def _eol_cache_set(key: tuple[str, str], value: tuple[float, datetime | None]) -> None:
     _eol_cache[key] = (datetime.now(timezone.utc).timestamp(), value)
 
 
 def _projected_eol(
     battery: ResourceModel, eol_capacity_fraction: float = 0.8
-) -> tuple[float, Optional[datetime]]:
+) -> tuple[float, datetime | None]:
     """Return (daily_efc, projected_eol_date).
 
     daily_efc = cumulative_throughput / capacity / age_in_days / 2
@@ -70,16 +69,20 @@ def _projected_eol(
 
     capacity_kwh = float(battery.rated_power) or 1.0
     age_seconds = (
-        datetime.now(timezone.utc) - battery.created_at.replace(tzinfo=timezone.utc)
-        if battery.created_at and battery.created_at.tzinfo is None
-        else datetime.now(timezone.utc) - battery.created_at
-    ).total_seconds() if battery.created_at else 0.0
+        (
+            datetime.now(timezone.utc) - battery.created_at.replace(tzinfo=timezone.utc)
+            if battery.created_at and battery.created_at.tzinfo is None
+            else datetime.now(timezone.utc) - battery.created_at
+        ).total_seconds()
+        if battery.created_at
+        else 0.0
+    )
     age_days = max(age_seconds / 86400.0, 1.0 / 24.0)  # min 1h to avoid div-by-zero
 
     efc_total = battery.cumulative_throughput_kwh / (2.0 * capacity_kwh)
     daily_efc = efc_total / age_days
 
-    projected: Optional[datetime] = None
+    projected: datetime | None = None
     soh_above_eol = battery.state_of_health - eol_capacity_fraction
     if soh_above_eol > 0 and daily_efc > 0 and loss_per_efc > 0:
         days_left = soh_above_eol / (loss_per_efc * daily_efc)
@@ -113,9 +116,7 @@ async def _build_soh_response(battery: ResourceModel) -> SOHResponse:
 async def _load_battery(session: AsyncSession, battery_id: str) -> ResourceModel:
     obj = await session.get(ResourceModel, battery_id)
     if obj is None or obj.resource_type != "battery":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Battery not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Battery not found")
     return obj
 
 

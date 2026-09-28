@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import Optional
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -14,8 +13,8 @@ from sqlalchemy.ext.asyncio import (
 
 from .base import Base
 
-_engine: Optional[AsyncEngine] = None
-_session_factory: Optional[async_sessionmaker[AsyncSession]] = None
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def create_engine_from_settings(database_url: str, echo: bool = False) -> AsyncEngine:
@@ -86,17 +85,13 @@ async def _run_alembic_upgrade(database_url: str) -> None:
     """Run ``alembic upgrade head`` off the event loop."""
     import asyncio
 
-    await asyncio.get_running_loop().run_in_executor(
-        None, run_alembic_upgrade, database_url
-    )
+    await asyncio.get_running_loop().run_in_executor(None, run_alembic_upgrade, database_url)
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that yields an async database session."""
     if _session_factory is None:
-        raise RuntimeError(
-            "Database not initialised. Call init_db() during application startup."
-        )
+        raise RuntimeError("Database not initialised. Call init_db() during application startup.")
 
     async with _session_factory() as session:
         try:
@@ -110,9 +105,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
     """Return the global session factory.  Raises if DB not initialised."""
     if _session_factory is None:
-        raise RuntimeError(
-            "Database not initialised. Call init_db() during application startup."
-        )
+        raise RuntimeError("Database not initialised. Call init_db() during application startup.")
     return _session_factory
 
 

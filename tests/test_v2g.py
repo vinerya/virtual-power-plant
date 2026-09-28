@@ -1,23 +1,21 @@
 """Tests for V2G models, scheduler, and aggregator."""
 
 import time
+
 import pytest
 
+from vpp.v2g.aggregator import DispatchSignal, GridService, V2GAggregator
 from vpp.v2g.models import (
     EVBattery,
-    EVFleet,
     EVConnectionState,
-    FlexibilityWindow,
-    ChargingSession,
-    ScheduleStatus,
+    EVFleet,
 )
 from vpp.v2g.scheduler import V2GScheduler
-from vpp.v2g.aggregator import V2GAggregator, DispatchSignal, GridService
-
 
 # ---------------------------------------------------------------------------
 # EV Battery tests
 # ---------------------------------------------------------------------------
+
 
 class TestEVBattery:
     def test_defaults(self):
@@ -43,25 +41,43 @@ class TestEVBattery:
         assert ev.available_discharge_kwh == 0.0
 
     def test_charge(self):
-        ev = EVBattery(capacity_kwh=100.0, current_soc=0.5, max_charge_kw=50.0, charge_efficiency=1.0)
+        ev = EVBattery(
+            capacity_kwh=100.0, current_soc=0.5, max_charge_kw=50.0, charge_efficiency=1.0
+        )
         added = ev.charge(50.0, 0.5)
         assert added == pytest.approx(25.0)
         assert ev.current_soc == pytest.approx(0.75)
 
     def test_charge_clamped_at_full(self):
-        ev = EVBattery(capacity_kwh=100.0, current_soc=0.95, max_charge_kw=50.0, charge_efficiency=1.0)
+        ev = EVBattery(
+            capacity_kwh=100.0, current_soc=0.95, max_charge_kw=50.0, charge_efficiency=1.0
+        )
         added = ev.charge(50.0, 1.0)
         assert added == pytest.approx(5.0)
         assert ev.current_soc == pytest.approx(1.0)
 
     def test_discharge(self):
-        ev = EVBattery(capacity_kwh=100.0, current_soc=0.5, min_soc=0.2, max_discharge_kw=50.0, discharge_efficiency=1.0, v2g_capable=True)
+        ev = EVBattery(
+            capacity_kwh=100.0,
+            current_soc=0.5,
+            min_soc=0.2,
+            max_discharge_kw=50.0,
+            discharge_efficiency=1.0,
+            v2g_capable=True,
+        )
         delivered = ev.discharge(50.0, 0.5)
         assert delivered == pytest.approx(25.0)
         assert ev.current_soc == pytest.approx(0.25)
 
     def test_discharge_clamped_at_min(self):
-        ev = EVBattery(capacity_kwh=100.0, current_soc=0.25, min_soc=0.2, max_discharge_kw=50.0, discharge_efficiency=1.0, v2g_capable=True)
+        ev = EVBattery(
+            capacity_kwh=100.0,
+            current_soc=0.25,
+            min_soc=0.2,
+            max_discharge_kw=50.0,
+            discharge_efficiency=1.0,
+            v2g_capable=True,
+        )
         delivered = ev.discharge(50.0, 1.0)
         assert delivered == pytest.approx(5.0)
         assert ev.current_soc == pytest.approx(0.2)
@@ -93,6 +109,7 @@ class TestEVBattery:
 # ---------------------------------------------------------------------------
 # Fleet tests
 # ---------------------------------------------------------------------------
+
 
 class TestEVFleet:
     def _make_fleet(self, n: int = 3) -> EVFleet:
@@ -142,6 +159,7 @@ class TestEVFleet:
 # Scheduler tests
 # ---------------------------------------------------------------------------
 
+
 class TestV2GScheduler:
     def _make_fleet_with_prices(self):
         fleet = EVFleet(name="sched_fleet")
@@ -182,7 +200,10 @@ class TestV2GScheduler:
         fleet, prices = self._make_fleet_with_prices()
         scheduler = V2GScheduler(slot_duration_minutes=15)
         result = scheduler.schedule_fleet(
-            fleet, prices=prices, time_horizon_hours=24.0, use_optimiser=True,
+            fleet,
+            prices=prices,
+            time_horizon_hours=24.0,
+            use_optimiser=True,
         )
 
         assert result.method == "optimised_lp"
@@ -197,7 +218,9 @@ class TestV2GScheduler:
 
     def test_single_ev_schedule(self):
         ev = EVBattery(
-            current_soc=0.4, target_soc=0.8, capacity_kwh=60.0,
+            current_soc=0.4,
+            target_soc=0.8,
+            capacity_kwh=60.0,
             connection_state=EVConnectionState.CONNECTED_IDLE,
             departure_time=time.time() + 12 * 3600,
         )
@@ -209,6 +232,7 @@ class TestV2GScheduler:
 # ---------------------------------------------------------------------------
 # Aggregator tests
 # ---------------------------------------------------------------------------
+
 
 class TestV2GAggregator:
     def _make_aggregator(self, n: int = 5) -> V2GAggregator:

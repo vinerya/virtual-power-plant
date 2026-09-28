@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserRole(str, Enum):
@@ -79,7 +78,7 @@ class TokenPayload(BaseModel):
     aud: str | None = None  # "operator" | "customer"; absent on legacy tokens
     # Token type. None for regular access tokens; "ws" for the short-lived
     # WebSocket handshake tokens, which the HTTP API must refuse.
-    typ: Optional[str] = None
+    typ: str | None = None
 
 
 class APIKeyCreate(BaseModel):

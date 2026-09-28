@@ -8,8 +8,15 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _ORDER_TYPES = {
-    "market", "limit", "stop", "stop_limit", "iceberg",
-    "fok", "ioc", "fill_or_kill", "immediate_or_cancel",
+    "market",
+    "limit",
+    "stop",
+    "stop_limit",
+    "iceberg",
+    "fok",
+    "ioc",
+    "fill_or_kill",
+    "immediate_or_cancel",
 }
 _TIME_IN_FORCE = {"GTC", "DAY", "IOC", "FOK"}
 
@@ -17,6 +24,7 @@ _TIME_IN_FORCE = {"GTC", "DAY", "IOC", "FOK"}
 # ---------------------------------------------------------------------------
 # Orders
 # ---------------------------------------------------------------------------
+
 
 class OrderCreate(BaseModel):
     """Schema for submitting a new order."""
@@ -77,6 +85,7 @@ class OrderResponse(BaseModel):
 # Trades
 # ---------------------------------------------------------------------------
 
+
 class TradeResponse(BaseModel):
     """Schema for a completed trade."""
 
@@ -97,6 +106,7 @@ class TradeResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Portfolio
 # ---------------------------------------------------------------------------
+
 
 class OrderSubmitResponse(OrderResponse):
     """Order as accepted by the venue plus any fills it produced immediately."""
@@ -210,6 +220,7 @@ class TickResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Strategies
 # ---------------------------------------------------------------------------
+
 
 class StrategyInfo(BaseModel):
     name: str

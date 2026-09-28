@@ -18,6 +18,7 @@ def cli() -> None:
 # Server
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 @click.option("--host", default="0.0.0.0", help="Bind host")
 @click.option("--port", default=8000, type=int, help="Bind port")
@@ -45,10 +46,12 @@ def serve(host: str, port: int, reload: bool, workers: int) -> None:
 # Database
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 def init() -> None:
     """Initialise the database and create default configuration."""
     import asyncio
+
     from vpp.db.engine import init_db
     from vpp.settings import get_settings
 
@@ -76,6 +79,7 @@ def migrate(revision: str) -> None:
 # Resources
 # ---------------------------------------------------------------------------
 
+
 @cli.group("resource")
 def resource_group() -> None:
     """Manage energy resources."""
@@ -85,7 +89,8 @@ def resource_group() -> None:
 def resource_list() -> None:
     """List all registered resources."""
     import asyncio
-    from vpp.db.engine import init_db, get_db
+
+    from vpp.db.engine import get_db, init_db
     from vpp.db.repositories import ResourceRepository
     from vpp.settings import get_settings
 
@@ -98,7 +103,9 @@ def resource_list() -> None:
                 click.echo("No resources registered.")
                 return
             for r in items:
-                click.echo(f"  [{r.resource_type:>12}] {r.name:<30} {r.rated_power:>8.1f} kW  {'ONLINE' if r.online else 'OFFLINE'}")
+                click.echo(
+                    f"  [{r.resource_type:>12}] {r.name:<30} {r.rated_power:>8.1f} kW  {'ONLINE' if r.online else 'OFFLINE'}"
+                )
 
     asyncio.run(_list())
 
@@ -107,12 +114,13 @@ def resource_list() -> None:
 # Dispatch
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 @click.argument("target_power", type=float)
 def dispatch(target_power: float) -> None:
     """Run dispatch optimisation for TARGET_POWER kW."""
-    from vpp.core import VirtualPowerPlant
     from vpp.config import VPPConfig
+    from vpp.core import VirtualPowerPlant
 
     vpp = VirtualPowerPlant(config=VPPConfig())
     success = vpp.optimize_dispatch(target_power)
@@ -125,6 +133,7 @@ def dispatch(target_power: float) -> None:
 # Status
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 def status() -> None:
     """Show VPP platform status."""
@@ -133,7 +142,9 @@ def status() -> None:
     settings = get_settings()
     click.echo("=== Virtual Power Plant Platform ===")
     click.echo(f"  Environment : {settings.env}")
-    click.echo(f"  Database    : {'PostgreSQL' if 'postgresql' in settings.database_url else 'SQLite'}")
+    click.echo(
+        f"  Database    : {'PostgreSQL' if 'postgresql' in settings.database_url else 'SQLite'}"
+    )
     click.echo(f"  API         : http://{settings.api_host}:{settings.api_port}")
     click.echo(f"  Metrics     : {'enabled' if settings.metrics_enabled else 'disabled'}")
     click.echo(f"  Log level   : {settings.log_level}")
@@ -142,6 +153,7 @@ def status() -> None:
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
+
 
 @cli.group("config")
 def config_group() -> None:
@@ -178,6 +190,7 @@ def config_validate(path: str) -> None:
 # Benchmark
 # ---------------------------------------------------------------------------
 
+
 @cli.group("benchmark")
 def benchmark_group() -> None:
     """Run and manage VPP benchmarks."""
@@ -193,7 +206,9 @@ def benchmark_list() -> None:
     for name in DatasetRegistry.list_all():
         ds = DatasetRegistry.get(name)
         s = ds.spec()
-        click.echo(f"  {name:<25} {s.duration_hours:>4}h @ {s.resolution_minutes}min  ({s.n_steps} steps)")
+        click.echo(
+            f"  {name:<25} {s.duration_hours:>4}h @ {s.resolution_minutes}min  ({s.n_steps} steps)"
+        )
 
     click.echo("\n=== Scenarios ===")
     for name in ScenarioRegistry.list_all():
@@ -207,7 +222,12 @@ def benchmark_list() -> None:
 @click.option("--seed", default=42, type=int, help="Random seed for reproducibility")
 def benchmark_run(scenario_name: str, seed: int) -> None:
     """Run a benchmark scenario with all built-in methods."""
-    from benchmarks.runner import BenchmarkRunner, NoOpMethod, RuleBasedPeakShaving, SimpleV2GScheduler
+    from benchmarks.runner import (
+        BenchmarkRunner,
+        NoOpMethod,
+        RuleBasedPeakShaving,
+        SimpleV2GScheduler,
+    )
     from benchmarks.scenarios import ScenarioRegistry
 
     scenario = ScenarioRegistry.get(scenario_name)
@@ -220,7 +240,7 @@ def benchmark_run(scenario_name: str, seed: int) -> None:
     for method in methods:
         try:
             result = runner.run(scenario_name, method, seed=seed)
-            click.echo(f"  [{method.name}] solve={result.solve_time_s*1000:.1f}ms")
+            click.echo(f"  [{method.name}] solve={result.solve_time_s * 1000:.1f}ms")
             for k, v in sorted(result.metrics.values.items()):
                 click.echo(f"    {k:<35} {v:>12.4f}")
         except Exception as e:
@@ -234,7 +254,12 @@ def benchmark_run(scenario_name: str, seed: int) -> None:
 @click.option("--seeds", default="42", help="Comma-separated seeds")
 def benchmark_report(scenario: str | None, seeds: str) -> None:
     """Generate a full benchmark comparison report."""
-    from benchmarks.runner import BenchmarkRunner, NoOpMethod, RuleBasedPeakShaving, SimpleV2GScheduler
+    from benchmarks.runner import (
+        BenchmarkRunner,
+        NoOpMethod,
+        RuleBasedPeakShaving,
+        SimpleV2GScheduler,
+    )
     from benchmarks.scenarios import ScenarioRegistry
 
     seed_list = [int(s.strip()) for s in seeds.split(",")]
@@ -260,6 +285,7 @@ def benchmark_report(scenario: str | None, seeds: str) -> None:
 # Demo
 # ---------------------------------------------------------------------------
 
+
 @cli.command()
 @click.option("--horizon", default=24, type=int, help="MPC look-ahead steps")
 @click.option("--ticks", default=24, type=int, help="Number of MPC ticks to run")
@@ -284,8 +310,7 @@ def mpc(horizon: int, ticks: int, interval: int, no_warm_start: bool) -> None:
         "eta_discharge": 0.95,
     }
     prices = [
-        50.0 + 30.0 * math.sin(2 * math.pi * ((k % 24) - 4) / 24.0)
-        for k in range(ticks + horizon)
+        50.0 + 30.0 * math.sin(2 * math.pi * ((k % 24) - 4) / 24.0) for k in range(ticks + horizon)
     ]
     cfg = MPCConfig(
         horizon_steps=horizon,
@@ -307,23 +332,23 @@ def mpc(horizon: int, ticks: int, interval: int, no_warm_start: bool) -> None:
             sl = sl + [sl[-1]] * (H - len(sl))
         return {"prices": sl}
 
-    res = run_backtest(
-        ctrl, bt_cfg, prices[:ticks], [0.0] * ticks, [0.0] * ticks, perfect
+    res = run_backtest(ctrl, bt_cfg, prices[:ticks], [0.0] * ticks, [0.0] * ticks, perfect)
+    click.echo(
+        json.dumps(
+            {
+                "ticks": ticks,
+                "horizon": horizon,
+                "interval_minutes": interval,
+                "warm_start": not no_warm_start,
+                "realized_cost": round(res.realized_cost, 4),
+                "wall_time_s": round(res.wall_time_s, 3),
+                "avg_solve_ms": round(res.cumulative_solve_time_ms / max(ticks, 1), 2),
+                "fallback_count": res.fallback_count,
+                "final_soc_kwh": round(res.soc_trajectory[-1], 3) if res.soc_trajectory else None,
+            },
+            indent=2,
+        )
     )
-    click.echo(json.dumps(
-        {
-            "ticks": ticks,
-            "horizon": horizon,
-            "interval_minutes": interval,
-            "warm_start": not no_warm_start,
-            "realized_cost": round(res.realized_cost, 4),
-            "wall_time_s": round(res.wall_time_s, 3),
-            "avg_solve_ms": round(res.cumulative_solve_time_ms / max(ticks, 1), 2),
-            "fallback_count": res.fallback_count,
-            "final_soc_kwh": round(res.soc_trajectory[-1], 3) if res.soc_trajectory else None,
-        },
-        indent=2,
-    ))
 
 
 @cli.command()

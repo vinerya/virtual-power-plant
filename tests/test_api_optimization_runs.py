@@ -17,12 +17,16 @@ from vpp.events import EventType, get_event_bus
 if TYPE_CHECKING:
     from httpx import AsyncClient
 
-PRESET = Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
+PRESET = (
+    Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
+)
 # Two cheap/expensive cycles: charge at 0.10, discharge at 0.30 / 0.40.
 ARB_PRICES = [0.1] * 6 + [0.3] * 6 + [0.1] * 6 + [0.4] * 6
 
 
-async def _make_resource(client: AsyncClient, headers: dict, rtype: str, rated: float, **meta) -> str:
+async def _make_resource(
+    client: AsyncClient, headers: dict, rtype: str, rated: float, **meta
+) -> str:
     resp = await client.post(
         "/api/v1/resources/",
         json={
@@ -95,7 +99,9 @@ async def test_dispatch_uses_db_resources_and_solver(client, auth_headers, captu
     assert alloc[s1]["availability_basis"] == "nameplate"
 
     # Persisted as a run and announced on the EventBus.
-    run = (await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)).json()
+    run = (
+        await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)
+    ).json()
     assert run["problem_type"] == "dispatch"
     assert run["status"] == "success"
     assert run["solver"] == "pyomo_highs_allocation"
@@ -160,7 +166,9 @@ async def test_dispatch_forced_fallback_is_proportional(client, auth_headers):
     alloc = {a["resource_id"]: a["allocated_power_kw"] for a in body["allocations"]}
     assert alloc[b1] == pytest.approx(15.0)
     assert alloc[b2] == pytest.approx(30.0)
-    run = (await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)).json()
+    run = (
+        await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)
+    ).json()
     assert run["status"] == "fallback_used" and run["fallback_used"] is True
 
 
@@ -241,7 +249,9 @@ async def test_dispatch_skips_offline_and_404s_unknown(client, auth_headers, db_
 
 
 @pytest.mark.asyncio
-async def test_dispatch_solver_crash_marks_run_failed(client, auth_headers, captured_events, monkeypatch):
+async def test_dispatch_solver_crash_marks_run_failed(
+    client, auth_headers, captured_events, monkeypatch
+):
     from vpp.api.routes import optimization as opt_routes
 
     def _boom(*_a, **_k):
@@ -293,7 +303,9 @@ async def test_stochastic_runs_cvar_plugin(client, auth_headers):
     assert len(sol["charge"]) == 12 and len(sol["discharge"]) == 12
     # Cheap first half, expensive second half: charge early, discharge late.
     assert sum(sol["charge"][:6]) > 0 and sum(sol["discharge"][6:]) > 0
-    run = (await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)).json()
+    run = (
+        await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)
+    ).json()
     assert run["problem_type"] == "stochastic"
     assert run["solver"] == "pyomo_highs_stochastic_cvar"
 
@@ -301,8 +313,12 @@ async def test_stochastic_runs_cvar_plugin(client, auth_headers):
 @pytest.mark.asyncio
 async def test_stochastic_is_reproducible_with_seed(client, auth_headers):
     payload = {"num_scenarios": 4, "time_horizon_hours": 6, "seed": 42, "volatility": 0.3}
-    r1 = (await client.post("/api/v1/optimization/stochastic", json=payload, headers=auth_headers)).json()
-    r2 = (await client.post("/api/v1/optimization/stochastic", json=payload, headers=auth_headers)).json()
+    r1 = (
+        await client.post("/api/v1/optimization/stochastic", json=payload, headers=auth_headers)
+    ).json()
+    r2 = (
+        await client.post("/api/v1/optimization/stochastic", json=payload, headers=auth_headers)
+    ).json()
     assert r1["solution"]["scenario_costs"] == pytest.approx(r2["solution"]["scenario_costs"])
 
 
@@ -337,7 +353,9 @@ async def test_stochastic_forced_fallback_and_validation(client, auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_schedule_single_battery_arbitrage_and_explainer(client, auth_headers, captured_events):
+async def test_schedule_single_battery_arbitrage_and_explainer(
+    client, auth_headers, captured_events
+):
     b = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5)
     resp = await client.post(
         "/api/v1/optimization/schedule",
@@ -372,18 +390,22 @@ async def test_schedule_single_battery_arbitrage_and_explainer(client, auth_head
     assert e["actual"]["total_cost"] <= e["counterfactuals"][1]["total_cost"] + 1e-6
     assert e["binding_constraints"], "full charge / discharge blocks should bind"
     assert "saves" in e["rationale"]
-    alias = await client.get(f"/api/v1/optimization/explain/{body['run_id']}", headers=auth_headers)
+    alias = await client.get(
+        f"/api/v1/optimization/explain/{body['run_id']}", headers=auth_headers
+    )
     assert alias.json() == e
 
 
 @pytest.mark.asyncio
 async def test_schedule_hold_policy_returns_to_initial_soc(client, auth_headers):
     b = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5)
-    body = (await client.post(
-        "/api/v1/optimization/schedule",
-        json={"resource_ids": [b], "prices": ARB_PRICES, "terminal_soc_policy": "hold"},
-        headers=auth_headers,
-    )).json()
+    body = (
+        await client.post(
+            "/api/v1/optimization/schedule",
+            json={"resource_ids": [b], "prices": ARB_PRICES, "terminal_soc_policy": "hold"},
+            headers=auth_headers,
+        )
+    ).json()
     assert body["terminal_soc_policy"] == "hold"
     assert body["per_resource"][b]["soc"][-1] >= 0.5 - 1e-4
 
@@ -414,11 +436,13 @@ async def test_schedule_falls_back_without_solver(client, auth_headers, monkeypa
 
     monkeypatch.setattr(mpc, "_try_import_pyomo", lambda: (None, None))
     b = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5)
-    body = (await client.post(
-        "/api/v1/optimization/schedule",
-        json={"resource_ids": [b], "prices": ARB_PRICES},
-        headers=auth_headers,
-    )).json()
+    body = (
+        await client.post(
+            "/api/v1/optimization/schedule",
+            json={"resource_ids": [b], "prices": ARB_PRICES},
+            headers=auth_headers,
+        )
+    ).json()
     assert body["fallback_used"] is True
     assert body["method"] == "rule_based_threshold"
     assert body["fallback_reason"] == "no_pyomo"
@@ -431,7 +455,11 @@ async def test_schedule_with_tariff_id(client, auth_headers):
         urdb = json.load(f)
     t = await client.post(
         "/api/v1/tariffs",
-        json={"name": f"opt-tariff-{uuid.uuid4().hex[:6]}", "utility": "PG&E-opt", "urdb_json": urdb},
+        json={
+            "name": f"opt-tariff-{uuid.uuid4().hex[:6]}",
+            "utility": "PG&E-opt",
+            "urdb_json": urdb,
+        },
         headers=auth_headers,
     )
     assert t.status_code == 201, t.text
@@ -455,7 +483,9 @@ async def test_schedule_with_tariff_id(client, auth_headers):
     assert body["method"] == "milp_highs"
     assert len(body["prices"]) == 24
     assert max(body["prices"]) > min(body["prices"])  # TOU peak vs off-peak
-    run = (await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)).json()
+    run = (
+        await client.get(f"/api/v1/optimization/runs/{body['run_id']}", headers=auth_headers)
+    ).json()
     assert run["inputs"]["tariff_id"] == tariff_id
 
     missing = await client.post(
@@ -468,7 +498,9 @@ async def test_schedule_with_tariff_id(client, auth_headers):
 
 @pytest.mark.asyncio
 async def test_schedule_degradation_aware_uses_db_soh(client, auth_headers, db_session):
-    healthy = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5)
+    healthy = await _make_resource(
+        client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5
+    )
     worn = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5)
     row = await db_session.get(ResourceModel, worn)
     row.state_of_health = 0.82
@@ -486,9 +518,16 @@ async def test_schedule_degradation_aware_uses_db_soh(client, auth_headers, db_s
 
     h, w = await _run(healthy), await _run(worn)
     assert h["wear_cost"] > 0
-    run_h = (await client.get(f"/api/v1/optimization/runs/{h['run_id']}", headers=auth_headers)).json()
-    run_w = (await client.get(f"/api/v1/optimization/runs/{w['run_id']}", headers=auth_headers)).json()
-    assert run_w["metadata"]["wear_cost_per_kwh"][worn] > run_h["metadata"]["wear_cost_per_kwh"][healthy]
+    run_h = (
+        await client.get(f"/api/v1/optimization/runs/{h['run_id']}", headers=auth_headers)
+    ).json()
+    run_w = (
+        await client.get(f"/api/v1/optimization/runs/{w['run_id']}", headers=auth_headers)
+    ).json()
+    assert (
+        run_w["metadata"]["wear_cost_per_kwh"][worn]
+        > run_h["metadata"]["wear_cost_per_kwh"][healthy]
+    )
     assert w["resources"][0]["soh"] == pytest.approx(0.82)
     # Capacity fade: the worn pack schedules against 82 % of nameplate.
     assert w["resources"][0]["capacity_kwh"] == pytest.approx(200 * 0.82)
@@ -502,8 +541,12 @@ async def test_schedule_validation(client, auth_headers):
     both = await client.post(url, json={"prices": [1.0], "tariff_id": "x"}, headers=auth_headers)
     neither = await client.post(url, json={}, headers=auth_headers)
     too_long = await client.post(url, json={"prices": [1.0] * 289}, headers=auth_headers)
-    bad_interval = await client.post(url, json={"prices": [1.0], "interval_minutes": 7}, headers=auth_headers)
-    bad_load = await client.post(url, json={"prices": [1.0, 2.0], "load_kw": [1.0]}, headers=auth_headers)
+    bad_interval = await client.post(
+        url, json={"prices": [1.0], "interval_minutes": 7}, headers=auth_headers
+    )
+    bad_load = await client.post(
+        url, json={"prices": [1.0, 2.0], "load_kw": [1.0]}, headers=auth_headers
+    )
     for r in (both, neither, too_long, bad_interval, bad_load):
         assert r.status_code == 422, r.text
 
@@ -536,7 +579,9 @@ async def test_backtest_inline_battery(client, auth_headers):
     assert body["realized_cost_adjusted"] < body["no_action_cost"]
     assert len(body["soc"]) == 24
     # Explainable like any other schedule run.
-    exp = await client.get(f"/api/v1/optimization/runs/{body['run_id']}/explain", headers=auth_headers)
+    exp = await client.get(
+        f"/api/v1/optimization/runs/{body['run_id']}/explain", headers=auth_headers
+    )
     assert exp.status_code == 200
     assert len(exp.json()["actual"]["per_step"]) == 24
 
@@ -561,9 +606,11 @@ async def test_backtest_with_resource_and_persistence(client, auth_headers):
     assert body["ticks"] == 48
     assert body["perfect_foresight_status"] == "skipped"
     assert body["regret"] is None
-    runs = (await client.get(
-        "/api/v1/optimization/runs", params={"resource_id": b}, headers=auth_headers
-    )).json()
+    runs = (
+        await client.get(
+            "/api/v1/optimization/runs", params={"resource_id": b}, headers=auth_headers
+        )
+    ).json()
     assert [r["id"] for r in runs] == [body["run_id"]]
     assert runs[0]["resource_id"] == b
 
@@ -572,14 +619,20 @@ async def test_backtest_with_resource_and_persistence(client, auth_headers):
 async def test_backtest_validation(client, auth_headers):
     url = "/api/v1/optimization/backtest"
     battery = {"capacity_kwh": 10, "max_power_kw": 5}
-    both = await client.post(url, json={"resource_id": "x", "battery": battery, "prices": [1, 2]}, headers=auth_headers)
+    both = await client.post(
+        url, json={"resource_id": "x", "battery": battery, "prices": [1, 2]}, headers=auth_headers
+    )
     neither = await client.post(url, json={"prices": [1, 2]}, headers=auth_headers)
     too_much = await client.post(
-        url, json={"battery": battery, "prices": [1.0] * 672, "horizon_steps": 96}, headers=auth_headers
+        url,
+        json={"battery": battery, "prices": [1.0] * 672, "horizon_steps": 96},
+        headers=auth_headers,
     )
     for r in (both, neither, too_much):
         assert r.status_code == 422, r.text
-    missing = await client.post(url, json={"resource_id": "nope", "prices": [1, 2]}, headers=auth_headers)
+    missing = await client.post(
+        url, json={"resource_id": "nope", "prices": [1, 2]}, headers=auth_headers
+    )
     assert missing.status_code == 404
 
 
@@ -591,63 +644,109 @@ async def test_backtest_validation(client, auth_headers):
 @pytest.mark.asyncio
 async def test_run_history_filters_and_aliases(client, auth_headers):
     b = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.5)
-    sched = (await client.post(
-        "/api/v1/optimization/schedule",
-        json={"resource_ids": [b], "prices": ARB_PRICES[:6]},
-        headers=auth_headers,
-    )).json()
-    disp = (await client.post(
-        "/api/v1/optimization/dispatch",
-        json={"target_power_kw": 5.0, "resource_ids": [b]},
-        headers=auth_headers,
-    )).json()
+    sched = (
+        await client.post(
+            "/api/v1/optimization/schedule",
+            json={"resource_ids": [b], "prices": ARB_PRICES[:6]},
+            headers=auth_headers,
+        )
+    ).json()
+    disp = (
+        await client.post(
+            "/api/v1/optimization/dispatch",
+            json={"target_power_kw": 5.0, "resource_ids": [b]},
+            headers=auth_headers,
+        )
+    ).json()
 
-    by_res = (await client.get(
-        "/api/v1/optimization/history", params={"resource_id": b, "limit": 10}, headers=auth_headers
-    )).json()
+    by_res = (
+        await client.get(
+            "/api/v1/optimization/history",
+            params={"resource_id": b, "limit": 10},
+            headers=auth_headers,
+        )
+    ).json()
     assert [r["id"] for r in by_res] == [disp["run_id"], sched["run_id"]]  # newest first
     first = by_res[0]
-    for key in ("id", "problem_type", "status", "created_at", "solver", "inputs", "solution", "metadata"):
+    for key in (
+        "id",
+        "problem_type",
+        "status",
+        "created_at",
+        "solver",
+        "inputs",
+        "solution",
+        "metadata",
+    ):
         assert key in first
 
-    typed = (await client.get(
-        "/api/v1/optimization/runs",
-        params={"resource_id": b, "problem_type": "schedule"},
-        headers=auth_headers,
-    )).json()
+    typed = (
+        await client.get(
+            "/api/v1/optimization/runs",
+            params={"resource_id": b, "problem_type": "schedule"},
+            headers=auth_headers,
+        )
+    ).json()
     assert [r["id"] for r in typed] == [sched["run_id"]]
 
-    lean = (await client.get(
-        "/api/v1/optimization/runs",
-        params={"resource_id": b, "include_details": "false"},
-        headers=auth_headers,
-    )).json()
+    lean = (
+        await client.get(
+            "/api/v1/optimization/runs",
+            params={"resource_id": b, "include_details": "false"},
+            headers=auth_headers,
+        )
+    ).json()
     assert lean[0].get("solution") is None
 
-    paged = (await client.get(
-        "/api/v1/optimization/history", params={"resource_id": b, "limit": 1, "offset": 1}, headers=auth_headers
-    )).json()
+    paged = (
+        await client.get(
+            "/api/v1/optimization/history",
+            params={"resource_id": b, "limit": 1, "offset": 1},
+            headers=auth_headers,
+        )
+    ).json()
     assert [r["id"] for r in paged] == [sched["run_id"]]
 
     future = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
     past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    assert (await client.get(
-        "/api/v1/optimization/history", params={"resource_id": b, "start": future}, headers=auth_headers
-    )).json() == []
-    assert len((await client.get(
-        "/api/v1/optimization/history", params={"resource_id": b, "start": past}, headers=auth_headers
-    )).json()) == 2
-    assert (await client.get(
-        "/api/v1/optimization/history", params={"resource_id": b, "end": past}, headers=auth_headers
-    )).json() == []
+    assert (
+        await client.get(
+            "/api/v1/optimization/history",
+            params={"resource_id": b, "start": future},
+            headers=auth_headers,
+        )
+    ).json() == []
+    assert (
+        len(
+            (
+                await client.get(
+                    "/api/v1/optimization/history",
+                    params={"resource_id": b, "start": past},
+                    headers=auth_headers,
+                )
+            ).json()
+        )
+        == 2
+    )
+    assert (
+        await client.get(
+            "/api/v1/optimization/history",
+            params={"resource_id": b, "end": past},
+            headers=auth_headers,
+        )
+    ).json() == []
 
-    alias = (await client.get("/api/v1/dispatches", params={"resource_id": b}, headers=auth_headers)).json()
+    alias = (
+        await client.get("/api/v1/dispatches", params={"resource_id": b}, headers=auth_headers)
+    ).json()
     assert [r["id"] for r in alias] == [disp["run_id"], sched["run_id"]]
     one = await client.get(f"/api/v1/dispatches/{disp['run_id']}", headers=auth_headers)
     assert one.status_code == 200 and one.json()["problem_type"] == "dispatch"
 
     # Single-interval dispatch has no per-step schedule to explain.
-    no_expl = await client.get(f"/api/v1/dispatches/{disp['run_id']}/explain", headers=auth_headers)
+    no_expl = await client.get(
+        f"/api/v1/dispatches/{disp['run_id']}/explain", headers=auth_headers
+    )
     assert no_expl.status_code == 204
 
 
@@ -672,19 +771,25 @@ async def test_run_endpoints_require_auth(client):
 
 @pytest.mark.asyncio
 async def test_realtime_and_distributed_are_persisted(client, auth_headers, captured_events):
-    rt = (await client.post(
-        "/api/v1/optimization/realtime",
-        json={"grid_frequency_hz": 49.9, "active_power_demand_kw": 50.0},
-        headers=auth_headers,
-    )).json()
+    rt = (
+        await client.post(
+            "/api/v1/optimization/realtime",
+            json={"grid_frequency_hz": 49.9, "active_power_demand_kw": 50.0},
+            headers=auth_headers,
+        )
+    ).json()
     assert rt["run_id"]
-    dist = (await client.post(
-        "/api/v1/optimization/distributed",
-        json={"sites": [{"site_id": "a"}, {"site_id": "b"}], "target_power_kw": 10.0},
-        headers=auth_headers,
-    )).json()
+    dist = (
+        await client.post(
+            "/api/v1/optimization/distributed",
+            json={"sites": [{"site_id": "a"}, {"site_id": "b"}], "target_power_kw": 10.0},
+            headers=auth_headers,
+        )
+    ).json()
     for run_id, ptype in ((rt["run_id"], "realtime"), (dist["run_id"], "distributed")):
-        run = (await client.get(f"/api/v1/optimization/runs/{run_id}", headers=auth_headers)).json()
+        run = (
+            await client.get(f"/api/v1/optimization/runs/{run_id}", headers=auth_headers)
+        ).json()
         assert run["problem_type"] == ptype
         assert run["status"] != "running"
         assert len(_events_for(captured_events, run_id)) == 2

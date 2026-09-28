@@ -42,14 +42,17 @@ HEADER = (
 FOOTER = "</oadr:oadrSignedObject></oadr:oadrPayload>"
 
 
-def created_party_registration(code: int = 200, ven_id: str | None = "VEN-123",
-                               registration_id: str | None = "REG-9") -> str:
+def created_party_registration(
+    code: int = 200, ven_id: str | None = "VEN-123", registration_id: str | None = "REG-9"
+) -> str:
     ids = ""
     if registration_id:
         ids += f"<ei:registrationID>{registration_id}</ei:registrationID>"
     if ven_id:
         ids += f"<ei:venID>{ven_id}</ei:venID>"
-    return HEADER + f"""
+    return (
+        HEADER
+        + f"""
 <oadr:oadrCreatedPartyRegistration ei:schemaVersion="2.0b">
   <ei:eiResponse>
     <ei:responseCode>{code}</ei:responseCode>
@@ -67,11 +70,15 @@ def created_party_registration(code: int = 200, ven_id: str | None = "VEN-123",
     </oadr:oadrProfile>
   </oadr:oadrProfiles>
   <oadr:oadrRequestedOadrPollFreq><xcal:duration>PT15S</xcal:duration></oadr:oadrRequestedOadrPollFreq>
-</oadr:oadrCreatedPartyRegistration>""" + FOOTER
+</oadr:oadrCreatedPartyRegistration>"""
+        + FOOTER
+    )
 
 
 def oadr_response(code: int = 200) -> str:
-    return HEADER + f"""
+    return (
+        HEADER
+        + f"""
 <oadr:oadrResponse ei:schemaVersion="2.0b">
   <ei:eiResponse>
     <ei:responseCode>{code}</ei:responseCode>
@@ -79,18 +86,28 @@ def oadr_response(code: int = 200) -> str:
     <pyld:requestID/>
   </ei:eiResponse>
   <ei:venID>VEN-123</ei:venID>
-</oadr:oadrResponse>""" + FOOTER
+</oadr:oadrResponse>"""
+        + FOOTER
+    )
 
 
 def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def oadr_event(event_id: str, *, mod: int = 0, status: str = "far",
-               start: datetime | None = None, duration: str = "PT1H",
-               signal_name: str = "SIMPLE", signal_type: str = "level",
-               values: tuple[float, ...] = (1.0, 2.0), current: float | None = None,
-               response_required: str = "always") -> str:
+def oadr_event(
+    event_id: str,
+    *,
+    mod: int = 0,
+    status: str = "far",
+    start: datetime | None = None,
+    duration: str = "PT1H",
+    signal_name: str = "SIMPLE",
+    signal_type: str = "level",
+    values: tuple[float, ...] = (1.0, 2.0),
+    current: float | None = None,
+    response_required: str = "always",
+) -> str:
     start = start or datetime.now(timezone.utc) + timedelta(hours=1)
     intervals = "".join(
         f"""<ei:interval>
@@ -102,7 +119,8 @@ def oadr_event(event_id: str, *, mod: int = 0, status: str = "far",
     )
     current_xml = (
         f"<ei:currentValue><ei:payloadFloat><ei:value>{current}</ei:value></ei:payloadFloat></ei:currentValue>"
-        if current is not None else ""
+        if current is not None
+        else ""
     )
     return f"""
 <oadr:oadrEvent>
@@ -142,7 +160,9 @@ def oadr_event(event_id: str, *, mod: int = 0, status: str = "far",
 
 
 def distribute_event(*events: str, request_id: str = "DIST-1") -> str:
-    return HEADER + f"""
+    return (
+        HEADER
+        + f"""
 <oadr:oadrDistributeEvent ei:schemaVersion="2.0b">
   <ei:eiResponse>
     <ei:responseCode>200</ei:responseCode>
@@ -152,16 +172,22 @@ def distribute_event(*events: str, request_id: str = "DIST-1") -> str:
   <pyld:requestID>{request_id}</pyld:requestID>
   <ei:vtnID>VTN-UTILITY</ei:vtnID>
   {"".join(events)}
-</oadr:oadrDistributeEvent>""" + FOOTER
+</oadr:oadrDistributeEvent>"""
+        + FOOTER
+    )
 
 
 def simple_vtn_message(tag: str) -> str:
-    return HEADER + f"""
+    return (
+        HEADER
+        + f"""
 <oadr:{tag} ei:schemaVersion="2.0b">
   <pyld:requestID>VTN-REQ-7</pyld:requestID>
   <ei:registrationID>REG-9</ei:registrationID>
   <ei:venID>VEN-123</ei:venID>
-</oadr:{tag}>""" + FOOTER
+</oadr:{tag}>"""
+        + FOOTER
+    )
 
 
 def _body(request: httpx.Request):
@@ -192,6 +218,7 @@ def _adapter(**config) -> OpenADRAdapter:
 # Mode honesty
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_without_vtn_url_is_simulated():
     adapter = OpenADRAdapter()
@@ -215,6 +242,7 @@ async def test_vtn_role_is_simulated_even_with_url():
 # Registration
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_registration_flow(vtn):
     adapter = _adapter()
@@ -228,7 +256,8 @@ async def test_registration_flow(vtn):
 
         calls = list(vtn.calls)
         assert [c.request.url.path.rsplit("/", 1)[-1] for c in calls] == [
-            "EiRegisterParty", "EiRegisterParty",
+            "EiRegisterParty",
+            "EiRegisterParty",
         ]
         query = _body(calls[0].request)
         assert ox.message_name(query) == "oadrQueryRegistration"
@@ -291,17 +320,27 @@ async def test_http_error_status_raises(vtn):
 # Polling + events
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_poll_distribute_event_and_opt_in(vtn):
     start = datetime.now(timezone.utc) + timedelta(hours=2)
-    vtn.post("/OadrPoll").mock(side_effect=[
-        _xml(distribute_event(
-            oadr_event("EVT-1", start=start, signal_name="ELECTRICITY_PRICE",
-                       signal_type="price", values=(0.45, 0.60)),
-            oadr_event("EVT-2", start=start, response_required="never"),
-        )),
-        _xml(oadr_response()),
-    ])
+    vtn.post("/OadrPoll").mock(
+        side_effect=[
+            _xml(
+                distribute_event(
+                    oadr_event(
+                        "EVT-1",
+                        start=start,
+                        signal_name="ELECTRICITY_PRICE",
+                        signal_type="price",
+                        values=(0.45, 0.60),
+                    ),
+                    oadr_event("EVT-2", start=start, response_required="never"),
+                )
+            ),
+            _xml(oadr_response()),
+        ]
+    )
     adapter = _adapter()
     received = []
 
@@ -353,25 +392,55 @@ async def test_poll_distribute_event_and_opt_in(vtn):
 @pytest.mark.asyncio
 async def test_handler_opt_out_and_modification_and_implicit_cancel(vtn):
     now = datetime.now(timezone.utc)
-    vtn.post("/OadrPoll").mock(side_effect=[
-        _xml(distribute_event(oadr_event("EVT-A", start=now - timedelta(minutes=5),
-                                         status="active", current=3.0,
-                                         signal_name="LOAD_DISPATCH", signal_type="setpoint"))),
-        _xml(oadr_response()),
-        # identical revision: no new response
-        _xml(distribute_event(oadr_event("EVT-A", start=now - timedelta(minutes=5),
-                                         status="active", current=3.0,
-                                         signal_name="LOAD_DISPATCH", signal_type="setpoint"))),
-        _xml(oadr_response()),
-        # modified revision -> handled again
-        _xml(distribute_event(oadr_event("EVT-A", mod=1, start=now - timedelta(minutes=5),
-                                         status="active", current=1.0,
-                                         signal_name="LOAD_DISPATCH", signal_type="setpoint"))),
-        _xml(oadr_response()),
-        # event gone -> implicitly cancelled
-        _xml(distribute_event()),
-        _xml(oadr_response()),
-    ])
+    vtn.post("/OadrPoll").mock(
+        side_effect=[
+            _xml(
+                distribute_event(
+                    oadr_event(
+                        "EVT-A",
+                        start=now - timedelta(minutes=5),
+                        status="active",
+                        current=3.0,
+                        signal_name="LOAD_DISPATCH",
+                        signal_type="setpoint",
+                    )
+                )
+            ),
+            _xml(oadr_response()),
+            # identical revision: no new response
+            _xml(
+                distribute_event(
+                    oadr_event(
+                        "EVT-A",
+                        start=now - timedelta(minutes=5),
+                        status="active",
+                        current=3.0,
+                        signal_name="LOAD_DISPATCH",
+                        signal_type="setpoint",
+                    )
+                )
+            ),
+            _xml(oadr_response()),
+            # modified revision -> handled again
+            _xml(
+                distribute_event(
+                    oadr_event(
+                        "EVT-A",
+                        mod=1,
+                        start=now - timedelta(minutes=5),
+                        status="active",
+                        current=1.0,
+                        signal_name="LOAD_DISPATCH",
+                        signal_type="setpoint",
+                    )
+                )
+            ),
+            _xml(oadr_response()),
+            # event gone -> implicitly cancelled
+            _xml(distribute_event()),
+            _xml(oadr_response()),
+        ]
+    )
     adapter = _adapter()
     seen = []
 
@@ -409,9 +478,12 @@ async def test_handler_opt_out_and_modification_and_implicit_cancel(vtn):
 
 @pytest.mark.asyncio
 async def test_send_opt_changes_opt_state(vtn):
-    vtn.post("/OadrPoll").mock(side_effect=[
-        _xml(distribute_event(oadr_event("EVT-X"))), _xml(oadr_response()),
-    ])
+    vtn.post("/OadrPoll").mock(
+        side_effect=[
+            _xml(distribute_event(oadr_event("EVT-X"))),
+            _xml(oadr_response()),
+        ]
+    )
     adapter = _adapter()
     await adapter.connect()
     try:
@@ -430,12 +502,14 @@ async def test_send_opt_changes_opt_state(vtn):
 
 @pytest.mark.asyncio
 async def test_reregistration_and_cancel_and_register_report(vtn):
-    vtn.post("/OadrPoll").mock(side_effect=[
-        _xml(simple_vtn_message("oadrRegisterReport")),
-        _xml(simple_vtn_message("oadrRequestReregistration")),
-        _xml(simple_vtn_message("oadrCancelPartyRegistration")),
-        _xml(oadr_response()),
-    ])
+    vtn.post("/OadrPoll").mock(
+        side_effect=[
+            _xml(simple_vtn_message("oadrRegisterReport")),
+            _xml(simple_vtn_message("oadrRequestReregistration")),
+            _xml(simple_vtn_message("oadrCancelPartyRegistration")),
+            _xml(oadr_response()),
+        ]
+    )
     adapter = _adapter()
     await adapter.connect()
     try:
@@ -446,7 +520,9 @@ async def test_reregistration_and_cancel_and_register_report(vtn):
         reg_calls = [c for c in vtn.calls if c.request.url.path.endswith("/EiRegisterParty")]
         names = [ox.message_name(_body(c.request)) for c in reg_calls[before:]]
         assert names == [
-            "oadrResponse", "oadrQueryRegistration", "oadrCreatePartyRegistration",
+            "oadrResponse",
+            "oadrQueryRegistration",
+            "oadrCreatePartyRegistration",
             "oadrCanceledPartyRegistration",
         ]
         canceled = _body(reg_calls[-1].request)
@@ -469,12 +545,14 @@ async def test_poll_loop_backs_off_and_recovers(vtn, monkeypatch):
             raise openadr_mod.asyncio.CancelledError
         await real_sleep(0)
 
-    vtn.post("/OadrPoll").mock(side_effect=[
-        httpx.ConnectError("down"),
-        httpx.ConnectError("down"),
-        _xml(oadr_response()),
-        _xml(oadr_response()),
-    ])
+    vtn.post("/OadrPoll").mock(
+        side_effect=[
+            httpx.ConnectError("down"),
+            httpx.ConnectError("down"),
+            _xml(oadr_response()),
+            _xml(oadr_response()),
+        ]
+    )
     adapter = _adapter(max_backoff_s=60)
     await adapter.connect()
     adapter.configure(poll_interval_s=10)
@@ -517,6 +595,7 @@ async def test_poll_error_code_triggers_reregistration(vtn):
 # XML + helpers
 # ---------------------------------------------------------------------------
 
+
 def test_parse_rejects_malformed_and_xxe():
     with pytest.raises(ox.OpenADRError):
         ox.parse_payload(b"<not-closed")
@@ -524,8 +603,10 @@ def test_parse_rejects_malformed_and_xxe():
         ox.parse_payload(b"<foo/>")
     xxe = (
         b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
-        + (HEADER.split("\n", 1)[1] + "<oadr:oadrResponse><ei:venID>&x;</ei:venID>"
-           "</oadr:oadrResponse>" + FOOTER).encode()
+        + (
+            HEADER.split("\n", 1)[1] + "<oadr:oadrResponse><ei:venID>&x;</ei:venID>"
+            "</oadr:oadrResponse>" + FOOTER
+        ).encode()
     )
     msg = ox.parse_payload(xxe)
     assert "root:" not in (msg.findtext("ei:venID", namespaces=NS) or "")
@@ -534,10 +615,17 @@ def test_parse_rejects_malformed_and_xxe():
 def test_open_ended_event_and_load_percentage():
     from vpp.protocols.openadr import dr_event_from_parsed
 
-    msg = ox.parse_payload(distribute_event(oadr_event(
-        "OPEN", duration="PT0S", values=(), signal_name="LOAD_CONTROL",
-        signal_type="x-loadControlPercentOffset",
-    )))
+    msg = ox.parse_payload(
+        distribute_event(
+            oadr_event(
+                "OPEN",
+                duration="PT0S",
+                values=(),
+                signal_name="LOAD_CONTROL",
+                signal_type="x-loadControlPercentOffset",
+            )
+        )
+    )
     parsed = ox.parse_distribute_event(msg).events[0]
     evt = dr_event_from_parsed(parsed)
     assert evt.metadata["open_ended"] is True

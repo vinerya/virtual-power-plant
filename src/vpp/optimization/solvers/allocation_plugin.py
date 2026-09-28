@@ -13,6 +13,7 @@ Both solvers return the same solution shape::
         "method": str,
     }
 """
+
 from __future__ import annotations
 
 import time

@@ -22,7 +22,6 @@ from vpp.protocols.modbus_ingestion import (
     modbus_config_for_resource,
 )
 
-
 # ---------------------------------------------------------------------------
 # modbus_config_for_resource
 # ---------------------------------------------------------------------------
@@ -202,10 +201,16 @@ async def test_handle_message_records_telemetry_history(db_session, app):
     await persister.handle_message(msg)
 
     rows = (
-        await db_session.execute(
-            select(ResourceTelemetryModel).where(ResourceTelemetryModel.resource_id == resource.id)
+        (
+            await db_session.execute(
+                select(ResourceTelemetryModel).where(
+                    ResourceTelemetryModel.resource_id == resource.id
+                )
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].power_kw == pytest.approx(1.2)
     assert rows[0].source == "modbus"

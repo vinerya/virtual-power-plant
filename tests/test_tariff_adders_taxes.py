@@ -1,4 +1,5 @@
 """Adder + tax line items, including PG&E preset cross-check (M4)."""
+
 from __future__ import annotations
 
 import json
@@ -10,7 +11,6 @@ import pytest
 from vpp.tariffs import (
     AdderRate,
     BillingPeriod,
-    FixedCharge,
     MeterTrace,
     Tariff,
     TaxRate,
@@ -18,14 +18,8 @@ from vpp.tariffs import (
     load_urdb_json,
 )
 
-
 PRESET = (
-    Path(__file__).resolve().parents[1]
-    / "src"
-    / "vpp"
-    / "tariffs"
-    / "presets"
-    / "pge_etouc.json"
+    Path(__file__).resolve().parents[1] / "src" / "vpp" / "tariffs" / "presets" / "pge_etouc.json"
 )
 
 
@@ -126,9 +120,7 @@ def test_pge_etouc_with_added_taxes_matches_published_total():
     # The energy subtotal of the preset (TOU rates 0.36 / 0.46) on a flat
     # constant-load trace is deterministic. The adder (0.5%) + tax (1.5%) =
     # 2.0% of the subtotal-after-adder.
-    energy_subtotal = sum(
-        li.amount for li in bill.line_items if li.kind in {"energy", "tier"}
-    )
+    energy_subtotal = sum(li.amount for li in bill.line_items if li.kind in {"energy", "tier"})
     assert energy_subtotal > 0
     adder = [li for li in bill.line_items if li.kind == "adder"]
     tax = [li for li in bill.line_items if li.kind == "tax"]

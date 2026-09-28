@@ -1,6 +1,5 @@
 """Tests for protocol adapter base, registry, and adapters."""
 
-import asyncio
 import pytest
 
 from vpp.protocols.base import (
@@ -9,13 +8,13 @@ from vpp.protocols.base import (
     ProtocolRegistry,
     ProtocolStatus,
 )
-from vpp.protocols.openadr import OpenADRAdapter, DREvent, DRSignalType
-from vpp.protocols.ocpp import OCPPAdapter, ChargePoint, ChargePointStatus
-
+from vpp.protocols.ocpp import ChargePoint, ChargePointStatus, OCPPAdapter
+from vpp.protocols.openadr import DREvent, DRSignalType, OpenADRAdapter
 
 # ---------------------------------------------------------------------------
 # In-memory test adapter
 # ---------------------------------------------------------------------------
+
 
 class MemoryAdapter(ProtocolAdapter):
     """Simple in-memory adapter for testing."""
@@ -42,6 +41,7 @@ class MemoryAdapter(ProtocolAdapter):
 # ---------------------------------------------------------------------------
 # Base + Registry tests
 # ---------------------------------------------------------------------------
+
 
 class TestProtocolBase:
     @pytest.mark.asyncio
@@ -146,6 +146,7 @@ class TestProtocolRegistry:
 # OpenADR tests
 # ---------------------------------------------------------------------------
 
+
 class TestOpenADR:
     @pytest.mark.asyncio
     async def test_lifecycle(self):
@@ -201,6 +202,7 @@ class TestOpenADR:
 # ---------------------------------------------------------------------------
 # OCPP tests
 # ---------------------------------------------------------------------------
+
 
 class TestOCPP:
     @pytest.mark.asyncio
@@ -270,8 +272,20 @@ class TestOCPP:
         adapter = OCPPAdapter()
         await adapter.connect()
 
-        cp1 = ChargePoint(charge_point_id="CP-A", current_power_kw=10.0, v2g_capable=True, status=ChargePointStatus.CHARGING, max_power_kw=22.0)
-        cp2 = ChargePoint(charge_point_id="CP-B", current_power_kw=5.0, v2g_capable=False, status=ChargePointStatus.CHARGING, max_power_kw=11.0)
+        cp1 = ChargePoint(
+            charge_point_id="CP-A",
+            current_power_kw=10.0,
+            v2g_capable=True,
+            status=ChargePointStatus.CHARGING,
+            max_power_kw=22.0,
+        )
+        cp2 = ChargePoint(
+            charge_point_id="CP-B",
+            current_power_kw=5.0,
+            v2g_capable=False,
+            status=ChargePointStatus.CHARGING,
+            max_power_kw=11.0,
+        )
         adapter.register_charge_point(cp1)
         adapter.register_charge_point(cp2)
 

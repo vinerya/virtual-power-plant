@@ -1,8 +1,9 @@
 """Pydantic v2 schemas for tariff CRUD and bill simulation."""
+
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -13,18 +14,18 @@ class TariffCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     utility: str = Field("", max_length=255)
     urdb_json: dict[str, Any] = Field(..., description="URDB-shaped tariff JSON")
-    effective_date: Optional[date] = None
-    urdb_label: Optional[str] = Field(default=None, max_length=128)
+    effective_date: date | None = None
+    urdb_label: str | None = Field(default=None, max_length=128)
 
 
 class TariffUpdate(BaseModel):
     """Partial update — all fields optional."""
 
-    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
-    utility: Optional[str] = Field(default=None, max_length=255)
-    urdb_json: Optional[dict[str, Any]] = None
-    effective_date: Optional[date] = None
-    urdb_label: Optional[str] = Field(default=None, max_length=128)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    utility: str | None = Field(default=None, max_length=255)
+    urdb_json: dict[str, Any] | None = None
+    effective_date: date | None = None
+    urdb_label: str | None = Field(default=None, max_length=128)
 
 
 class TariffRead(BaseModel):
@@ -35,9 +36,9 @@ class TariffRead(BaseModel):
     id: str
     name: str
     utility: str
-    urdb_label: Optional[str] = None
+    urdb_label: str | None = None
     urdb_json: dict[str, Any]
-    effective_date: Optional[date] = None
+    effective_date: date | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -45,13 +46,15 @@ class TariffRead(BaseModel):
 class MeterTraceDTO(BaseModel):
     """API representation of a metered interval-energy trace."""
 
-    timestamps: list[datetime] = Field(..., description="Interval-start timestamps (ISO, tz-aware)")
+    timestamps: list[datetime] = Field(
+        ..., description="Interval-start timestamps (ISO, tz-aware)"
+    )
     import_kwh: list[float]
     export_kwh: list[float] = Field(default_factory=list)
     interval_minutes: int = 60
 
     @model_validator(mode="after")
-    def _check_lengths(self) -> "MeterTraceDTO":
+    def _check_lengths(self) -> MeterTraceDTO:
         n = len(self.timestamps)
         if len(self.import_kwh) != n:
             raise ValueError("import_kwh length must equal timestamps length")
@@ -69,16 +72,16 @@ class BillSimulationRequest(BaseModel):
     * ``nem3_avoided_cost`` — 24-element hourly $/kWh vector for nem3.
     """
 
-    tariff_id: Optional[str] = None
-    urdb_json: Optional[dict[str, Any]] = None
+    tariff_id: str | None = None
+    urdb_json: dict[str, Any] | None = None
     meter_trace: MeterTraceDTO
     billing_period_start: datetime
     billing_period_end: datetime
-    nem: Optional[str] = None
-    nem3_avoided_cost: Optional[list[float]] = None
+    nem: str | None = None
+    nem3_avoided_cost: list[float] | None = None
 
     @model_validator(mode="after")
-    def _xor(self) -> "BillSimulationRequest":
+    def _xor(self) -> BillSimulationRequest:
         if (self.tariff_id is None) == (self.urdb_json is None):
             raise ValueError("Provide exactly one of tariff_id or urdb_json")
         if self.billing_period_end <= self.billing_period_start:
@@ -106,5 +109,7 @@ class BillResponse(BaseModel):
 class URDBImportRequest(BaseModel):
     """Request to import a URDB record from openei.org."""
 
-    urdb_label: str = Field(..., min_length=1, max_length=128, description="URDB record id (getpage)")
-    name_override: Optional[str] = None
+    urdb_label: str = Field(
+        ..., min_length=1, max_length=128, description="URDB record id (getpage)"
+    )
+    name_override: str | None = None

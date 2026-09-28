@@ -13,14 +13,14 @@ Currently provides:
   single-interval fleet power allocation LP and its proportional fallback.
 """
 
+from .allocation_plugin import PowerAllocationPlugin, ProportionalAllocationRules
 from .pyomo_plugin import PyomoPlugin, SimpleBatteryDispatchRules
 from .stochastic_plugin import StochasticCVaRPlugin
-from .allocation_plugin import PowerAllocationPlugin, ProportionalAllocationRules
 
 __all__ = [
+    "PowerAllocationPlugin",
+    "ProportionalAllocationRules",
     "PyomoPlugin",
     "SimpleBatteryDispatchRules",
     "StochasticCVaRPlugin",
-    "PowerAllocationPlugin",
-    "ProportionalAllocationRules",
 ]

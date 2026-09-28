@@ -21,10 +21,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base, TimestampMixin
 
-
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
+
 
 class ResourceModel(TimestampMixin, Base):
     """Persisted energy resource."""
@@ -32,7 +32,9 @@ class ResourceModel(TimestampMixin, Base):
     __tablename__ = "resources"
 
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    resource_type: Mapped[str] = mapped_column(String(50), index=True)  # battery | solar | wind_turbine
+    resource_type: Mapped[str] = mapped_column(
+        String(50), index=True
+    )  # battery | solar | wind_turbine
     rated_power: Mapped[float] = mapped_column(Float)
     online: Mapped[bool] = mapped_column(Boolean, default=True)
     current_power: Mapped[float] = mapped_column(Float, default=0.0)
@@ -63,10 +65,10 @@ class ResourceModel(TimestampMixin, Base):
     )
 
     # Relationships
-    battery_states: Mapped[list["BatteryStateModel"]] = relationship(
+    battery_states: Mapped[list[BatteryStateModel]] = relationship(
         back_populates="resource", cascade="all, delete-orphan"
     )
-    soh_samples: Mapped[list["BatterySOHSampleModel"]] = relationship(
+    soh_samples: Mapped[list[BatterySOHSampleModel]] = relationship(
         back_populates="resource", cascade="all, delete-orphan"
     )
 
@@ -75,9 +77,7 @@ class BatteryStateModel(TimestampMixin, Base):
     """Time-series battery state snapshots."""
 
     __tablename__ = "battery_states"
-    __table_args__ = (
-        Index("ix_battery_states_resource_ts", "resource_id", "timestamp"),
-    )
+    __table_args__ = (Index("ix_battery_states_resource_ts", "resource_id", "timestamp"),)
 
     resource_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("resources.id", ondelete="CASCADE"), index=True
@@ -90,16 +90,14 @@ class BatteryStateModel(TimestampMixin, Base):
     power: Mapped[float] = mapped_column(Float, default=0.0)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    resource: Mapped["ResourceModel"] = relationship(back_populates="battery_states")
+    resource: Mapped[ResourceModel] = relationship(back_populates="battery_states")
 
 
 class BatterySOHSampleModel(TimestampMixin, Base):
     """Time-series SOH/throughput samples for the dashboard history view."""
 
     __tablename__ = "battery_soh_samples"
-    __table_args__ = (
-        Index("ix_battery_soh_samples_resource_ts", "resource_id", "timestamp"),
-    )
+    __table_args__ = (Index("ix_battery_soh_samples_resource_ts", "resource_id", "timestamp"),)
 
     resource_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("resources.id", ondelete="CASCADE"), index=True
@@ -107,26 +105,25 @@ class BatterySOHSampleModel(TimestampMixin, Base):
     state_of_health: Mapped[float] = mapped_column(Float)
     cumulative_throughput_kwh: Mapped[float] = mapped_column(Float)
     loss_fraction: Mapped[float] = mapped_column(Float, default=0.0)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    resource: Mapped["ResourceModel"] = relationship(back_populates="soh_samples")
+    resource: Mapped[ResourceModel] = relationship(back_populates="soh_samples")
 
 
 # ---------------------------------------------------------------------------
 # Optimization
 # ---------------------------------------------------------------------------
 
+
 class OptimizationRunModel(TimestampMixin, Base):
     """Record of a single optimization solve."""
 
     __tablename__ = "optimization_runs"
-    __table_args__ = (
-        Index("ix_opt_runs_type_ts", "problem_type", "created_at"),
-    )
+    __table_args__ = (Index("ix_opt_runs_type_ts", "problem_type", "created_at"),)
 
-    problem_type: Mapped[str] = mapped_column(String(50), index=True)  # stochastic | realtime | distributed
+    problem_type: Mapped[str] = mapped_column(
+        String(50), index=True
+    )  # stochastic | realtime | distributed
     status: Mapped[str] = mapped_column(String(30))  # success | failed | timeout | fallback
     objective_value: Mapped[float] = mapped_column(Float, default=0.0)
     solve_time_ms: Mapped[float] = mapped_column(Float, default=0.0)
@@ -140,13 +137,12 @@ class OptimizationRunModel(TimestampMixin, Base):
 # Trading
 # ---------------------------------------------------------------------------
 
+
 class OrderModel(TimestampMixin, Base):
     """Persisted trading order."""
 
     __tablename__ = "orders"
-    __table_args__ = (
-        Index("ix_orders_market_status", "market", "status"),
-    )
+    __table_args__ = (Index("ix_orders_market_status", "market", "status"),)
 
     order_type: Mapped[str] = mapped_column(String(30))
     market: Mapped[str] = mapped_column(String(100), index=True)
@@ -160,7 +156,7 @@ class OrderModel(TimestampMixin, Base):
     time_in_force: Mapped[str] = mapped_column(String(10), default="GTC")
     metadata_json: Mapped[str] = mapped_column(Text, default="{}")
 
-    trades: Mapped[list["TradeModel"]] = relationship(
+    trades: Mapped[list[TradeModel]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )
 
@@ -169,9 +165,7 @@ class TradeModel(TimestampMixin, Base):
     """Persisted trade execution."""
 
     __tablename__ = "trades"
-    __table_args__ = (
-        Index("ix_trades_market_ts", "market", "created_at"),
-    )
+    __table_args__ = (Index("ix_trades_market_ts", "market", "created_at"),)
 
     order_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("orders.id", ondelete="CASCADE"), index=True
@@ -184,12 +178,13 @@ class TradeModel(TimestampMixin, Base):
     strategy: Mapped[str] = mapped_column(String(100), default="")
     realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
 
-    order: Mapped["OrderModel"] = relationship(back_populates="trades")
+    order: Mapped[OrderModel] = relationship(back_populates="trades")
 
 
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
+
 
 class UserModel(TimestampMixin, Base):
     """Application user."""
@@ -220,6 +215,7 @@ class APIKeyModel(TimestampMixin, Base):
 # Tariffs
 # ---------------------------------------------------------------------------
 
+
 class TariffRow(TimestampMixin, Base):
     """Persisted utility tariff (URDB-shaped JSON payload)."""
 
@@ -241,13 +237,12 @@ class TariffRow(TimestampMixin, Base):
 # Events
 # ---------------------------------------------------------------------------
 
+
 class EventLogModel(TimestampMixin, Base):
     """Persisted event log for auditing and replay."""
 
     __tablename__ = "event_log"
-    __table_args__ = (
-        Index("ix_event_log_type_ts", "event_type", "created_at"),
-    )
+    __table_args__ = (Index("ix_event_log_type_ts", "event_type", "created_at"),)
 
     event_type: Mapped[str] = mapped_column(String(50), index=True)
     resource_id: Mapped[str] = mapped_column(String(36), nullable=True, index=True)
@@ -258,6 +253,7 @@ class EventLogModel(TimestampMixin, Base):
 # ---------------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------------
+
 
 class AlertRuleModel(TimestampMixin, Base):
     """Persisted alert rule evaluated against live telemetry.
@@ -313,7 +309,9 @@ class AlertModel(TimestampMixin, Base):
     occurrences: Mapped[int] = mapped_column(Integer, default=1)
     fired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     last_fired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     acknowledged_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     snoozed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -324,6 +322,7 @@ class AlertModel(TimestampMixin, Base):
 # ---------------------------------------------------------------------------
 # Sites, customers, metering (sites map + customer portal)
 # ---------------------------------------------------------------------------
+
 
 class SiteModel(TimestampMixin, Base):
     """A physical premise grouping resources, optionally owned by a customer."""
@@ -416,9 +415,7 @@ class ResourceTelemetryModel(TimestampMixin, Base):
     """
 
     __tablename__ = "resource_telemetry"
-    __table_args__ = (
-        Index("ix_resource_telemetry_resource_ts", "resource_id", "timestamp"),
-    )
+    __table_args__ = (Index("ix_resource_telemetry_resource_ts", "resource_id", "timestamp"),)
 
     resource_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("resources.id", ondelete="CASCADE"), index=True

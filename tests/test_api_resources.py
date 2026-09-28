@@ -34,7 +34,9 @@ async def test_list_resources(client: AsyncClient, auth_headers: dict):
 
 @pytest.mark.asyncio
 async def test_create_resource_requires_auth(client: AsyncClient):
-    resp = await client.post("/api/v1/resources/", json={"name": "x", "resource_type": "battery", "rated_power": 10})
+    resp = await client.post(
+        "/api/v1/resources/", json={"name": "x", "resource_type": "battery", "rated_power": 10}
+    )
     assert resp.status_code == 401
 
 
@@ -63,7 +65,9 @@ async def test_update_resource_returns_fresh_row(client: AsyncClient, auth_heade
         headers=auth_headers,
     )
     rid = created.json()["id"]
-    resp = await client.put(f"/api/v1/resources/{rid}", json={"online": False}, headers=auth_headers)
+    resp = await client.put(
+        f"/api/v1/resources/{rid}", json={"online": False}, headers=auth_headers
+    )
     assert resp.status_code == 200, resp.text
     assert resp.json()["online"] is False
     assert resp.json()["updated_at"]

@@ -3,39 +3,46 @@
 from __future__ import annotations
 
 import json
+from datetime import date as _date
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import datetime as _datetime
+from datetime import timezone as _tz
+from typing import Any
 
-from sqlalchemy import select, func, delete, or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from datetime import date as _date, datetime as _datetime, timezone as _tz
-
 from .models import (
-    ResourceModel,
-    BatteryStateModel,
+    APIKeyModel,
     BatterySOHSampleModel,
+    BatteryStateModel,
+    EventLogModel,
     OptimizationRunModel,
     OrderModel,
+    ResourceModel,
+    TariffRow,
     TradeModel,
     UserModel,
-    APIKeyModel,
-    EventLogModel,
-    TariffRow,
 )
-
 
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
 
+
 class ResourceRepository:
     """CRUD for energy resources."""
 
     @staticmethod
-    async def create(session: AsyncSession, *, name: str, resource_type: str,
-                     rated_power: float, config: dict | None = None,
-                     metadata: dict | None = None) -> ResourceModel:
+    async def create(
+        session: AsyncSession,
+        *,
+        name: str,
+        resource_type: str,
+        rated_power: float,
+        config: dict | None = None,
+        metadata: dict | None = None,
+    ) -> ResourceModel:
         obj = ResourceModel(
             name=name,
             resource_type=resource_type,
@@ -48,28 +55,33 @@ class ResourceRepository:
         return obj
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, resource_id: str) -> Optional[ResourceModel]:
+    async def get_by_id(session: AsyncSession, resource_id: str) -> ResourceModel | None:
         return await session.get(ResourceModel, resource_id)
 
     @staticmethod
-    async def get_by_name(session: AsyncSession, name: str) -> Optional[ResourceModel]:
-        result = await session.execute(
-            select(ResourceModel).where(ResourceModel.name == name)
-        )
+    async def get_by_name(session: AsyncSession, name: str) -> ResourceModel | None:
+        result = await session.execute(select(ResourceModel).where(ResourceModel.name == name))
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def list_all(session: AsyncSession, *, skip: int = 0,
-                       limit: int = 100, resource_type: str | None = None) -> list[ResourceModel]:
-        stmt = select(ResourceModel).offset(skip).limit(limit).order_by(ResourceModel.created_at.desc())
+    async def list_all(
+        session: AsyncSession, *, skip: int = 0, limit: int = 100, resource_type: str | None = None
+    ) -> list[ResourceModel]:
+        stmt = (
+            select(ResourceModel)
+            .offset(skip)
+            .limit(limit)
+            .order_by(ResourceModel.created_at.desc())
+        )
         if resource_type:
             stmt = stmt.where(ResourceModel.resource_type == resource_type)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 
     @staticmethod
-    async def update(session: AsyncSession, resource_id: str,
-                     **fields: Any) -> Optional[ResourceModel]:
+    async def update(
+        session: AsyncSession, resource_id: str, **fields: Any
+    ) -> ResourceModel | None:
         obj = await session.get(ResourceModel, resource_id)
         if obj is None:
             return None
@@ -102,26 +114,39 @@ class ResourceRepository:
 # Battery State
 # ---------------------------------------------------------------------------
 
+
 class BatteryStateRepository:
     """Time-series battery state snapshots."""
 
     @staticmethod
-    async def record(session: AsyncSession, resource_id: str, *,
-                     soc: float, soh: float = 100.0, temperature: float = 25.0,
-                     voltage: float = 0.0, current: float = 0.0,
-                     power: float = 0.0) -> BatteryStateModel:
+    async def record(
+        session: AsyncSession,
+        resource_id: str,
+        *,
+        soc: float,
+        soh: float = 100.0,
+        temperature: float = 25.0,
+        voltage: float = 0.0,
+        current: float = 0.0,
+        power: float = 0.0,
+    ) -> BatteryStateModel:
         obj = BatteryStateModel(
-            resource_id=resource_id, soc=soc, soh=soh,
-            temperature=temperature, voltage=voltage,
-            current=current, power=power,
+            resource_id=resource_id,
+            soc=soc,
+            soh=soh,
+            temperature=temperature,
+            voltage=voltage,
+            current=current,
+            power=power,
         )
         session.add(obj)
         await session.flush()
         return obj
 
     @staticmethod
-    async def get_latest(session: AsyncSession, resource_id: str,
-                         limit: int = 100) -> list[BatteryStateModel]:
+    async def get_latest(
+        session: AsyncSession, resource_id: str, limit: int = 100
+    ) -> list[BatteryStateModel]:
         result = await session.execute(
             select(BatteryStateModel)
             .where(BatteryStateModel.resource_id == resource_id)
@@ -148,7 +173,7 @@ class BatteryDegradationRepository:
         ts: datetime,
         loss_fraction: float = 0.0,
         record_sample: bool = True,
-    ) -> Optional[ResourceModel]:
+    ) -> ResourceModel | None:
         """Persist new SOH/throughput on the resource and append a history sample."""
         obj = await session.get(ResourceModel, battery_id)
         if obj is None:
@@ -210,15 +235,23 @@ class BatteryDegradationRepository:
 # Optimization
 # ---------------------------------------------------------------------------
 
+
 class OptimizationRepository:
     """CRUD for optimization run records."""
 
     @staticmethod
-    async def record_run(session: AsyncSession, *, problem_type: str, status: str,
-                         objective_value: float = 0.0, solve_time_ms: float = 0.0,
-                         solver: str = "", fallback_used: bool = False,
-                         solution: dict | None = None,
-                         parameters: dict | None = None) -> OptimizationRunModel:
+    async def record_run(
+        session: AsyncSession,
+        *,
+        problem_type: str,
+        status: str,
+        objective_value: float = 0.0,
+        solve_time_ms: float = 0.0,
+        solver: str = "",
+        fallback_used: bool = False,
+        solution: dict | None = None,
+        parameters: dict | None = None,
+    ) -> OptimizationRunModel:
         obj = OptimizationRunModel(
             # Explicit, sub-second timestamp: SQLite's CURRENT_TIMESTAMP
             # server default only has second resolution, which makes
@@ -238,14 +271,18 @@ class OptimizationRepository:
         return obj
 
     @staticmethod
-    async def get_run(session: AsyncSession, run_id: str) -> Optional[OptimizationRunModel]:
+    async def get_run(session: AsyncSession, run_id: str) -> OptimizationRunModel | None:
         return await session.get(OptimizationRunModel, run_id)
 
     @staticmethod
-    async def update_run(session: AsyncSession, run_id: str, *,
-                         solution: dict | None = None,
-                         parameters: dict | None = None,
-                         **fields: Any) -> Optional[OptimizationRunModel]:
+    async def update_run(
+        session: AsyncSession,
+        run_id: str,
+        *,
+        solution: dict | None = None,
+        parameters: dict | None = None,
+        **fields: Any,
+    ) -> OptimizationRunModel | None:
         obj = await session.get(OptimizationRunModel, run_id)
         if obj is None:
             return None
@@ -263,14 +300,17 @@ class OptimizationRepository:
         return obj
 
     @staticmethod
-    async def list_runs(session: AsyncSession, *, skip: int = 0,
-                        limit: int = 50, problem_type: str | None = None,
-                        start: datetime | None = None, end: datetime | None = None,
-                        resource_ids: list[str] | None = None) -> list[OptimizationRunModel]:
-        stmt = (
-            select(OptimizationRunModel)
-            .order_by(OptimizationRunModel.created_at.desc())
-        )
+    async def list_runs(
+        session: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        problem_type: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        resource_ids: list[str] | None = None,
+    ) -> list[OptimizationRunModel]:
+        stmt = select(OptimizationRunModel).order_by(OptimizationRunModel.created_at.desc())
         if problem_type:
             stmt = stmt.where(OptimizationRunModel.problem_type == problem_type)
         if start is not None:
@@ -280,12 +320,16 @@ class OptimizationRepository:
         if resource_ids:
             # Runs persist the ids of the resources they touched inside
             # parameters_json; match the quoted id so prefixes don't collide.
-            stmt = stmt.where(or_(*[
-                OptimizationRunModel.parameters_json.contains(
-                    json.dumps(str(rid)), autoescape=True
+            stmt = stmt.where(
+                or_(
+                    *[
+                        OptimizationRunModel.parameters_json.contains(
+                            json.dumps(str(rid)), autoescape=True
+                        )
+                        for rid in resource_ids
+                    ]
                 )
-                for rid in resource_ids
-            ]))
+            )
         stmt = stmt.offset(skip).limit(limit)
         result = await session.execute(stmt)
         return list(result.scalars().all())
@@ -295,8 +339,9 @@ class OptimizationRepository:
         total = await session.execute(select(func.count(OptimizationRunModel.id)))
         avg_time = await session.execute(select(func.avg(OptimizationRunModel.solve_time_ms)))
         fallbacks = await session.execute(
-            select(func.count(OptimizationRunModel.id))
-            .where(OptimizationRunModel.fallback_used.is_(True))
+            select(func.count(OptimizationRunModel.id)).where(
+                OptimizationRunModel.fallback_used.is_(True)
+            )
         )
         return {
             "total_runs": total.scalar_one(),
@@ -308,6 +353,7 @@ class OptimizationRepository:
 # ---------------------------------------------------------------------------
 # Trading
 # ---------------------------------------------------------------------------
+
 
 class TradingRepository:
     """CRUD for orders and trades."""
@@ -323,13 +369,18 @@ class TradingRepository:
         return obj
 
     @staticmethod
-    async def get_order(session: AsyncSession, order_id: str) -> Optional[OrderModel]:
+    async def get_order(session: AsyncSession, order_id: str) -> OrderModel | None:
         return await session.get(OrderModel, order_id)
 
     @staticmethod
-    async def list_orders(session: AsyncSession, *, skip: int = 0,
-                          limit: int = 50, market: str | None = None,
-                          status: str | None = None) -> list[OrderModel]:
+    async def list_orders(
+        session: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        market: str | None = None,
+        status: str | None = None,
+    ) -> list[OrderModel]:
         stmt = select(OrderModel).offset(skip).limit(limit).order_by(OrderModel.created_at.desc())
         if market:
             stmt = stmt.where(OrderModel.market == market)
@@ -339,8 +390,9 @@ class TradingRepository:
         return list(result.scalars().all())
 
     @staticmethod
-    async def update_order_status(session: AsyncSession, order_id: str,
-                                  status: str, **extra: Any) -> Optional[OrderModel]:
+    async def update_order_status(
+        session: AsyncSession, order_id: str, status: str, **extra: Any
+    ) -> OrderModel | None:
         obj = await session.get(OrderModel, order_id)
         if obj is None:
             return None
@@ -361,9 +413,14 @@ class TradingRepository:
         return obj
 
     @staticmethod
-    async def list_trades(session: AsyncSession, *, skip: int = 0,
-                          limit: int = 50, market: str | None = None,
-                          order_id: str | None = None) -> list[TradeModel]:
+    async def list_trades(
+        session: AsyncSession,
+        *,
+        skip: int = 0,
+        limit: int = 50,
+        market: str | None = None,
+        order_id: str | None = None,
+    ) -> list[TradeModel]:
         stmt = select(TradeModel).offset(skip).limit(limit).order_by(TradeModel.created_at.desc())
         if market:
             stmt = stmt.where(TradeModel.market == market)
@@ -377,39 +434,39 @@ class TradingRepository:
 # Users
 # ---------------------------------------------------------------------------
 
+
 class UserRepository:
     """CRUD for users and API keys."""
 
     @staticmethod
-    async def create_user(session: AsyncSession, *, username: str,
-                          hashed_password: str, role: str = "viewer") -> UserModel:
+    async def create_user(
+        session: AsyncSession, *, username: str, hashed_password: str, role: str = "viewer"
+    ) -> UserModel:
         obj = UserModel(username=username, hashed_password=hashed_password, role=role)
         session.add(obj)
         await session.flush()
         return obj
 
     @staticmethod
-    async def get_by_username(session: AsyncSession, username: str) -> Optional[UserModel]:
-        result = await session.execute(
-            select(UserModel).where(UserModel.username == username)
-        )
+    async def get_by_username(session: AsyncSession, username: str) -> UserModel | None:
+        result = await session.execute(select(UserModel).where(UserModel.username == username))
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_by_id(session: AsyncSession, user_id: str) -> Optional[UserModel]:
+    async def get_by_id(session: AsyncSession, user_id: str) -> UserModel | None:
         return await session.get(UserModel, user_id)
 
     @staticmethod
-    async def create_api_key(session: AsyncSession, *, user_id: str,
-                             name: str, hashed_key: str,
-                             role: str = "viewer") -> APIKeyModel:
+    async def create_api_key(
+        session: AsyncSession, *, user_id: str, name: str, hashed_key: str, role: str = "viewer"
+    ) -> APIKeyModel:
         obj = APIKeyModel(user_id=user_id, name=name, hashed_key=hashed_key, role=role)
         session.add(obj)
         await session.flush()
         return obj
 
     @staticmethod
-    async def get_api_key_by_hash(session: AsyncSession, hashed_key: str) -> Optional[APIKeyModel]:
+    async def get_api_key_by_hash(session: AsyncSession, hashed_key: str) -> APIKeyModel | None:
         result = await session.execute(
             select(APIKeyModel).where(APIKeyModel.hashed_key == hashed_key)
         )
@@ -425,9 +482,15 @@ class TariffRepository:
     """CRUD for persisted utility tariffs."""
 
     @staticmethod
-    async def create(session: AsyncSession, *, name: str, utility: str,
-                     urdb_json: dict, effective_date: _date | None = None,
-                     urdb_label: str | None = None) -> TariffRow:
+    async def create(
+        session: AsyncSession,
+        *,
+        name: str,
+        utility: str,
+        urdb_json: dict,
+        effective_date: _date | None = None,
+        urdb_label: str | None = None,
+    ) -> TariffRow:
         obj = TariffRow(
             name=name,
             utility=utility,
@@ -440,26 +503,28 @@ class TariffRepository:
         return obj
 
     @staticmethod
-    async def get(session: AsyncSession, tariff_id: str) -> Optional[TariffRow]:
+    async def get(session: AsyncSession, tariff_id: str) -> TariffRow | None:
         obj = await session.get(TariffRow, tariff_id)
         if obj is None or obj.deleted_at is not None:
             return None
         return obj
 
     @staticmethod
-    async def get_by_urdb_label(session: AsyncSession, label: str) -> Optional[TariffRow]:
+    async def get_by_urdb_label(session: AsyncSession, label: str) -> TariffRow | None:
         result = await session.execute(
             select(TariffRow).where(TariffRow.urdb_label == label, TariffRow.deleted_at.is_(None))
         )
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def list(session: AsyncSession, *, skip: int = 0, limit: int = 50,
-                   utility: str | None = None) -> list[TariffRow]:
+    async def list(
+        session: AsyncSession, *, skip: int = 0, limit: int = 50, utility: str | None = None
+    ) -> list[TariffRow]:
         stmt = (
             select(TariffRow)
             .where(TariffRow.deleted_at.is_(None))
-            .offset(skip).limit(limit)
+            .offset(skip)
+            .limit(limit)
             .order_by(TariffRow.created_at.desc())
         )
         if utility:
@@ -468,7 +533,7 @@ class TariffRepository:
         return list(result.scalars().all())
 
     @staticmethod
-    async def update(session: AsyncSession, tariff_id: str, **fields: Any) -> Optional[TariffRow]:
+    async def update(session: AsyncSession, tariff_id: str, **fields: Any) -> TariffRow | None:
         obj = await session.get(TariffRow, tariff_id)
         if obj is None or obj.deleted_at is not None:
             return None
@@ -508,13 +573,19 @@ class TariffRepository:
 # Event log
 # ---------------------------------------------------------------------------
 
+
 class EventLogRepository:
     """Append-only event log."""
 
     @staticmethod
-    async def log(session: AsyncSession, *, event_type: str,
-                  details: dict | None = None, resource_id: str | None = None,
-                  severity: str = "info") -> EventLogModel:
+    async def log(
+        session: AsyncSession,
+        *,
+        event_type: str,
+        details: dict | None = None,
+        resource_id: str | None = None,
+        severity: str = "info",
+    ) -> EventLogModel:
         obj = EventLogModel(
             event_type=event_type,
             details_json=json.dumps(details or {}),
@@ -526,8 +597,13 @@ class EventLogRepository:
         return obj
 
     @staticmethod
-    async def query(session: AsyncSession, *, event_type: str | None = None,
-                    resource_id: str | None = None, limit: int = 100) -> list[EventLogModel]:
+    async def query(
+        session: AsyncSession,
+        *,
+        event_type: str | None = None,
+        resource_id: str | None = None,
+        limit: int = 100,
+    ) -> list[EventLogModel]:
         stmt = select(EventLogModel).limit(limit).order_by(EventLogModel.created_at.desc())
         if event_type:
             stmt = stmt.where(EventLogModel.event_type == event_type)

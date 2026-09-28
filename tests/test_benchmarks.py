@@ -1,7 +1,7 @@
 """Tests for the benchmarking suite."""
 
-import sys
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -10,43 +10,42 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from benchmarks.datasets import (
-    BenchmarkDataset,
-    DatasetRegistry,
-    IEEETestCase,
     CaliforniaISO,
+    DatasetRegistry,
     EUGridData,
     EVFleetData,
+    IEEETestCase,
 )
-from benchmarks.scenarios import Scenario, ScenarioRegistry, ScenarioCategory
 from benchmarks.metrics import (
     BenchmarkMetrics,
-    compute_peak_reduction,
-    compute_total_cost,
-    compute_self_consumption,
-    compute_renewable_utilization,
     compute_battery_cycles,
-    compute_frequency_rmse,
-    compute_v2g_utilization,
-    compute_departure_soc_compliance,
-    compute_curtailment,
-    compute_sharpe_ratio,
-    compute_max_drawdown,
     compute_co2_reduction,
-    compute_uptime,
+    compute_curtailment,
+    compute_departure_soc_compliance,
+    compute_frequency_rmse,
+    compute_max_drawdown,
+    compute_peak_reduction,
+    compute_renewable_utilization,
     compute_scenario_metrics,
+    compute_self_consumption,
+    compute_sharpe_ratio,
+    compute_total_cost,
+    compute_uptime,
+    compute_v2g_utilization,
 )
 from benchmarks.runner import (
+    BenchmarkResult,
     BenchmarkRunner,
     NoOpMethod,
     RuleBasedPeakShaving,
     SimpleV2GScheduler,
-    BenchmarkResult,
 )
-
+from benchmarks.scenarios import Scenario, ScenarioCategory, ScenarioRegistry
 
 # ---------------------------------------------------------------------------
 # Datasets
 # ---------------------------------------------------------------------------
+
 
 class TestDatasets:
     def test_registry_list(self):
@@ -133,6 +132,7 @@ class TestDatasets:
 # Scenarios
 # ---------------------------------------------------------------------------
 
+
 class TestScenarios:
     def test_registry_list(self):
         available = ScenarioRegistry.list_all()
@@ -170,6 +170,7 @@ class TestScenarios:
 # Metrics
 # ---------------------------------------------------------------------------
 
+
 class TestMetrics:
     def test_peak_reduction(self):
         load = np.array([10, 20, 30, 40, 50])
@@ -201,7 +202,9 @@ class TestMetrics:
         assert abs(pct - 420 / 450 * 100) < 1e-6
 
     def test_battery_cycles(self):
-        soc = np.array([0.5, 0.6, 0.7, 0.6, 0.5, 0.6])  # charge, charge, discharge, discharge, charge
+        soc = np.array(
+            [0.5, 0.6, 0.7, 0.6, 0.5, 0.6]
+        )  # charge, charge, discharge, discharge, charge
         cycles = compute_battery_cycles(soc, capacity_kwh=100)
         # total changes: 0.1+0.1+0.1+0.1+0.1 = 0.5 * 100 = 50 kWh, /200 = 0.25 cycles
         assert abs(cycles - 0.25) < 1e-6
@@ -269,8 +272,9 @@ class TestMetrics:
         assert "peak_reduction_pct" in m.values
 
     def test_benchmark_metrics_container(self):
-        m = BenchmarkMetrics(scenario_name="test", method_name="m1",
-                             values={"cost": 100.0, "pct": 50.0})
+        m = BenchmarkMetrics(
+            scenario_name="test", method_name="m1", values={"cost": 100.0, "pct": 50.0}
+        )
         assert m["cost"] == 100.0
         assert "pct" in m
         summary = m.summary()
@@ -280,6 +284,7 @@ class TestMetrics:
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
+
 
 class TestRunner:
     def test_noop_method(self):

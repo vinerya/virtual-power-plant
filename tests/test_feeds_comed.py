@@ -1,4 +1,5 @@
 """Tests for the ComEd Hourly Pricing feed (M4)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone

@@ -9,12 +9,12 @@ from typing import Any
 
 import bcrypt
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.db.engine import get_db
-from vpp.db.models import UserModel, APIKeyModel
+from vpp.db.models import APIKeyModel, UserModel
 from vpp.db.repositories import UserRepository
 from vpp.schemas.auth import (
     AUDIENCE_CUSTOMER,
@@ -33,6 +33,7 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 # Password helpers
 # ---------------------------------------------------------------------------
 
+
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
 
@@ -44,6 +45,7 @@ def get_password_hash(password: str) -> str:
 # ---------------------------------------------------------------------------
 # API Key helpers
 # ---------------------------------------------------------------------------
+
 
 def generate_api_key() -> str:
     """Generate a cryptographically secure API key."""
@@ -58,6 +60,7 @@ def hash_api_key(key: str) -> str:
 # ---------------------------------------------------------------------------
 # JWT helpers
 # ---------------------------------------------------------------------------
+
 
 def create_access_token(data: dict[str, Any], settings: Settings | None = None) -> str:
     settings = settings or get_settings()
@@ -98,6 +101,7 @@ def decode_access_token(token: str, settings: Settings | None = None) -> TokenPa
 # ---------------------------------------------------------------------------
 # FastAPI dependencies
 # ---------------------------------------------------------------------------
+
 
 async def get_current_principal(
     bearer: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
@@ -170,8 +174,11 @@ async def get_api_key_user(api_key: str, session: AsyncSession) -> UserModel:
 
     hashed = hash_api_key(api_key)
     from sqlalchemy import select
+
     result = await session.execute(
-        select(APIKeyModel).where(APIKeyModel.hashed_key == hashed, APIKeyModel.is_active.is_(True))
+        select(APIKeyModel).where(
+            APIKeyModel.hashed_key == hashed, APIKeyModel.is_active.is_(True)
+        )
     )
     key_obj = result.scalar_one_or_none()
     if key_obj is None:

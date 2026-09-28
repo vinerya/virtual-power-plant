@@ -24,7 +24,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.rate = requests_per_minute / 60.0  # tokens per second
         self.capacity = requests_per_minute
-        self._buckets: dict[str, list[float]] = defaultdict(lambda: [float(self.capacity), time.monotonic()])
+        self._buckets: dict[str, list[float]] = defaultdict(
+            lambda: [float(self.capacity), time.monotonic()]
+        )
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         ip = request.client.host if request.client else "unknown"

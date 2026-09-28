@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from functools import lru_cache
-from typing import Optional
-
-from vpp.core import VirtualPowerPlant
 from vpp.config import VPPConfig
+from vpp.core import VirtualPowerPlant
 
-_vpp_instance: Optional[VirtualPowerPlant] = None
+_vpp_instance: VirtualPowerPlant | None = None
 
 
 def get_vpp() -> VirtualPowerPlant:

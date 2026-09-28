@@ -40,17 +40,19 @@ Phenomenon -> optimization-term mapping
   dependent. We add a soft penalty pushing the optimizer away from parking
   at high SOC. We use L1 (LP-friendly) instead of the more physical L2.
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Mapping, Optional
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:  # pragma: no cover
     import pyomo.environ as pyo
 
 # Type aliases mirroring dispatch.py
-ObjectiveTerm = Callable[[Any, Dict[str, Any]], Any]
-ConstraintBuilder = Callable[[Any, Dict[str, Any]], None]
+ObjectiveTerm = Callable[[Any, dict[str, Any]], Any]
+ConstraintBuilder = Callable[[Any, dict[str, Any]], None]
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ class WearCost:
     """
 
     throughput_cost_per_kwh: float
-    cycle_cost_curve: Dict[float, float]
+    cycle_cost_curve: dict[float, float]
     capacity_kwh: float = 1.0
     replacement_cost_dollars: float = 0.0
 
@@ -90,7 +92,7 @@ class WearCost:
         capacity_kwh: float,
         replacement_cost_dollars: float,
         eol_capacity_fraction: float = 0.8,
-    ) -> "WearCost":
+    ) -> WearCost:
         """Derive a WearCost from an LFP_PRESET / NMC_PRESET-style mapping.
 
         The throughput cost is::
@@ -121,8 +123,7 @@ class WearCost:
         # Cycle-cost curve from the rainflow preset entry.
         rf_curve = preset["rainflow"]["cycle_life_curve"]
         cycle_cost = {
-            float(dod): replacement_cost_dollars / float(n_eol)
-            for dod, n_eol in rf_curve.items()
+            float(dod): replacement_cost_dollars / float(n_eol) for dod, n_eol in rf_curve.items()
         }
 
         return cls(
@@ -160,12 +161,11 @@ def add_wear_cost_term(
     if mode not in ("throughput", "dod_pwl"):
         raise ValueError(f"mode must be 'throughput' or 'dod_pwl', got {mode!r}")
 
-    def _term(model: "pyo.ConcreteModel", _params: Dict[str, Any]):
+    def _term(model: pyo.ConcreteModel, _params: dict[str, Any]):
         if mode == "throughput":
             # lambda * Sum_t (p_charge[t] + p_discharge[t]) * dt
             return wear.throughput_cost_per_kwh * sum(
-                (model.p_charge[t] + model.p_discharge[t]) * model.dt
-                for t in model.T
+                (model.p_charge[t] + model.p_discharge[t]) * model.dt for t in model.T
             )
         # dod_pwl: model.delta_in_bin and model._dod_bin_marginals must exist
         if not hasattr(model, "delta_in_bin"):
@@ -173,12 +173,10 @@ def add_wear_cost_term(
                 "dod_pwl mode requires add_dod_constraints() to be added "
                 "to constraint_builders before this term."
             )
-        marginals: List[float] = list(model._dod_bin_marginals)  # type: ignore[attr-defined]
+        marginals: list[float] = list(model._dod_bin_marginals)  # type: ignore[attr-defined]
         T_idx = list(model.T)
         return sum(
-            marginals[b] * model.delta_in_bin[t, b]
-            for t in T_idx
-            for b in range(len(marginals))
+            marginals[b] * model.delta_in_bin[t, b] for t in T_idx for b in range(len(marginals))
         )
 
     _term.__name__ = f"wear_cost_{mode}"
@@ -193,7 +191,7 @@ def add_wear_cost_term(
 def add_dod_constraints(
     wear: WearCost,
     num_bins: int = 4,
-    bin_edges: Optional[List[float]] = None,
+    bin_edges: list[float] | None = None,
 ) -> ConstraintBuilder:
     """Return a ``constraint_builders`` callable that adds DoD-bin aux vars.
 
@@ -249,7 +247,7 @@ def add_dod_constraints(
     # We do not rewrite the bin order; we just trust the chemistry curves
     # supply increasing $/cycle in DoD.
 
-    def _builder(model: "pyo.ConcreteModel", _params: Dict[str, Any]) -> None:
+    def _builder(model: pyo.ConcreteModel, _params: dict[str, Any]) -> None:
         T_idx = list(model.T)
         cap = float(pyo.value(model.cap))
 
@@ -257,9 +255,7 @@ def add_dod_constraints(
         # delta in SOC fraction, free
         model.delta_soc = pyo.Var(model.T, domain=pyo.Reals)
         model.abs_delta = pyo.Var(model.T, domain=pyo.NonNegativeReals, bounds=(0.0, 1.0))
-        model.delta_in_bin = pyo.Var(
-            model.T, model.dod_bins, domain=pyo.NonNegativeReals
-        )
+        model.delta_in_bin = pyo.Var(model.T, model.dod_bins, domain=pyo.NonNegativeReals)
 
         def _delta_def(mm, t):
             if t == T_idx[0]:
@@ -304,8 +300,8 @@ def wear_cost_hooks_for_telemetry_consistency(
     calendar_weight: float,
     soc_neutral: float = 0.5,
     num_bins: int = 4,
-    bin_edges: Optional[List[float]] = None,
-) -> tuple[List[ObjectiveTerm], List[ConstraintBuilder]]:
+    bin_edges: list[float] | None = None,
+) -> tuple[list[ObjectiveTerm], list[ConstraintBuilder]]:
     """Return (objective_terms, constraint_builders) for wiring degradation
     wear cost into live dispatch, using the *same* physical model that
     :meth:`vpp.degradation.telemetry.DegradationUpdater.apply_window`
@@ -326,7 +322,7 @@ def wear_cost_hooks_for_telemetry_consistency(
     return objective_terms, constraint_builders
 
 
-def _interp_cycle_cost(curve: Dict[float, float], dod: float) -> float:
+def _interp_cycle_cost(curve: dict[float, float], dod: float) -> float:
     """Piecewise-linear interpolation on ``{dod: $/cycle}``."""
     if not curve:
         raise ValueError("cycle_cost_curve must be non-empty")
@@ -379,7 +375,7 @@ def add_calendar_aging_bias(
     if not 0.0 <= soc_neutral <= 1.0:
         raise ValueError("soc_neutral must be in [0, 1]")
 
-    def _term(m: "pyo.ConcreteModel", _params: Dict[str, Any]):
+    def _term(m: pyo.ConcreteModel, _params: dict[str, Any]):
         import pyomo.environ as pyo
 
         cap = float(pyo.value(m.cap))

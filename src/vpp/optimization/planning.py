@@ -20,6 +20,7 @@ Sign convention for schedules: ``charge``/``discharge`` are non-negative kW;
 ``power = charge - discharge`` is the net battery draw (positive = charging),
 matching the ``p_net`` convention of the dispatch formulation.
 """
+
 from __future__ import annotations
 
 import math
@@ -338,7 +339,9 @@ def _fleet_wear_term(costs: dict[str, float]) -> Callable:
     return _term
 
 
-def _energy_cost(prices: Sequence[float], charge: Sequence[float], discharge: Sequence[float], dt: float) -> float:
+def _energy_cost(
+    prices: Sequence[float], charge: Sequence[float], discharge: Sequence[float], dt: float
+) -> float:
     return float(sum(p * (c - d) * dt for p, c, d in zip(prices, charge, discharge, strict=False)))
 
 
@@ -442,7 +445,9 @@ def plan_schedule(
     wear_costs: dict[str, float] = {}
     if degradation_aware:
         for b in batteries:
-            wear_costs[b.id] = soh_adjusted_wear_cost(b, replacement_cost_per_kwh).throughput_cost_per_kwh
+            wear_costs[b.id] = soh_adjusted_wear_cost(
+                b, replacement_cost_per_kwh
+            ).throughput_cost_per_kwh
 
     per_resource: dict[str, dict[str, list[float]]] = {}
     method = "milp_highs"
@@ -617,7 +622,9 @@ def plan_schedule(
     discharge = [sum(p["p_discharge"][t] for p in per_resource.values()) for t in range(H)]
     energy_cost = _energy_cost(prices, charge, discharge, dt)
     wear_total = sum(
-        wear_costs.get(rid, 0.0) * sum(c + d for c, d in zip(p["p_charge"], p["p_discharge"], strict=False)) * dt
+        wear_costs.get(rid, 0.0)
+        * sum(c + d for c, d in zip(p["p_charge"], p["p_discharge"], strict=False))
+        * dt
         for rid, p in per_resource.items()
     )
     return {
@@ -735,7 +742,10 @@ def _terminal_value_controller_cls():
             def _credit(m, _params):
                 return -v * (m.soc[last] - m.soc_0)
 
-            mpc_step.additional_objective_terms = [*list(mpc_step.additional_objective_terms), _credit]
+            mpc_step.additional_objective_terms = [
+                *list(mpc_step.additional_objective_terms),
+                _credit,
+            ]
             return super().step(mpc_step)
 
     return TerminalValueMPCController
@@ -801,13 +811,20 @@ def run_closed_loop_backtest(
         solver_timeout_ms=solver_timeout_ms,
     )
     if terminal_soc_policy == "value":
-        ctl: MPCController = _TerminalValueMPCController(mpc_cfg, dict(bp, terminal_soc=bp["soc_min"]))
+        ctl: MPCController = _TerminalValueMPCController(
+            mpc_cfg, dict(bp, terminal_soc=bp["soc_min"])
+        )
     else:
         ctl = MPCController(mpc_cfg, bp)
     fn = make_forecast_fn(
-        prices, load, solar,
-        start=start, interval_minutes=interval_minutes,
-        mode=forecast_mode, noise_sigma=noise_sigma, seed=seed,
+        prices,
+        load,
+        solar,
+        start=start,
+        interval_minutes=interval_minutes,
+        mode=forecast_mode,
+        noise_sigma=noise_sigma,
+        seed=seed,
     )
     res = run_backtest(
         ctl,
@@ -816,7 +833,10 @@ def run_closed_loop_backtest(
             end=start + timedelta(minutes=interval_minutes * N),
             interval_minutes=interval_minutes,
         ),
-        prices, load, solar, fn,
+        prices,
+        load,
+        solar,
+        fn,
     )
     cap = bp["battery_capacity_kwh"]
     e_init = bp["soc_init"] * cap
@@ -830,7 +850,9 @@ def run_closed_loop_backtest(
     full_params = dict(bp, prices=prices, dt_hours=dt, terminal_soc=bp["soc_init"])
     rules = _rules_plan(full_params)
     rules_cost = _energy_cost(prices, rules["p_charge"], rules["p_discharge"], dt)
-    rules_adj = rules_cost - value * ((rules["soc"][-1] if rules["soc"] else bp["soc_init"]) * cap - e_init)
+    rules_adj = rules_cost - value * (
+        (rules["soc"][-1] if rules["soc"] else bp["soc_init"]) * cap - e_init
+    )
 
     offline_adj: float | None = None
     offline_status = "skipped"
@@ -953,7 +975,12 @@ def explain_schedule(inputs: dict[str, Any], solution: dict[str, Any]) -> dict[s
             ],
         }
 
-    actual = _run("actual", charge, discharge, _stored_energy_delta(batteries, solution, charge, discharge, dt))
+    actual = _run(
+        "actual",
+        charge,
+        discharge,
+        _stored_energy_delta(batteries, solution, charge, discharge, dt),
+    )
     counterfactuals = [_run("no_action", [0.0] * T, [0.0] * T)]
 
     binding: list[dict[str, Any]] = []
@@ -982,7 +1009,9 @@ def explain_schedule(inputs: dict[str, Any], solution: dict[str, Any]) -> dict[s
             naive_c = [a + x for a, x in zip(naive_c, plan["p_charge"], strict=False)]
             naive_d = [a + x for a, x in zip(naive_d, plan["p_discharge"], strict=False)]
             if plan["soc"]:
-                naive_delta += (plan["soc"][-1] - params["soc_init"]) * params["battery_capacity_kwh"]
+                naive_delta += (plan["soc"][-1] - params["soc_init"]) * params[
+                    "battery_capacity_kwh"
+                ]
         counterfactuals.append(_run("price_naive", naive_c, naive_d, naive_delta))
         binding = _binding_constraints(batteries, solution, T)
 
@@ -1055,19 +1084,43 @@ def _binding_constraints(
         pmax_d = float(b.get("max_discharge_kw", 0.0))
         for t in range(min(T, len(soc))):
             if smax - soc[t] <= _BINDING_TOL:
-                out.append({"name": "soc_upper", "step": t, "slack": max(0.0, smax - soc[t]),
-                            "description": f"Battery{label} reached its upper SOC limit ({smax:.0%}) at t={t}"})
+                out.append(
+                    {
+                        "name": "soc_upper",
+                        "step": t,
+                        "slack": max(0.0, smax - soc[t]),
+                        "description": f"Battery{label} reached its upper SOC limit ({smax:.0%}) at t={t}",
+                    }
+                )
             elif soc[t] - smin <= _BINDING_TOL:
-                out.append({"name": "soc_lower", "step": t, "slack": max(0.0, soc[t] - smin),
-                            "description": f"Battery{label} reached its lower SOC limit ({smin:.0%}) at t={t}"})
+                out.append(
+                    {
+                        "name": "soc_lower",
+                        "step": t,
+                        "slack": max(0.0, soc[t] - smin),
+                        "description": f"Battery{label} reached its lower SOC limit ({smin:.0%}) at t={t}",
+                    }
+                )
         for t in range(min(T, len(chg))):
             if pmax_c > 0 and pmax_c - chg[t] <= _BINDING_TOL * max(1.0, pmax_c):
-                out.append({"name": "charge_power_max", "step": t, "slack": max(0.0, pmax_c - chg[t]),
-                            "description": f"Battery{label} charging at its power limit ({pmax_c:g} kW) at t={t}"})
+                out.append(
+                    {
+                        "name": "charge_power_max",
+                        "step": t,
+                        "slack": max(0.0, pmax_c - chg[t]),
+                        "description": f"Battery{label} charging at its power limit ({pmax_c:g} kW) at t={t}",
+                    }
+                )
         for t in range(min(T, len(dis))):
             if pmax_d > 0 and pmax_d - dis[t] <= _BINDING_TOL * max(1.0, pmax_d):
-                out.append({"name": "discharge_power_max", "step": t, "slack": max(0.0, pmax_d - dis[t]),
-                            "description": f"Battery{label} discharging at its power limit ({pmax_d:g} kW) at t={t}"})
+                out.append(
+                    {
+                        "name": "discharge_power_max",
+                        "step": t,
+                        "slack": max(0.0, pmax_d - dis[t]),
+                        "description": f"Battery{label} discharging at its power limit ({pmax_d:g} kW) at t={t}",
+                    }
+                )
     out.sort(key=lambda c: (c["step"], c["name"]))
     return out[:_MAX_BINDING]
 

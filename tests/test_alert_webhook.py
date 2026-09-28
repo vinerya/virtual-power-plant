@@ -37,8 +37,13 @@ def no_sleep(monkeypatch):
 
 def _alert() -> Alert:
     return Alert(
-        alert_id="a1", rule_name="soc_low", severity=AlertSeverity.CRITICAL,
-        message="soc = 0.05 < 0.10", value=0.05, threshold=0.1, source="bat-1",
+        alert_id="a1",
+        rule_name="soc_low",
+        severity=AlertSeverity.CRITICAL,
+        message="soc = 0.05 < 0.10",
+        value=0.05,
+        threshold=0.1,
+        source="bat-1",
     )
 
 
@@ -71,9 +76,13 @@ async def test_hmac_signature_verifies():
 @pytest.mark.asyncio
 @respx.mock
 async def test_retries_5xx_then_succeeds_with_exponential_backoff(no_sleep):
-    route = respx.post(URL).mock(side_effect=[
-        httpx.Response(503), httpx.Response(500), httpx.Response(200),
-    ])
+    route = respx.post(URL).mock(
+        side_effect=[
+            httpx.Response(503),
+            httpx.Response(500),
+            httpx.Response(200),
+        ]
+    )
     await WebhookAlertChannel(URL, max_retries=3, backoff_base_s=0.5).send(_alert())
     assert route.call_count == 3
     assert no_sleep == [0.5, 1.0]
@@ -82,10 +91,14 @@ async def test_retries_5xx_then_succeeds_with_exponential_backoff(no_sleep):
 @pytest.mark.asyncio
 @respx.mock
 async def test_retries_network_errors_and_429(no_sleep):
-    route = respx.post(URL).mock(side_effect=[
-        httpx.ConnectError("refused"), httpx.ReadTimeout("slow"), httpx.Response(429),
-        httpx.Response(202),
-    ])
+    route = respx.post(URL).mock(
+        side_effect=[
+            httpx.ConnectError("refused"),
+            httpx.ReadTimeout("slow"),
+            httpx.Response(429),
+            httpx.Response(202),
+        ]
+    )
     await WebhookAlertChannel(URL, max_retries=3).send(_alert())
     assert route.call_count == 4
 
@@ -132,9 +145,15 @@ async def test_manager_isolates_failing_webhook(no_sleep):
     mgr = AlertManager()
     mgr.add_channel(WebhookAlertChannel(URL, max_retries=1))
     mgr.add_channel(Collect())
-    mgr.add_rule(AlertRule(
-        name="r", rule_type=RuleType.THRESHOLD, metric_name="x", threshold=0, cooldown_s=0,
-    ))
+    mgr.add_rule(
+        AlertRule(
+            name="r",
+            rule_type=RuleType.THRESHOLD,
+            metric_name="x",
+            threshold=0,
+            cooldown_s=0,
+        )
+    )
     fired = await mgr.evaluate("x", 1.0)
     assert len(fired) == 1
     assert delivered == fired

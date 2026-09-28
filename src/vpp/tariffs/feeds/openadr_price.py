@@ -19,10 +19,11 @@ window" the same way as OASIS. Instead this adapter:
 For testing without a live VTN, callers may invoke :meth:`ingest_event`
 directly with a :class:`DREvent`.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from .base import PriceFeed, PricePoint
 
@@ -68,9 +69,7 @@ class OpenADRPriceFeed(PriceFeed):
     def clear(self) -> None:
         self._events.clear()
 
-    async def fetch(
-        self, start: datetime, end: datetime, **kwargs: Any
-    ) -> list[PricePoint]:
+    async def fetch(self, start: datetime, end: datetime, **kwargs: Any) -> list[PricePoint]:
         if start.tzinfo is None:
             start = start.replace(tzinfo=timezone.utc)
         if end.tzinfo is None:
@@ -80,7 +79,7 @@ class OpenADRPriceFeed(PriceFeed):
         t = start
         while t < end:
             price = self.base_price_per_kwh
-            applied: Optional[tuple[float, str]] = None
+            applied: tuple[float, str] | None = None
             for ev_start, ev_end, level, stype in self._events:
                 if ev_start <= t < ev_end:
                     if stype == "ELECTRICITY_PRICE":

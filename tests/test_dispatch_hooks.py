@@ -1,16 +1,15 @@
 """Tests for the M2 dispatch.py hook API (objective_terms / constraint_builders)."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
 from vpp.optimization.solvers import PyomoPlugin
 
 pyomo_available = PyomoPlugin().is_available()
-pytestmark = pytest.mark.skipif(
-    not pyomo_available, reason="pyomo + HiGHS not installed"
-)
+pytestmark = pytest.mark.skipif(not pyomo_available, reason="pyomo + HiGHS not installed")
 
 if pyomo_available:
     import pyomo.environ as pyo
@@ -18,7 +17,7 @@ if pyomo_available:
     from vpp.optimization.formulations.dispatch import build_battery_dispatch_model
 
 
-def _params(prices: List[float]) -> Dict[str, Any]:
+def _params(prices: list[float]) -> dict[str, Any]:
     return {
         "battery_capacity_kwh": 100.0,
         "max_charge_kw": 25.0,
@@ -33,7 +32,7 @@ def _params(prices: List[float]) -> Dict[str, Any]:
     }
 
 
-def _two_peak_prices() -> List[float]:
+def _two_peak_prices() -> list[float]:
     p = [0.10] * 24
     for h in (0, 1, 2, 3, 4, 13, 14):
         p[h] = 0.04
