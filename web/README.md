@@ -39,11 +39,14 @@ seeds an `operator` user by default.
 
 ## Environment variables
 
+See `.env.example` for the annotated list.
+
 | Var | Default | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:8000` | Public-facing FastAPI URL (used in errors / debug). |
-| `API_BASE_URL` | falls back to `NEXT_PUBLIC_API_BASE_URL` | Server-side URL — useful when the Next.js server is in Docker and needs `http://api:8000`. |
+| `API_BASE_URL` | falls back to `NEXT_PUBLIC_API_BASE_URL`, then `http://localhost:8000` | Server-side FastAPI URL — useful when the Next.js server is in Docker and needs `http://api:8000`. |
 | `AUTH_COOKIE_NAME` | `vpp_session` | Name of the httpOnly JWT cookie. |
+| `WS_PUBLIC_URL` (runtime) / `NEXT_PUBLIC_WS_URL` (build time) | derived from `API_BASE_URL` → `ws(s)://…/api/v1/ws` | WebSocket URL the **browser** dials. Set it whenever `API_BASE_URL` is not reachable from the browser. |
+| `NEXT_PUBLIC_USE_MOCKS` | unset | `1` enables demo mode: failed API calls for the customer portal, alerts and sites fall back to bundled demo data and live updates are disabled. **Never** set in real deployments. |
 
 ## Architecture
 
@@ -58,6 +61,22 @@ seeds an `operator` user by default.
   components use a thin axios instance pointed at `/api/proxy`.
 - **Middleware.** `middleware.ts` redirects unauthenticated requests to
   `/login` (the `/login` and `/api/auth/*` paths are public).
+- **Live updates (WebSocket).** Route handlers cannot proxy a WebSocket
+  upgrade, so the browser connects to FastAPI's `/api/v1/ws` directly.
+  Before each (re)connect `lib/ws/client.ts` calls `GET /api/auth/ws-token`,
+  which exchanges the httpOnly session cookie for a short-lived, socket-only
+  token (`POST /api/v1/ws/token` on FastAPI, 60s TTL, rejected by the HTTP
+  API). The token is sent as the `bearer, <token>` WebSocket subprotocol
+  pair (never in the URL); initial channels go in the `channels` query
+  param so reconnects resubscribe automatically. Reconnects use
+  exponential backoff with jitter; a 25s `ping` keeps idle proxies from
+  dropping the socket. The topbar badge shows the connection state.
+- **No silent mocks.** A missing/failing endpoint renders an error state
+  (`components/ui/error-state.tsx`) with the HTTP status and a Retry
+  button. Demo data is only used with `NEXT_PUBLIC_USE_MOCKS=1`.
+- **Monaco is self-hosted.** `scripts/copy-monaco.mjs` (run by
+  `predev`/`prebuild`) copies `monaco-editor/min/vs` to `public/monaco`, so
+  the settings editor never loads code from a third-party CDN.
 - **TanStack Query** for caching and 5s polling on the Fleet page.
 
 ## What's implemented (M1)
@@ -83,7 +102,8 @@ seeds an `operator` user by default.
   side sheet with Inputs / Solution / Diagnostics / Counterfactual tabs.
   The sheet is keyboard-accessible (Esc closes, focus trap, focus
   restoration on close).
-- **Live updates** via the WebSocket at `/ws`. The singleton client in
+- **Live updates** via the authenticated WebSocket at `/api/v1/ws` (see
+  Architecture). The singleton client in
   `lib/ws/client.ts` subscribes to `resource_updates`,
   `optimization_events`, and `alerts`; messages invalidate TanStack
   Query caches and pop toasts via `sonner`. Mounted at the operator
@@ -100,23 +120,18 @@ seeds an `operator` user by default.
   delete the buffer in `components/asset/asset-detail.tsx`.
 - **Dispatch history endpoint** — `GET /api/v1/optimization/history`
   exists upstream but does *not* yet return per-run inputs/solution
-  payloads needed by the side sheet. When the response is missing or
-  404s, the page reads from a small `localStorage`-backed log
-  (`lib/dispatch/local-log.ts`) populated by UI-driven submissions.
-  This is a temporary stub awaiting the M3 backend work.
-- **WebSocket auth.** The current FastAPI `/ws` endpoint is open. The
-  Next.js JWT cookie is `httpOnly` and not readable from the client, so
-  if/when the backend adds auth the recommended exchange is a one-shot
-  ticket route under `app/api/auth/ws-ticket` (server reads the cookie
-  and returns a short-lived signed token), then
-  `new WebSocket('/ws?ticket=...')`. Tracked for M3.
+  payloads needed by the side sheet. Runs without those fields render
+  with the corresponding tabs empty; a failing request shows an error
+  state (there is no client-side substitute log).
+- **WebSocket auth.** Done: see "Live updates (WebSocket)" under
+  Architecture (`app/api/auth/ws-token` + FastAPI `POST /api/v1/ws/token`).
 
 ## What's implemented (M3)
 
 - **Dispatch explainer** wired into the existing dispatch side-sheet
   ("Counterfactual" tab). Side-by-side cost bar, per-step net-power
   overlay, free-text rationale, and a binding-constraints list. Calls
-  `GET /api/v1/optimization/explain/{run_id}`; on 404, shows a clear
+  `GET /api/v1/dispatches/{run_id}/explain`; on 404, shows a clear
   empty state.
 - **Tariffs page** (`/tariffs` and `/tariffs/[id]`). Left list with
   search and utility filter; detail panel with three tabs:
@@ -127,8 +142,8 @@ seeds an `operator` user by default.
     30-day load" toggle, with optional "compare to" picker. Renders a
     horizontal stacked bar of line items via Recharts plus a
     copy-to-clipboard JSON button.
-  Falls back to `app/api/tariff-presets` (bundled demo tariffs in
-  `lib/tariffs/presets.ts`) when `/api/v1/tariffs` is unavailable.
+  If `/api/v1/tariffs` fails the page shows an error state; bundled
+  starter tariffs are available separately via `app/api/tariff-presets`.
 - **Settings YAML editor** (`/settings`). Monaco lazy-loaded via
   `next/dynamic` (`ssr:false`). Schema-driven client-side validation
   (Ajv against `/api/v1/config/schema`); falls back to YAML-syntax-only
@@ -141,9 +156,9 @@ seeds an `operator` user by default.
 
 | Endpoint | Used by | Fallback |
 |---|---|---|
-| `GET /api/v1/optimization/explain/{run_id}` | Explainer tab | Empty state |
-| `GET /api/v1/tariffs` | Tariff list | `/api/tariff-presets` (bundled) |
-| `GET /api/v1/tariffs/{id}` | Tariff detail | bundled preset |
+| `GET /api/v1/dispatches/{run_id}/explain` | Explainer tab | Empty state on 404 |
+| `GET /api/v1/tariffs` | Tariff list | Error state |
+| `GET /api/v1/tariffs/{id}` | Tariff detail | Error state |
 | `POST /api/v1/tariffs/{id}/simulate` | Bill simulator | Toast error |
 | `GET /api/v1/config` | Settings live config | hard error |
 | `PUT /api/v1/config` | Apply config | hard error |
@@ -163,10 +178,11 @@ seeds an `operator` user by default.
   lazy-loaded with `next/dynamic` (`ssr:false`). Tiles come from
   [OpenFreeMap](https://openfreemap.org) (`tiles.openfreemap.org/styles/positron`)
   — OSM-derived, no API key, free for unlimited use, recommended drop-in
-  for Mapbox. Falls back to a synthesized site list (group resources by
-  `metadata.site_id`, geocode by `metadata.location.{lat,lon}`, scatter
-  the rest on a deterministic continental-US grid) when
-  `GET /api/v1/sites` returns 404. Markers are color-coded by aggregate
+  for Mapbox. In mock mode only (`NEXT_PUBLIC_USE_MOCKS=1`) a failing
+  `GET /api/v1/sites` falls back to a synthesized site list (group
+  resources by `metadata.site_id`, geocode by
+  `metadata.location.{lat,lon}`, scatter the rest on a deterministic
+  continental-US grid); otherwise the error is shown. Markers are color-coded by aggregate
   health (green/yellow/red based on alert volume, SOH < 0.85, and
   offline-resource count). Hover shows a popover; the synced
   click-to-select sidebar list is the keyboard fallback for screen
@@ -187,9 +203,12 @@ seeds an `operator` user by default.
   backend doesn't ship per-audience tokens yet, treat all logins as
   operator and reach the portal directly via `/portal`.
 
-### M4 backend contracts (mocked at the proxy if 404)
+### M4 backend contracts
 
-| Endpoint | Used by | Fallback |
+The "Mock mode fallback" column applies **only** with
+`NEXT_PUBLIC_USE_MOCKS=1`; otherwise a failure renders an error state.
+
+| Endpoint | Used by | Mock mode fallback |
 |---|---|---|
 | `GET /api/v1/alerts?since=…` | Alerts feed | Demo dataset in `lib/api/alerts.ts` |
 | `POST /api/v1/alerts/{id}/ack` | Ack | optimistic-only |
@@ -216,8 +235,15 @@ pnpm install
 pnpm typecheck
 pnpm lint
 pnpm build
-pnpm test:e2e   # requires Playwright browsers: pnpm exec playwright install
+pnpm test:e2e   # requires Playwright browsers: pnpm exec playwright install chromium
 ```
+
+The Playwright specs stub every backend call with `page.route()` /
+`page.routeWebSocket()`, so no FastAPI server is needed. They start
+`pnpm dev` (or `pnpm start` when `CI` is set — run `pnpm build` first).
+Useful knobs: `E2E_PORT`, `E2E_BASE_URL` (reuse a running app) and
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE` (use a preinstalled Chromium whose revision
+differs from the one the installed Playwright expects).
 
 If `pnpm install` fails offline, the source still builds cleanly for anyone
 with network access — versions in `package.json` are pinned to current
@@ -228,4 +254,6 @@ stable releases.
 The GitHub Actions workflow lives at the repo root in
 `.github/workflows/web-ci.yml` (the project already has top-level workflows,
 so it's colocated rather than duplicated under `web/.github/workflows/`).
-It runs on PRs that touch `web/**`.
+It runs on PRs that touch `web/**`: a `build` job (lint, typecheck, build)
+and an `e2e` job (Playwright/Chromium against a production build; the HTML
+report is uploaded on failure).

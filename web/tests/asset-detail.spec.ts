@@ -56,7 +56,7 @@ test.beforeEach(async ({ context }) => {
     }),
   );
 
-  await context.route("**/api/proxy/api/v1/resources/", (route) =>
+  await context.route(/\/api\/proxy\/api\/v1\/resources\/?(\?.*)?$/, (route) =>
     route.fulfill({
       status: 200,
       contentType: "application/json",
