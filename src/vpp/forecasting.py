@@ -110,7 +110,7 @@ class SimpleForecaster(Forecaster):
             )
 
         except Exception as e:
-            raise ForecastError(f"Forecasting failed: {e!s}")
+            raise ForecastError(f"Forecasting failed: {e!s}") from e
 
 
 class WeatherBasedForecaster(Forecaster):
@@ -183,7 +183,7 @@ class WeatherBasedForecaster(Forecaster):
             )
 
         except Exception as e:
-            raise ForecastError(f"Weather-based forecasting failed: {e!s}")
+            raise ForecastError(f"Weather-based forecasting failed: {e!s}") from e
 
 
 def get_forecaster(name: str, config: ForecastConfig | None = None) -> Forecaster:

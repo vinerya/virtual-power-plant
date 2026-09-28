@@ -331,7 +331,8 @@ def test_nem3_export_avoided_cost():
     opt_nem3 = tariff_to_opt_params(tariff, horizon_start, T, 60, nem="nem3", nem3_avoided_cost=ac)
     # Verify sell < buy at most hours.
     assert all(
-        s <= b + 1e-9 for s, b in zip(opt_nem3.energy_sell_per_kwh, opt_nem3.energy_buy_per_kwh)
+        s <= b + 1e-9
+        for s, b in zip(opt_nem3.energy_sell_per_kwh, opt_nem3.energy_buy_per_kwh, strict=True)
     )
     obj3, cb3 = build_tariff_hooks(opt_nem3)
     m3 = build_battery_dispatch_model(

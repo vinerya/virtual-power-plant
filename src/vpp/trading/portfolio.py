@@ -238,7 +238,7 @@ class Portfolio:
                 total += position.get_notional_value(market_prices[market])
         return total
 
-    def calculate_total_pnl(self, market_prices: dict[str, float] = None) -> float:
+    def calculate_total_pnl(self, market_prices: dict[str, float] | None = None) -> float:
         """Calculate total portfolio P&L."""
         if market_prices is None:
             market_prices = {}
@@ -263,7 +263,7 @@ class Portfolio:
             for market, position in self.positions.items()
         )
 
-    def calculate_daily_pnl(self, date: datetime = None) -> float:
+    def calculate_daily_pnl(self, date: datetime | None = None) -> float:
         """Realized P&L net of fees for trades on a given day (default today).
 
         Counts every closing trade -- covering a short is a *buy* -- where
@@ -281,7 +281,7 @@ class Portfolio:
             if trade.timestamp.date() == date
         )
 
-    def calculate_max_drawdown(self, market_prices: dict[str, float] = None) -> float:
+    def calculate_max_drawdown(self, market_prices: dict[str, float] | None = None) -> float:
         """Calculate maximum drawdown."""
         if not self.equity_curve:
             return 0.0
@@ -300,7 +300,7 @@ class Portfolio:
         self.max_drawdown = max_dd
         return max_dd
 
-    def get_equity(self, market_prices: dict[str, float] = None) -> float:
+    def get_equity(self, market_prices: dict[str, float] | None = None) -> float:
         """Get current portfolio equity: cash plus mark-to-market position value.
 
         Cash already reflects what was paid/received for every trade, so the
@@ -352,7 +352,9 @@ class Portfolio:
         )
         self.max_drawdown = max(self.max_drawdown, current_drawdown)
 
-    def get_position_summary(self, market_prices: dict[str, float] = None) -> dict[str, Any]:
+    def get_position_summary(
+        self, market_prices: dict[str, float] | None = None
+    ) -> dict[str, Any]:
         """Get summary of all positions."""
         if market_prices is None:
             market_prices = {}
@@ -395,7 +397,9 @@ class Portfolio:
 
         return summary
 
-    def get_performance_metrics(self, market_prices: dict[str, float] = None) -> dict[str, Any]:
+    def get_performance_metrics(
+        self, market_prices: dict[str, float] | None = None
+    ) -> dict[str, Any]:
         """Calculate comprehensive performance metrics."""
         if not self.trades:
             return {}

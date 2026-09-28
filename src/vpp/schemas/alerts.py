@@ -6,7 +6,7 @@ The :class:`AlertRead` shape matches ``Alert`` in ``web/lib/api/types.ts``
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 - pydantic resolves annotations at runtime
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator

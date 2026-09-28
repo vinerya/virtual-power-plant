@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime  # noqa: TC003 -- pydantic needs it at runtime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,  # noqa: TC002 -- FastAPI resolves dependency annotations at runtime
+    AsyncSession,
 )
 
 from vpp.api.deps import get_live_config, set_live_config

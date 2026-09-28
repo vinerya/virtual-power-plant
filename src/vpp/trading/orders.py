@@ -110,9 +110,7 @@ class Order(ABC):
 
     def is_expired(self) -> bool:
         """Check if order has expired."""
-        if self.expire_time and datetime.now() > self.expire_time:
-            return True
-        return False
+        return bool(self.expire_time and datetime.now() > self.expire_time)
 
 
 class MarketOrder(Order):
@@ -573,7 +571,7 @@ class OrderBook:
 
 
 def create_order(
-    order_type: str, market: str, side: str, quantity: float, price: float = None, **kwargs
+    order_type: str, market: str, side: str, quantity: float, price: float | None = None, **kwargs
 ) -> Order:
     """
     Factory function to create orders of different types.
@@ -627,7 +625,7 @@ def create_order(
 
 
 def validate_order_parameters(
-    order_type: str, market: str, side: str, quantity: float, price: float = None, **kwargs
+    order_type: str, market: str, side: str, quantity: float, price: float | None = None, **kwargs
 ) -> list[str]:
     """
     Validate order parameters.
@@ -664,9 +662,8 @@ def validate_order_parameters(
         "fok",
         "immediate_or_cancel",
         "ioc",
-    ]:
-        if price is None or price <= 0:
-            errors.append(f"{order_type} orders require a positive price")
+    ] and (price is None or price <= 0):
+        errors.append(f"{order_type} orders require a positive price")
 
     if order_type == "stop_limit":
         stop_price = kwargs.get("stop_price")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 -- runtime annotation
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.auth.security import (
     create_access_token,
@@ -18,7 +18,7 @@ from vpp.auth.security import (
     verify_password,
 )
 from vpp.db.engine import get_db
-from vpp.db.models import UserModel  # noqa: TC001 -- runtime annotation
+from vpp.db.models import UserModel
 from vpp.db.repositories import UserRepository
 from vpp.schemas.auth import (
     APIKeyCreate,

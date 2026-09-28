@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - resolved at runtime by FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from vpp.api.optimization_support import (
@@ -36,7 +36,7 @@ from vpp.api.optimization_support import (
 )
 from vpp.auth.security import get_current_user
 from vpp.db.engine import get_db
-from vpp.db.models import UserModel  # noqa: TC001 - resolved at runtime by FastAPI
+from vpp.db.models import UserModel
 from vpp.db.repositories import OptimizationRepository, TariffRepository
 from vpp.optimization.planning import (
     FleetAsset,

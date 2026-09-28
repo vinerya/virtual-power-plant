@@ -114,7 +114,7 @@ def test_extensive_form_solves():
     # Expected cost equals probability-weighted average of per-scenario costs.
     pi = sol["probabilities"]
     cs = sol["scenario_costs"]
-    expected_manual = sum(p * c for p, c in zip(pi, cs))
+    expected_manual = sum(p * c for p, c in zip(pi, cs, strict=True))
     assert sol["expected_cost"] == pytest.approx(expected_manual, rel=1e-5, abs=1e-5)
 
 
@@ -225,7 +225,7 @@ def test_eevpi_lower_bound():
     # build a stochastic problem where stage-1 is forced equal across scenarios
     # (already true) AND prices are replaced by the mean — its expected cost under
     # mean prices is what one would do if treating uncertainty as expectation.
-    mean_prices = [0.5 * (a + b) for a, b in zip(p_low, p_high)]
+    mean_prices = [0.5 * (a + b) for a, b in zip(p_low, p_high, strict=True)]
     mean_scenarios = [
         _scenario("M1", 0.5, mean_prices),
         _scenario("M2", 0.5, mean_prices),

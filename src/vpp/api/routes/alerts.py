@@ -21,11 +21,11 @@ resolved) or ``all``; an expired snooze counts as ``active``.
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 - FastAPI resolves annotations at runtime
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - FastAPI dependency annotation
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.alert_service import (
     AlertRepository,
@@ -37,7 +37,7 @@ from vpp.alert_service import (
 )
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
-from vpp.db.models import AlertRuleModel, UserModel  # noqa: TC001 - runtime annotations
+from vpp.db.models import AlertRuleModel, UserModel
 from vpp.schemas.alerts import (
     MAX_SNOOZE_MS,
     AlertRead,

@@ -28,10 +28,14 @@ References
 
 from __future__ import annotations
 
+import itertools
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # Boltzmann constant in eV/K (Arrhenius with activation energy in eV)
 _K_B_EV_PER_K = 8.617333262e-5
@@ -231,7 +235,7 @@ def _interpolate_cycle_life(curve: dict[float, float], dod: float) -> float:
         return float(knots[0][1])
     if dod >= knots[-1][0]:
         return float(knots[-1][1])
-    for (d0, n0), (d1, n1) in zip(knots, knots[1:]):
+    for (d0, n0), (d1, n1) in itertools.pairwise(knots):
         if d0 <= dod <= d1:
             frac = (dod - d0) / (d1 - d0)
             return float(n0 + frac * (n1 - n0))

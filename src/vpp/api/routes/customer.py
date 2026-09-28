@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,  # noqa: TC002 -- FastAPI resolves dependency annotations at runtime
+    AsyncSession,
 )
 
 from vpp.auth.security import require_role

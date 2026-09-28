@@ -19,6 +19,8 @@ os.environ["VPP_SECRET_KEY"] = "test-secret-key-not-for-production"
 # requests earlier ones made. Rate limiting has its own tests (explicit apps).
 os.environ.setdefault("VPP_RATE_LIMIT_ENABLED", "false")
 
+import contextlib
+
 from vpp.api.app import create_app
 from vpp.auth.security import create_access_token, get_password_hash
 from vpp.db.engine import close_db, get_db, init_db
@@ -35,10 +37,8 @@ async def app():
     yield _app
     await close_db()
     # Clean up test database
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.remove("test_vpp.db")
-    except FileNotFoundError:
-        pass
 
 
 @pytest_asyncio.fixture

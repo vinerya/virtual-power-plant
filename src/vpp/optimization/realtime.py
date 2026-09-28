@@ -153,10 +153,6 @@ class FastDispatchRules(RuleBasedOptimizer):
             metadata={"priority_actions": []},
         )
 
-        # Battery parameters
-        battery_capacity = problem.parameters.get("battery_capacity", 1000.0)
-        max_battery_power = problem.parameters.get("max_battery_power", 250.0)
-
         # Priority 1: Safety and emergency response
         safety_action = self._apply_safety_rules(state, control, problem)
         if safety_action:
@@ -299,12 +295,15 @@ class FastDispatchRules(RuleBasedOptimizer):
                 control.battery_power_setpoint -= discharge_power
                 return f"economic_discharge_{discharge_power:.1f}kW_price_{state.electricity_price:.3f}"
 
-        elif state.electricity_price < price_threshold_low and net_renewable > 0:
+        elif (
+            state.electricity_price < price_threshold_low
+            and net_renewable > 0
+            and state.battery_soc < 0.8
+        ):
             # Low prices and excess renewable - charge battery
-            if state.battery_soc < 0.8:
-                charge_power = min(net_renewable, 100.0, (0.8 - state.battery_soc) * 1000.0 / 3)
-                control.battery_power_setpoint += charge_power
-                return f"economic_charge_{charge_power:.1f}kW_price_{state.electricity_price:.3f}"
+            charge_power = min(net_renewable, 100.0, (0.8 - state.battery_soc) * 1000.0 / 3)
+            control.battery_power_setpoint += charge_power
+            return f"economic_charge_{charge_power:.1f}kW_price_{state.electricity_price:.3f}"
 
         # Renewable smoothing
         renewable_variability = problem.parameters.get("renewable_variability", 0.0)
@@ -405,7 +404,7 @@ class ModelPredictiveControlPlugin(OptimizationPlugin):
         self.prediction_horizon = config.get("prediction_horizon", 10)
 
         try:
-            import cvxpy as cp
+            import cvxpy  # noqa: F401 -- availability probe (import must succeed)
 
             self._solver_available = True
             self.logger.info("MPC real-time plugin initialized with CVXPY")
@@ -557,7 +556,7 @@ class RealTimeOptimizationManager:
         self._max_history = 1000
 
     def create_realtime_problem(
-        self, current_state: dict[str, Any], forecasts: dict[str, list[float]] = None
+        self, current_state: dict[str, Any], forecasts: dict[str, list[float]] | None = None
     ) -> OptimizationProblem:
         """Create a real-time optimization problem."""
 
@@ -622,5 +621,5 @@ class RealTimeOptimizationManager:
             "p95_solve_time_ms": np.percentile(solve_times, 95),
             "success_rate": success_rate,
             "total_solves": len(self._performance_history),
-            "methods_used": list(set(h["method"] for h in recent)),
+            "methods_used": list({h["method"] for h in recent}),
         }

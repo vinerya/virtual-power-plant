@@ -281,7 +281,7 @@ class ADMMDistributedPlugin(OptimizationPlugin):
         self.tolerance = config.get("tolerance", 1e-3)
 
         try:
-            import cvxpy as cp
+            import cvxpy  # noqa: F401 -- availability probe (import must succeed)
 
             self._solver_available = True
             self.logger.info("ADMM distributed plugin initialized with CVXPY")
@@ -312,7 +312,6 @@ class ADMMDistributedPlugin(OptimizationPlugin):
 
             # Extract problem data
             sites_data = problem.parameters.get("sites", [])
-            target_total_power = problem.parameters.get("target_total_power", 0.0)
             num_sites = len(sites_data)
 
             if num_sites < 2:
@@ -459,7 +458,9 @@ class DistributedOptimizationManager:
         self._max_history = 500
 
     def create_distributed_problem(
-        self, sites_data: list[dict[str, Any]], coordination_targets: dict[str, float] = None
+        self,
+        sites_data: list[dict[str, Any]],
+        coordination_targets: dict[str, float] | None = None,
     ) -> OptimizationProblem:
         """Create a distributed optimization problem."""
 
@@ -524,7 +525,7 @@ class DistributedOptimizationManager:
             "convergence_rate": convergence_rate,
             "avg_iterations": avg_iterations,
             "total_coordinations": len(self._coordination_history),
-            "methods_used": list(set(h["method"] for h in recent)),
+            "methods_used": list({h["method"] for h in recent}),
             "avg_sites_coordinated": np.mean([h["num_sites"] for h in recent]),
         }
 
@@ -535,16 +536,19 @@ class DistributedOptimizationManager:
         required_fields = ["site_id", "total_capacity", "available_capacity", "marginal_cost"]
 
         for i, site in enumerate(sites_data):
-            for field in required_fields:
-                if field not in site:
-                    errors.append(f"Site {i}: Missing required field '{field}'")
-                elif not isinstance(site[field], (int, float)):
-                    errors.append(f"Site {i}: Field '{field}' must be numeric")
+            for field_name in required_fields:
+                if field_name not in site:
+                    errors.append(f"Site {i}: Missing required field '{field_name}'")
+                elif not isinstance(site[field_name], (int, float)):
+                    errors.append(f"Site {i}: Field '{field_name}' must be numeric")
 
             # Validate capacity constraints
-            if "total_capacity" in site and "available_capacity" in site:
-                if site["available_capacity"] > site["total_capacity"]:
-                    errors.append(f"Site {i}: Available capacity exceeds total capacity")
+            if (
+                "total_capacity" in site
+                and "available_capacity" in site
+                and site["available_capacity"] > site["total_capacity"]
+            ):
+                errors.append(f"Site {i}: Available capacity exceeds total capacity")
 
         # Check for duplicate site IDs
         site_ids = [site.get("site_id") for site in sites_data]

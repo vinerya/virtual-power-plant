@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 @dataclass
@@ -63,7 +66,7 @@ class MeterTrace:
     def kwh_in_window(self, start: datetime, end: datetime) -> float:
         """Total imported kWh whose interval-start lies in [start, end)."""
         total = 0.0
-        for ts, kwh in zip(self.timestamps, self.import_kwh):
+        for ts, kwh in zip(self.timestamps, self.import_kwh, strict=True):
             if start <= ts < end:
                 total += kwh
         return total

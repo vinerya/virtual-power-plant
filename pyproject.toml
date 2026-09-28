@@ -139,6 +139,41 @@ ignore = [
     "SIM108", # use ternary operator (readability preference)
 ]
 
+[tool.ruff.lint.flake8-type-checking]
+# FastAPI, Pydantic and SQLAlchemy evaluate annotations at *runtime*
+# (request/response validation, dependency injection, ``Mapped[...]``
+# column inference).  Moving the names those annotations reference into an
+# ``if TYPE_CHECKING:`` block turns them into NameErrors at import/request
+# time, so tell ruff which classes resolve their annotations at runtime.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlalchemy.orm.DeclarativeBase",
+    "vpp.db.base.Base",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# TC001-003 are unsafe where annotations are resolved at runtime but ruff
+# cannot see it:
+# - api/ and auth/: FastAPI inspects route and dependency signatures
+#   (``session: AsyncSession = Depends(get_db)``, ``request: Request``) via
+#   ``typing.get_type_hints`` on every app start.  Routes are registered via
+#   ``router.get(...)`` on an *instance*, which ``runtime-evaluated-decorators``
+#   cannot match.
+# - db/: SQLAlchemy resolves ``Mapped[datetime]`` on plain mixins
+#   (``TimestampMixin``) that do not inherit from ``Base``.
+# - tests/: pytest fixtures and FastAPI dependency overrides; deferring
+#   imports there buys nothing and risks fixture-resolution surprises.
+"src/vpp/api/**" = ["TC001", "TC002", "TC003"]
+"src/vpp/auth/**" = ["TC001", "TC002", "TC003"]
+"src/vpp/db/**" = ["TC001", "TC002", "TC003"]
+"tests/**" = ["TC001", "TC002", "TC003"]
+# ``pyo = pytest.importorskip("pyomo.environ")`` must run before the pyomo-
+# dependent imports so the module is skipped (not errored) without pyomo.
+"tests/test_admm_fleet.py" = ["E402"]
+"tests/test_fleet_dispatch.py" = ["E402"]
+"tests/test_multi_resource_mpc.py" = ["E402"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["vpp"]
 # The repo-root ``alembic/`` migrations directory would otherwise make ruff

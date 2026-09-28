@@ -11,14 +11,16 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vpp.protocols.base import (
     ProtocolAdapter,
     ProtocolMessage,
     ProtocolStatus,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
 

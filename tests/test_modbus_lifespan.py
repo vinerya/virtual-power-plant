@@ -6,6 +6,7 @@ Mirrors tests/test_mqtt_lifespan.py's pattern.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 
 import pytest
@@ -26,10 +27,8 @@ def _fresh_sqlite_url(filename: str) -> str:
     idempotent and doesn't wipe existing data, so a stale file from a
     previous run would collide on re-insert.
     """
-    try:
+    with contextlib.suppress(FileNotFoundError):
         os.remove(filename)
-    except FileNotFoundError:
-        pass
     return f"sqlite+aiosqlite:///./{filename}"
 
 

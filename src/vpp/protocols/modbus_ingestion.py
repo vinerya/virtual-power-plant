@@ -32,9 +32,10 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from vpp.protocols.base import ProtocolMessage
+if TYPE_CHECKING:
+    from vpp.protocols.base import ProtocolMessage
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,7 @@ def _latest_timestamp(market_data: dict[str, Any]) -> datetime:
 class TradingStrategy(ABC):
     """Base class for trading strategies."""
 
-    def __init__(self, name: str, config: dict[str, Any] = None):
+    def __init__(self, name: str, config: dict[str, Any] | None = None):
         """Initialize trading strategy."""
         self.name = name
         self.config = config or {}
@@ -451,7 +451,7 @@ class MeanReversionStrategy(TradingStrategy):
 class MLTradingStrategy(TradingStrategy):
     """Machine learning-based trading strategy."""
 
-    def __init__(self, model_path: str = None, **kwargs):
+    def __init__(self, model_path: str | None = None, **kwargs):
         """Initialize ML trading strategy."""
         super().__init__("ml_trading", kwargs)
         self.model_path = model_path
@@ -489,9 +489,13 @@ class MLTradingStrategy(TradingStrategy):
                 if hasattr(data, "volume"):
                     features[f"{market_name}_volume"] = data.volume
 
-                if hasattr(data, "bid_price") and hasattr(data, "ask_price"):
-                    if data.bid_price and data.ask_price:
-                        features[f"{market_name}_spread"] = data.ask_price - data.bid_price
+                if (
+                    hasattr(data, "bid_price")
+                    and hasattr(data, "ask_price")
+                    and data.bid_price
+                    and data.ask_price
+                ):
+                    features[f"{market_name}_spread"] = data.ask_price - data.bid_price
 
             # Portfolio features
             total_positions = len(portfolio.positions)
@@ -624,7 +628,7 @@ class MLTradingStrategy(TradingStrategy):
 class MultiMarketStrategy(TradingStrategy):
     """Multi-market strategy that combines multiple approaches."""
 
-    def __init__(self, strategies: list[TradingStrategy] = None, **kwargs):
+    def __init__(self, strategies: list[TradingStrategy] | None = None, **kwargs):
         """Initialize multi-market strategy."""
         super().__init__("multi_market", kwargs)
         self.strategies = strategies or []
@@ -752,7 +756,7 @@ class MultiMarketStrategy(TradingStrategy):
         market_signals = {}
 
         # Group signals by market
-        for strategy_name, signals in strategy_signals.items():
+        for _strategy_name, signals in strategy_signals.items():
             for signal in signals:
                 market = signal.get("market")
                 if market not in market_signals:

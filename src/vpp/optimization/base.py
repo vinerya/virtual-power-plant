@@ -104,7 +104,7 @@ class OptimizationPlugin(ABC):
             self.logger.error(f"Failed to initialize plugin {self.name}: {e}")
             return False
 
-    def _initialize_impl(self, config: dict[str, Any]) -> None:
+    def _initialize_impl(self, config: dict[str, Any]) -> None:  # noqa: B027 -- optional hook
         """Implementation-specific initialization."""
         pass
 
@@ -154,7 +154,9 @@ class OptimizationEngine:
         self._enable_fallback = True
         self._validate_solutions = True
 
-    def register_plugin(self, plugin: OptimizationPlugin, config: dict[str, Any] = None) -> bool:
+    def register_plugin(
+        self, plugin: OptimizationPlugin, config: dict[str, Any] | None = None
+    ) -> bool:
         """Register an expert optimization plugin."""
         try:
             if config and not plugin.initialize(config):
@@ -281,11 +283,8 @@ class OptimizationEngine:
             if not result.solution:
                 return False
 
-            if not np.isfinite(result.objective_value):
-                return False
-
             # Problem-specific validation can be added here
-            return True
+            return bool(np.isfinite(result.objective_value))
 
         except Exception as e:
             self.logger.error(f"Solution validation failed: {e}")

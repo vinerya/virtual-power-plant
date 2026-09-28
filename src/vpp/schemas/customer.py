@@ -7,7 +7,7 @@ additive.
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 -- pydantic needs it at runtime
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field

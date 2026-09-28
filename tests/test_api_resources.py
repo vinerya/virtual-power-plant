@@ -89,4 +89,6 @@ async def test_viewer_cannot_mutate_resources(client: AsyncClient, auth_headers,
     delete = await client.delete(f"/api/v1/resources/{rid}", headers=viewer_headers)
     assert delete.status_code == 403
     # Viewers keep read access.
-    assert (await client.get(f"/api/v1/resources/{rid}", headers=viewer_headers)).status_code == 200
+    assert (
+        await client.get(f"/api/v1/resources/{rid}", headers=viewer_headers)
+    ).status_code == 200

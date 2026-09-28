@@ -21,14 +21,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - resolved at runtime by FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.api.routes.protocols import get_registry
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import V2GVehicleModel
 from vpp.events import EventType
-from vpp.protocols.base import ProtocolRegistry  # noqa: TC001 - resolved at runtime by FastAPI
+from vpp.protocols.base import ProtocolRegistry
 from vpp.settings import get_settings
 from vpp.v2g.aggregator import DispatchSignal, GridService, V2GAggregator
 from vpp.v2g.models import EVConnectionState, EVFleet

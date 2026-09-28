@@ -51,10 +51,9 @@ considerably; expect solver time to grow with horizon length.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .components import (
     DemandCharge,
@@ -63,7 +62,11 @@ from .components import (
     TieredEnergyRate,
     TimeOfUseRate,
 )
-from .tariff import Tariff
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .tariff import Tariff
 
 # ---------------------------------------------------------------------------
 # Parameter container
@@ -160,7 +163,8 @@ def tariff_to_opt_params(
     if horizon_start.tzinfo is None:
         horizon_start = horizon_start.replace(tzinfo=timezone.utc)
     dt_h = interval_minutes / 60.0
-    T = int(round(horizon_hours / dt_h))
+    # int() kept: with NumPy<2 inputs round(np.float64) returns np.float64.
+    T = int(round(horizon_hours / dt_h))  # noqa: RUF046
     step = timedelta(minutes=interval_minutes)
 
     # Pull components out of the tariff.
@@ -307,13 +311,12 @@ def add_tariff_constraints(opt_params: TariffOptParams) -> Callable:
     """
     import pyomo.environ as pyo
 
-    T = opt_params.horizon_steps
     # Big-M: bound by max charge + load magnitude. We compute it inside the
     # builder once we have access to the model's params.
 
     def _builder(model, params: dict[str, Any]) -> None:
-        load_max = max(list(params.get("load") or [0.0]) + [0.0])
-        solar_max = max(list(params.get("solar") or [0.0]) + [0.0])
+        load_max = max([*list(params.get("load") or [0.0]), 0.0])
+        solar_max = max([*list(params.get("solar") or [0.0]), 0.0])
         big_m = float(
             params["max_charge_kw"] + params["max_discharge_kw"] + load_max + solar_max + 1.0
         )
@@ -496,7 +499,7 @@ def add_tiered_energy_term(
         cap = 10_000.0
 
     # Breakpoints: b_0 = 0, then each finite threshold, then cap.
-    breakpoints: list[float] = [0.0] + list(finite_thresholds)
+    breakpoints: list[float] = [0.0, *list(finite_thresholds)]
     if breakpoints[-1] < cap:
         breakpoints.append(cap)
 

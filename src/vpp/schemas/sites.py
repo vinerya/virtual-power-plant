@@ -7,7 +7,7 @@ types (``web/lib/api/types.ts``) exactly; extra fields are additive.
 from __future__ import annotations
 
 import math
-from datetime import datetime  # noqa: TC003 -- pydantic needs it at runtime
+from datetime import datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 

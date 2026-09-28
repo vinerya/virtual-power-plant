@@ -73,7 +73,6 @@ def _make_l1_consensus_term(
     """
 
     def _builder(model, params):
-        T = len(target)
         if not hasattr(model, "admm_dev"):
             model.admm_dev = pyo.Var(model.T, domain=pyo.NonNegativeReals)
 
@@ -136,7 +135,7 @@ def _solve_subproblem(
     p_chg = [float(pyo_mod.value(model.p_charge[t])) for t in range(T)]
     p_dis = [float(pyo_mod.value(model.p_discharge[t])) for t in range(T)]
     soc = [float(pyo_mod.value(model.soc[t])) for t in range(T)]
-    is_chg = [int(round(float(pyo_mod.value(model.is_charging[t])))) for t in range(T)]
+    is_chg = [round(float(pyo_mod.value(model.is_charging[t]))) for t in range(T)]
     energy_cost = float(pyo_mod.value(model.energy_cost))
 
     return {
@@ -145,7 +144,7 @@ def _solve_subproblem(
         "soc": soc,
         "is_charging": is_chg,
         "energy_cost": energy_cost,
-        "p_local": [d - c for c, d in zip(p_chg, p_dis)],
+        "p_local": [d - c for c, d in zip(p_chg, p_dis, strict=True)],
     }
 
 

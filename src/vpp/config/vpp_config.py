@@ -350,8 +350,8 @@ class VPPConfig(BaseConfig):
         self,
         name: str,
         resource_type: str,
-        parameters: dict[str, Any] = None,
-        constraints: dict[str, Any] = None,
+        parameters: dict[str, Any] | None = None,
+        constraints: dict[str, Any] | None = None,
     ) -> None:
         """Add a resource to the configuration."""
         resource = ResourceConfig(

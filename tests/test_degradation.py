@@ -151,12 +151,10 @@ def test_rainflow_unavailable_falls_back(monkeypatch: pytest.MonkeyPatch) -> Non
                 raise ImportError("blocked for test")
             return None
 
-    monkeypatch.setattr(sys, "meta_path", [_Blocker()] + sys.meta_path)
+    monkeypatch.setattr(sys, "meta_path", [_Blocker(), *sys.meta_path])
 
     # Reload the degradation models module under the blocked import.
     import importlib
-
-    import vpp.degradation.models as deg_models
 
     monkeypatch.delitem(sys.modules, "vpp.degradation.models", raising=False)
     deg_models = importlib.import_module("vpp.degradation.models")

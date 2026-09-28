@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .components import (
     AdderRate,
@@ -12,7 +13,9 @@ from .components import (
     MinimumBill,
     TaxRate,
 )
-from .meter import MeterTrace
+
+if TYPE_CHECKING:
+    from .meter import MeterTrace
 
 
 @dataclass
@@ -120,7 +123,7 @@ class Tariff:
             if ad.basis == "per_kwh":
                 # Per-kWh adders apply to total imported kWh in the period.
                 kwh = 0.0
-                for ts, imp in zip(trace.timestamps, trace.import_kwh):
+                for ts, imp in zip(trace.timestamps, trace.import_kwh, strict=True):
                     if period.start <= ts < period.end:
                         kwh += imp
                 qty = round(kwh, 4)

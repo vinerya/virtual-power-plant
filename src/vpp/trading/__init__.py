@@ -42,51 +42,45 @@ __author__ = "VPP Trading Team"
 
 # Export all public classes and functions
 __all__ = [
-    # Core trading engine
-    "TradingEngine",
-    "OrderManager",
-    "PortfolioManager",
-    "RiskManager",
-    "MarketDataManager",
-    # Order management
-    "OrderType",
-    "OrderStatus",
-    "MarketOrder",
+    "AncillaryServicesMarket",
+    "ArbitrageStrategy",
+    "BilateralMarket",
+    "DayAheadMarket",
     "LimitOrder",
-    "StopOrder",
+    "LiveDataProvider",
+    "MLTradingStrategy",
+    "Market",
+    "MarketData",
+    "MarketDataManager",
+    "MarketDataProvider",
+    "MarketOrder",
+    "MarketType",
+    "MeanReversionStrategy",
+    "MomentumStrategy",
+    "MultiMarketStrategy",
     "Order",
     "OrderBook",
-    # Market types
-    "MarketType",
-    "Market",
-    "DayAheadMarket",
-    "RealTimeMarket",
-    "AncillaryServicesMarket",
-    "BilateralMarket",
-    # Trading strategies
-    "TradingStrategy",
-    "ArbitrageStrategy",
-    "MomentumStrategy",
-    "MeanReversionStrategy",
-    "MLTradingStrategy",
-    "MultiMarketStrategy",
-    # Portfolio management
-    "Position",
-    "Portfolio",
-    "Trade",
+    "OrderManager",
+    "OrderStatus",
+    "OrderType",
     "PnLCalculator",
-    "RiskMetrics",
-    # Market data
-    "MarketData",
+    "Portfolio",
+    "PortfolioManager",
+    "Position",
     "PriceData",
-    "VolumeData",
-    "MarketDataProvider",
+    "RealTimeMarket",
+    "RiskManager",
+    "RiskMetrics",
     "SimulatedDataProvider",
-    "LiveDataProvider",
+    "StopOrder",
+    "Trade",
+    "TradingEngine",
+    "TradingStrategy",
+    "VolumeData",
 ]
 
 
-def create_trading_engine(config: dict = None) -> TradingEngine:
+def create_trading_engine(config: dict | None = None) -> TradingEngine:
     """
     Create a pre-configured trading engine.
 
@@ -124,7 +118,7 @@ def create_arbitrage_strategy(price_threshold: float = 0.02) -> ArbitrageStrateg
     return ArbitrageStrategy(price_threshold=price_threshold)
 
 
-def create_ml_strategy(model_path: str = None) -> MLTradingStrategy:
+def create_ml_strategy(model_path: str | None = None) -> MLTradingStrategy:
     """
     Create a machine learning trading strategy.
 
@@ -212,7 +206,9 @@ def optimize_trading_schedule(prices: list, capacity: float, efficiency: float =
 
         # Calculate profit
         total_profit = 0
-        for i, (price, power) in enumerate(zip(prices, battery_schedule)):
+        # strict=False: a fallback solver schedule may be shorter than ``prices``;
+        # only the overlapping hours contribute to profit (pre-existing behaviour).
+        for price, power in zip(prices, battery_schedule, strict=False):
             if power > 0:  # Charging (buying)
                 total_profit -= power * price
             else:  # Discharging (selling)
@@ -258,19 +254,17 @@ def validate_trading_config(config: dict) -> list:
 
     # Validate risk limits
     risk_limits = config.get("risk_limits", {})
-    if "max_position" in risk_limits:
-        if (
-            not isinstance(risk_limits["max_position"], (int, float))
-            or risk_limits["max_position"] <= 0
-        ):
-            errors.append("max_position must be a positive number")
+    if "max_position" in risk_limits and (
+        not isinstance(risk_limits["max_position"], (int, float))
+        or risk_limits["max_position"] <= 0
+    ):
+        errors.append("max_position must be a positive number")
 
-    if "max_daily_loss" in risk_limits:
-        if (
-            not isinstance(risk_limits["max_daily_loss"], (int, float))
-            or risk_limits["max_daily_loss"] <= 0
-        ):
-            errors.append("max_daily_loss must be a positive number")
+    if "max_daily_loss" in risk_limits and (
+        not isinstance(risk_limits["max_daily_loss"], (int, float))
+        or risk_limits["max_daily_loss"] <= 0
+    ):
+        errors.append("max_daily_loss must be a positive number")
 
     # Validate markets
     valid_markets = ["day_ahead", "real_time", "ancillary", "bilateral"]

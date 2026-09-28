@@ -26,6 +26,7 @@ the HiGHS solver.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Any
 
@@ -85,10 +86,8 @@ def _try_import_pyomo():
                     def _factory(time_limit_s: float | None, _name=name):
                         sv = pyo.SolverFactory(_name)
                         if time_limit_s is not None:
-                            try:
+                            with contextlib.suppress(Exception):
                                 sv.options["time_limit"] = float(time_limit_s)
-                            except Exception:
-                                pass
                         return sv
 
                     return pyo, _factory
@@ -123,9 +122,7 @@ class PyomoPlugin(OptimizationPlugin):
             self.logger.debug(f"Pyomo plugin missing keys: {missing}")
             return False
         prices: list[float] = list(params["prices"])
-        if len(prices) == 0:
-            return False
-        return True
+        return len(prices) != 0
 
     def solve(
         self,
@@ -206,7 +203,7 @@ class PyomoPlugin(OptimizationPlugin):
         solution: dict[str, Any] = {
             "p_charge": p_chg,
             "p_discharge": p_dis,
-            "p_net": [c - d for c, d in zip(p_chg, p_dis)],
+            "p_net": [c - d for c, d in zip(p_chg, p_dis, strict=True)],
             "soc": soc,
             "method": self.name,
         }
@@ -325,7 +322,7 @@ class SimpleBatteryDispatchRules(RuleBasedOptimizer):
                 solution={
                     "p_charge": p_chg,
                     "p_discharge": p_dis,
-                    "p_net": [c - d for c, d in zip(p_chg, p_dis)],
+                    "p_net": [c - d for c, d in zip(p_chg, p_dis, strict=True)],
                     "soc": soc_traj,
                     "method": self.name,
                 },

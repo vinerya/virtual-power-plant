@@ -14,11 +14,11 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 -- FastAPI resolves at runtime
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
-from vpp.db.models import OrderModel, TradeModel, UserModel  # noqa: TC001 -- FastAPI runtime
+from vpp.db.models import OrderModel, TradeModel, UserModel
 from vpp.db.repositories import TradingRepository
 from vpp.schemas.auth import UserRole
 from vpp.schemas.trading import (

@@ -117,7 +117,7 @@ def test_solve_simple_arbitrage():
     # Discharge happens at peak hours (8/9 morning + 18/19/20 evening)
     assert sum(p_dis[h] for h in (8, 9, 18, 19, 20)) > 0
     # Mutual exclusion: no simultaneous charge & discharge
-    for c, d in zip(p_chg, p_dis):
+    for c, d in zip(p_chg, p_dis, strict=True):
         assert c * d <= 1e-6, "charge and discharge simultaneously"
 
 

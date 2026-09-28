@@ -7,12 +7,15 @@ or swap to the `holidays` package later if a longer horizon is needed.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # Default seasons: Northern Hemisphere convention used by most US IOUs.
-# Summer = May–September inclusive, Winter = the rest.
+# Summer = May-September inclusive, Winter = the rest.
 DEFAULT_SUMMER_MONTHS = frozenset({5, 6, 7, 8, 9})
 
 

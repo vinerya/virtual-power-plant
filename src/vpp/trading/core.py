@@ -67,7 +67,7 @@ class TradingEngine:
     - Strategy execution
     """
 
-    def __init__(self, config: dict[str, Any] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize trading engine.
 
@@ -262,7 +262,7 @@ class TradingEngine:
         self.market_data_manager.initialize(data_config)
 
         # Initialize markets
-        for market_name in self.config.get("markets", []):
+        for _market_name in self.config.get("markets", []):
             # Create market instances based on configuration
             pass
 
@@ -543,7 +543,7 @@ class PortfolioManager:
         """Get total portfolio P&L."""
         return self.portfolio.calculate_total_pnl()
 
-    def get_trades(self, market: str = None) -> list[Trade]:
+    def get_trades(self, market: str | None = None) -> list[Trade]:
         """Get trades, optionally filtered by market."""
         if market:
             return [trade for trade in self.trades if trade.market == market]

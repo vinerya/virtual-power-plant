@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from .base import PriceFeed, PricePoint
-from .cache import FeedCache
+
+if TYPE_CHECKING:
+    from .cache import FeedCache
 
 COMED_URL = "https://hourlypricing.comed.com/api"
 

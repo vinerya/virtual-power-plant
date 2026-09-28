@@ -165,7 +165,7 @@ class StochasticCVaRPlugin(OptimizationPlugin):
             "is_charging_0": float(pyo.value(model.is_charging[0, 0])),
         }
 
-        # Value-at-risk at level alpha equals the optimal eta (Rockafellar–Uryasev).
+        # Value-at-risk at level alpha equals the optimal eta (Rockafellar-Uryasev).
         value_at_risk = eta
 
         solution: dict[str, Any] = {

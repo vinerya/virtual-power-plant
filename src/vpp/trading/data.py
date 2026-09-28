@@ -80,7 +80,7 @@ class MarketData:
 class MarketDataProvider(ABC):
     """Base class for market data providers."""
 
-    def __init__(self, name: str, config: dict[str, Any] = None):
+    def __init__(self, name: str, config: dict[str, Any] | None = None):
         """Initialize market data provider."""
         self.name = name
         self.config = config or {}
@@ -149,7 +149,7 @@ class MarketDataProvider(ABC):
         self.is_streaming = False
         self.logger.info(f"Stopped streaming data for {self.name}")
 
-    def get_latest(self, market: str = None) -> MarketData | None:
+    def get_latest(self, market: str | None = None) -> MarketData | None:
         """Get latest market data."""
         if market:
             return self.latest_data.get(market)
@@ -254,7 +254,7 @@ class MarketDataProvider(ABC):
 class SimulatedDataProvider(MarketDataProvider):
     """Simulated market data provider for testing and development."""
 
-    def __init__(self, config: dict[str, Any] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """Initialize simulated data provider."""
         super().__init__("simulated", config)
 
@@ -528,7 +528,7 @@ class LiveDataProvider(MarketDataProvider):
 class HistoricalDataProvider(MarketDataProvider):
     """Historical market data provider for backtesting."""
 
-    def __init__(self, data_file: str, config: dict[str, Any] = None):
+    def __init__(self, data_file: str, config: dict[str, Any] | None = None):
         """Initialize historical data provider."""
         super().__init__("historical", config)
         self.data_file = data_file
@@ -640,10 +640,11 @@ class DataAggregator:
         for provider in self.providers.values():
             for market in provider.markets:
                 data = provider.get_latest(market)
-                if data:
-                    # Use most recent data if multiple providers have same market
-                    if market not in latest_data or data.timestamp > latest_data[market].timestamp:
-                        latest_data[market] = data
+                # Use most recent data if multiple providers have same market
+                if data and (
+                    market not in latest_data or data.timestamp > latest_data[market].timestamp
+                ):
+                    latest_data[market] = data
 
         return latest_data
 
