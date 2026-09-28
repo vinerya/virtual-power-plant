@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta
 
 import pytest
@@ -440,3 +441,21 @@ def test_single_market_data_type_shared_by_exchange_and_markets():
     snapshot = exchange.snapshot(market.name)
     assert isinstance(market.current_data, MarketData)
     assert market.current_data is snapshot
+
+
+def test_fill_vwap_never_leaves_the_range_of_fill_prices():
+    """Float rounding in the incremental VWAP could put ``average_price`` one ulp
+    below the best ask (46.179999... for two fills at 46.18), which made
+    ``test_market_buy_fills_and_persists`` flaky."""
+    order = MarketOrder(market="real_time", side="buy", quantity=10.0)
+    order.update_fill(3.7, 46.18)
+    order.update_fill(6.3, 46.18)
+    assert order.average_price == 46.18
+
+    rng = random.Random(7)
+    for _ in range(2000):
+        prices = [round(rng.uniform(20.0, 80.0), 2) for _ in range(rng.randint(1, 5))]
+        order = MarketOrder(market="real_time", side="buy", quantity=10.0)
+        for price in prices:
+            order.update_fill(round(rng.uniform(0.1, 3.0), 3), price)
+        assert min(prices) <= order.average_price <= max(prices)

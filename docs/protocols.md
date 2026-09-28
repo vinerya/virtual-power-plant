@@ -269,7 +269,7 @@ sent on the wire; vendor tables often list 1-based register numbers.
 
 ```json
 {"modbus": {"mode": "tcp", "host": "192.168.1.50", "port": 502, "unit_id": 1,
-  "control": {"enabled": true, "profile": "sunspec_123", "model_base": 40236,
+  "control": {"enabled": true, "profile": "sunspec_123", "model_base": "auto",
               "revert_timeout_s": 900, "max_kw": 8, "deadband_kw": 0.2,
               "min_interval_s": 10}}}
 ```
@@ -277,13 +277,31 @@ sent on the wire; vendor tables often list 1-based register numbers.
 | Profile | Writes | Release | Status |
 |---|---|---|---|
 | `register` (default) | one signed setpoint register: `register` (a map/custom register flagged `"writable": true`) or `address` + `data_type`; `unit` `W` / `kW` / `pct` (of `reference_kw`, default rated power); `scale` (value of one count) or `scale_factor_register` (SunSpec-style int16 exponent); `sign` `export_positive` (default) / `import_positive`; optional `enable_register` (+`enable_value`, `disable_value`) | `disable_value` to `enable_register`, else `release_value` (default 100 for `pct`, 0 otherwise) | generic |
-| `sunspec_123` | SunSpec model 123 Immediate Controls at `model_base` (address of the model `ID`): `WMaxLimPct` (+5, scaled by `WMaxLimPct_SF` at +23) = setpoint / `reference_kw`, clamped to 0–100 %; `WMaxLim_Ena` (+9) = 1; optional `WMaxLimPct_RvrtTms` (+7) = `revert_timeout_s` | `WMaxLim_Ena` = 0 | offsets per the SunSpec model definition |
-| `sunspec_124` | SunSpec model 124 Storage: `OutWRte` (+12) / `InWRte` (+13) as % of `reference_kw` (discharge: `OutWRte`=p, `InWRte`=−p; charge the reverse), `StorCtl_Mod` (+5) = 3 | `StorCtl_Mod` = 0 | **generic/unverified** — vendors interpret forced charge/discharge differently; validate on your device |
+| `sunspec_123` | SunSpec model 123 Immediate Controls at `model_base` (address of the model `ID`, or `"auto"`): `WMaxLimPct` (+5, scaled by `WMaxLimPct_SF` at +23) = setpoint / `reference_kw` (the spec's % of `WMax`, so set `reference_kw` to `WMax`), clamped to 0–100 %; `WMaxLim_Ena` (+9) = 1; optional `WMaxLimPct_RvrtTms` (+7) = `revert_timeout_s` | `WMaxLim_Ena` = 0 | offsets verified against the SunSpec model definition; untested on hardware |
+| `sunspec_124` | SunSpec model 124 Storage: `OutWRte` (+12) / `InWRte` (+13) as % of `reference_kw` (spec: % of `WDisChaMax` / `WChaMax`; discharge: `OutWRte`=p, `InWRte`=−p; charge the reverse), `StorCtl_Mod` (+5, bitfield: CHARGE + DISCHARGE) = 3 | `StorCtl_Mod` = 0 | offsets verified against the SunSpec model definition; forced charge/discharge **semantics unverified** — vendors interpret them differently; validate on your device |
 
-No vendor-specific absolute addresses are shipped: SunSpec models sit at a
-device-specific address, so find `model_base` in your device's register map
-(for example, Fronius documents model 123 starting at register 40237 in
-"int + SF" mode, i.e. address 40236 — unverified here, check your firmware).
+No vendor-specific absolute control addresses are shipped: SunSpec models
+sit at a device-specific address that depends on the models before them.
+`"model_base": "auto"` finds the model by SunSpec discovery (the `"SunS"`
+marker at 40000, 0 or 50000, then the chain of `ID`/`L` model headers up to
+the end model `0xFFFF`); an explicit `model_base` is the 0-based address of
+the model's `ID` register. Either way the `ID`/`L` header is read back before
+the first write and a mismatch is refused, so a wrong address never gets
+written.
+
+**Register maps.** The SunSpec registers shipped in
+`src/vpp/protocols/modbus.py` (model 123 and 124 control blocks, the
+`fronius_symo` model 113 and `solaredge_se` model 101/103 read maps) are
+verified against the official SunSpec model definitions — the
+sunspec/models JSON bundled with pysunspec2 1.3.6 — point by point
+(offset, size, type, units, access, scale-factor pairing) by
+`tests/test_sunspec_models.py`. They have **not** been tested on physical
+hardware. The Fronius/SolarEdge read maps assume the inverter model's `ID`
+at address 40069 (common model with L = 65, as both vendors document);
+polling multiplies values by their `*_SF` scale factor and drops SunSpec
+"not implemented" values (0x8000, 0xFFFF, 0x80000000, 0xFFFFFFFF, acc32 0,
+float NaN). The `sma_sunnyboy` map uses SMA's proprietary registers, not
+SunSpec, and is not covered by that check.
 `"simulate": true` runs the whole pipeline without device I/O.
 
 ### Safety rules

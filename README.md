@@ -80,7 +80,7 @@ Maturity labels used below:
 | OpenADR 2.0b VEN | pull-mode registration, polling, event parsing, opt-in/out, mTLS | beta |
 | IEEE 2030.5 client | mTLS resource-tree walk to active DER controls | beta |
 | DR orchestrator | OpenADR / 2030.5 (incl. DefaultDERControl, Response posting) → fleet target → dispatch → EV and device setpoints, with caps and audit | beta — **auto-response off by default** |
-| Device control | dispatch allocations → Modbus setpoints (generic register, SunSpec 123; SunSpec 124 unverified) with clamping, deadband, rate limit, read-back and fallback watchdog | beta — **off by default** (`VPP_CONTROL_ENABLED`), per-device opt-in |
+| Device control | dispatch allocations → Modbus setpoints (generic register, SunSpec 123 and 124 — register maps verified against the SunSpec model definitions, untested on hardware; model 124 charge/discharge semantics vendor-specific) with clamping, deadband, rate limit, read-back and fallback watchdog | beta — **off by default** (`VPP_CONTROL_ENABLED`), per-device opt-in |
 | V2G | persisted vehicles, charger binding, schedules / dispatch via OCPP profiles | beta — discharge uses a vendor extension (negative limits) |
 | MQTT / Modbus ingestion | telemetry in from brokers and inverters/meters | beta |
 | Trading | order types incl. stop-limit/iceberg/IOC/FOK, pre-trade risk, portfolio, VaR, strategies and backtests | **simulated** venue |

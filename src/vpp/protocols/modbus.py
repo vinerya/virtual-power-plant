@@ -8,10 +8,22 @@ writer (:mod:`vpp.protocols.modbus_control`) refuses to write a named
 register that is not flagged. The writable definitions shipped here are the
 SunSpec *model-relative* control blocks built by
 :func:`sunspec_model_123_registers` (Immediate Controls, ``WMaxLimPct``) and
-:func:`sunspec_model_124_registers` (Storage, generic/unverified). SunSpec
-models sit at a device-specific address (after the preceding models in the
-chain), so these take the address of the model's ``ID`` register instead of
-guessing a vendor's absolute addresses.
+:func:`sunspec_model_124_registers` (Storage). SunSpec models sit at a
+device-specific address (after the preceding models in the chain), so these
+take the address of the model's ``ID`` register instead of guessing a
+vendor's absolute addresses; :func:`discover_sunspec_models` finds it by
+walking the chain from the ``"SunS"`` marker.
+
+Every SunSpec register shipped here (the model 123/124 control blocks and the
+Fronius model 113 / SolarEdge model 103 read maps) records its SunSpec point
+and is checked against the official SunSpec model definitions (as bundled
+with pysunspec2 1.3.6) by ``tests/test_sunspec_models.py``: offset, size,
+type, units, access and scale-factor pairing. They have **not** been tested
+against physical hardware. Polling honours the SunSpec conventions: a value
+paired with a ``sunssf`` register is multiplied by ``10 ** sf``, and
+"not implemented" sentinels (0x8000 int16/sunssf, 0xFFFF uint16/enum16,
+0x80000000 int32, 0xFFFFFFFF uint32, 0 acc32, NaN float32) are dropped
+instead of being reported as readings.
 """
 
 from __future__ import annotations
@@ -20,6 +32,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import math
 import struct
 import time
 from dataclasses import dataclass
@@ -57,8 +70,27 @@ class RegisterDefinition:
     name: str = ""
     unit: str = ""
     scale: float = 1.0
-    data_type: str = "uint16"  # uint16, int16, uint32, int32, float32
+    data_type: str = "uint16"  # uint16, int16, uint32, int32, acc32, uint64, float32
     writable: bool = False  # only flagged registers may be written by the setpoint writer
+    # Name (in the same map) of a SunSpec ``sunssf`` register: the polled
+    # value is multiplied by ``10 ** sf`` (and by ``scale``).
+    scale_factor: str | None = None
+    # SunSpec point this register maps to; enables the SunSpec
+    # "not implemented" sentinels (0x8000 int16, 0xFFFF uint16, ...).
+    sunspec: SunSpecPointRef | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.sunspec, dict):  # custom_registers from JSON config
+            self.sunspec = SunSpecPointRef(**self.sunspec)
+
+
+@dataclass(frozen=True)
+class SunSpecPointRef:
+    """Where a register comes from in the SunSpec information model."""
+
+    model: int  # model ID, e.g. 103
+    base: int  # wire address of that model's ``ID`` register
+    point: str  # SunSpec point name, e.g. ``"W_SF"``
 
 
 @dataclass
@@ -69,6 +101,47 @@ class RegisterMap:
     registers: dict[str, RegisterDefinition]
     unit_id: int = 1
 
+
+def _sunspec_reg(
+    model: int,
+    base: int,
+    point: str,
+    offset: int,
+    name: str,
+    unit: str,
+    data_type: str,
+    *,
+    count: int = 1,
+    scale_factor: str | None = None,
+    writable: bool = False,
+) -> RegisterDefinition:
+    """A holding register for SunSpec *point* at ``base + offset``.
+
+    *base* is the wire (0-based) address of the model's ``ID`` register and
+    *offset* the point's offset from it (``ID`` = 0, ``L`` = 1, first data
+    point = 2), exactly as in the SunSpec model definitions.
+    """
+    return RegisterDefinition(
+        base + offset,
+        count,
+        RegisterType.HOLDING,
+        name,
+        unit,
+        1.0,
+        data_type,
+        writable=writable,
+        scale_factor=scale_factor,
+        sunspec=SunSpecPointRef(model, base, point),
+    )
+
+
+# Wire address of the inverter model's ``ID`` register on Fronius and
+# SolarEdge devices: "SunS" at 40000-40001, common model 1 at 40002 with
+# L = 65 (both vendors document L = 65), so the next model starts at 40069.
+# Vendor register tables list this as register *number* 40070 (1-based).
+# Other firmware may differ: confirm with :func:`discover_sunspec_models`.
+SUNSPEC_INVERTER_BASE = 40069
+_INV = SUNSPEC_INVERTER_BASE
 
 # Pre-built register maps for common inverters
 INVERTER_MAPS: dict[str, RegisterMap] = {
@@ -92,40 +165,64 @@ INVERTER_MAPS: dict[str, RegisterMap] = {
             ),
         },
     ),
+    # Fronius Symo in its default "float" SunSpec mode: model 113
+    # (inverter_three_phase_float). Offsets verified against the SunSpec
+    # model 113 definition; the absolute base is per Fronius documentation.
     "fronius_symo": RegisterMap(
         name="Fronius Symo",
         registers={
-            "ac_power": RegisterDefinition(
-                40092, 1, RegisterType.HOLDING, "AC Power", "W", 1.0, "float32"
-            ),
-            "ac_energy": RegisterDefinition(
-                40094, 2, RegisterType.HOLDING, "AC Energy", "Wh", 1.0, "float32"
-            ),
-            "dc_power": RegisterDefinition(
-                40101, 1, RegisterType.HOLDING, "DC Power", "W", 1.0, "float32"
-            ),
-            "frequency": RegisterDefinition(
-                40086, 1, RegisterType.HOLDING, "Frequency", "Hz", 1.0, "float32"
-            ),
+            "ac_power": _sunspec_reg(113, _INV, "W", 22, "AC Power", "W", "float32", count=2),
+            "frequency": _sunspec_reg(113, _INV, "Hz", 24, "Frequency", "Hz", "float32", count=2),
+            "ac_energy": _sunspec_reg(113, _INV, "WH", 32, "AC Energy", "Wh", "float32", count=2),
+            "dc_power": _sunspec_reg(113, _INV, "DCW", 38, "DC Power", "W", "float32", count=2),
         },
     ),
+    # SolarEdge SE inverters: model 101/102/103 ("int + SF"; the three share
+    # one layout). Offsets verified against the SunSpec model 103 definition;
+    # every value is paired with its sunssf scale-factor register.
     "solaredge_se": RegisterMap(
         name="SolarEdge SE",
         registers={
-            "ac_power": RegisterDefinition(
-                40084, 1, RegisterType.HOLDING, "AC Power", "W", 1.0, "int16"
+            "ac_power": _sunspec_reg(
+                103, _INV, "W", 14, "AC Power", "W", "int16", scale_factor="ac_power_scale"
             ),
-            "ac_power_scale": RegisterDefinition(
-                40085, 1, RegisterType.HOLDING, "AC Power Scale", "", 1.0, "int16"
+            "ac_power_scale": _sunspec_reg(103, _INV, "W_SF", 15, "AC Power Scale", "", "int16"),
+            "frequency": _sunspec_reg(
+                103, _INV, "Hz", 16, "Frequency", "Hz", "uint16", scale_factor="frequency_scale"
             ),
-            "dc_power": RegisterDefinition(
-                40101, 1, RegisterType.HOLDING, "DC Power", "W", 1.0, "int16"
+            "frequency_scale": _sunspec_reg(
+                103, _INV, "Hz_SF", 17, "Frequency Scale", "", "int16"
             ),
-            "temperature": RegisterDefinition(
-                40104, 1, RegisterType.HOLDING, "Temperature", "°C", 0.01, "int16"
+            "ac_energy": _sunspec_reg(
+                103,
+                _INV,
+                "WH",
+                24,
+                "AC Energy",
+                "Wh",
+                "acc32",
+                count=2,
+                scale_factor="ac_energy_scale",
             ),
-            "ac_energy": RegisterDefinition(
-                40094, 2, RegisterType.HOLDING, "AC Energy", "Wh", 1.0, "uint32"
+            "ac_energy_scale": _sunspec_reg(
+                103, _INV, "WH_SF", 26, "AC Energy Scale", "", "int16"
+            ),
+            "dc_power": _sunspec_reg(
+                103, _INV, "DCW", 31, "DC Power", "W", "int16", scale_factor="dc_power_scale"
+            ),
+            "dc_power_scale": _sunspec_reg(103, _INV, "DCW_SF", 32, "DC Power Scale", "", "int16"),
+            "temperature": _sunspec_reg(
+                103,
+                _INV,
+                "TmpSnk",
+                34,
+                "Heat Sink Temperature",
+                "°C",
+                "int16",
+                scale_factor="temperature_scale",
+            ),
+            "temperature_scale": _sunspec_reg(
+                103, _INV, "Tmp_SF", 37, "Temperature Scale", "", "int16"
             ),
         },
     ),
@@ -158,62 +255,214 @@ INVERTER_MAPS: dict[str, RegisterMap] = {
 # ---------------------------------------------------------------------------
 # SunSpec control blocks (model-relative; offsets include the ID and L registers)
 # ---------------------------------------------------------------------------
+#
+# Offsets, sizes, types, units, access and scale-factor pairings below are
+# checked point by point against the SunSpec information model definitions
+# (the JSON models bundled with pysunspec2 1.3.6, i.e. sunspec/models) by
+# tests/test_sunspec_models.py. enum16/bitfield16 points are read and written
+# as uint16 and sunssf points as int16.
+
+SUNSPEC_MODEL_123_LENGTH = 24  # L of model 123 (points after ID and L)
+SUNSPEC_MODEL_124_LENGTH = 24  # L of model 124
 
 
 def sunspec_model_123_registers(base: int) -> dict[str, RegisterDefinition]:
     """SunSpec model 123 *Immediate Controls* at *base* (address of its ``ID``).
 
-    Offsets per the SunSpec inverter controls model 123 (``ID``=123, ``L``=24):
-    ``WMaxLimPct`` (+5, uint16, % of WMax scaled by ``WMaxLimPct_SF``),
-    ``WMaxLimPct_RvrtTms`` (+7, uint16 s, device-side revert timeout),
-    ``WMaxLim_Ena`` (+9, enum16: 0 disabled / 1 enabled) and
-    ``WMaxLimPct_SF`` (+23, sunssf int16 power-of-ten exponent).
+    Offsets per the SunSpec model 123 definition (``ID``=123, ``L``=24):
+    ``WMaxLimPct`` (+5, uint16 RW, % of ``WMax`` scaled by ``WMaxLimPct_SF``),
+    ``WMaxLimPct_RvrtTms`` (+7, uint16 RW seconds, device-side revert
+    timeout), ``WMaxLim_Ena`` (+9, enum16 RW: 0 DISABLED / 1 ENABLED) and
+    ``WMaxLimPct_SF`` (+23, sunssf: int16 power-of-ten exponent, read-only).
     """
-    h = RegisterType.HOLDING
     return {
-        "sunspec_123_id": RegisterDefinition(base, 1, h, "Model ID (123)", "", 1.0, "uint16"),
-        "wmax_lim_pct": RegisterDefinition(
-            base + 5, 1, h, "WMaxLimPct", "%", 1.0, "uint16", writable=True
+        "sunspec_123_id": _sunspec_reg(123, base, "ID", 0, "Model ID (123)", "", "uint16"),
+        "sunspec_123_length": _sunspec_reg(123, base, "L", 1, "Model length", "", "uint16"),
+        "wmax_lim_pct": _sunspec_reg(
+            123,
+            base,
+            "WMaxLimPct",
+            5,
+            "WMaxLimPct",
+            "%",
+            "uint16",
+            scale_factor="wmax_lim_pct_sf",
+            writable=True,
         ),
-        "wmax_lim_pct_rvrt_tms": RegisterDefinition(
-            base + 7, 1, h, "WMaxLimPct_RvrtTms", "s", 1.0, "uint16", writable=True
+        "wmax_lim_pct_rvrt_tms": _sunspec_reg(
+            123, base, "WMaxLimPct_RvrtTms", 7, "WMaxLimPct_RvrtTms", "s", "uint16", writable=True
         ),
-        "wmax_lim_ena": RegisterDefinition(
-            base + 9, 1, h, "WMaxLim_Ena", "", 1.0, "uint16", writable=True
+        "wmax_lim_ena": _sunspec_reg(
+            123, base, "WMaxLim_Ena", 9, "WMaxLim_Ena", "", "uint16", writable=True
         ),
-        "wmax_lim_pct_sf": RegisterDefinition(base + 23, 1, h, "WMaxLimPct_SF", "", 1.0, "int16"),
+        "wmax_lim_pct_sf": _sunspec_reg(
+            123, base, "WMaxLimPct_SF", 23, "WMaxLimPct_SF", "", "int16"
+        ),
     }
 
 
 def sunspec_model_124_registers(base: int) -> dict[str, RegisterDefinition]:
     """SunSpec model 124 *Storage* at *base* (address of its ``ID``).
 
-    **Generic/unverified**: the offsets follow the published model 124
-    layout (``ID``=124, ``L``=24), but how devices interpret forced
+    Offsets per the SunSpec model 124 definition (``ID``=124, ``L``=24):
+    ``StorCtl_Mod`` (+5, bitfield16 RW: bit 0 CHARGE, bit 1 DISCHARGE limit
+    active), ``OutWRte`` (+12, int16 RW, % of ``WDisChaMax``), ``InWRte``
+    (+13, int16 RW, % of ``WChaMax``), ``InOutWRte_RvrtTms`` (+15, uint16 RW
+    seconds) and ``InOutWRte_SF`` (+25, sunssf). The register layout is
+    verified against the spec; how devices interpret *forced*
     charge/discharge (negative ``InWRte``/``OutWRte``) differs between
-    vendors and has not been verified against hardware. ``StorCtl_Mod``
-    (+5, bitfield16: bit0 charge limit, bit1 discharge limit active),
-    ``OutWRte`` (+12, int16 % of max discharge rate), ``InWRte`` (+13, int16 %
-    of max charge rate), ``InOutWRte_RvrtTms`` (+15, uint16 s) and
-    ``InOutWRte_SF`` (+25, sunssf).
+    vendors and is not verified, hence the profile stays flagged unverified.
     """
-    h = RegisterType.HOLDING
     return {
-        "sunspec_124_id": RegisterDefinition(base, 1, h, "Model ID (124)", "", 1.0, "uint16"),
-        "stor_ctl_mod": RegisterDefinition(
-            base + 5, 1, h, "StorCtl_Mod", "", 1.0, "uint16", writable=True
+        "sunspec_124_id": _sunspec_reg(124, base, "ID", 0, "Model ID (124)", "", "uint16"),
+        "sunspec_124_length": _sunspec_reg(124, base, "L", 1, "Model length", "", "uint16"),
+        "stor_ctl_mod": _sunspec_reg(
+            124, base, "StorCtl_Mod", 5, "StorCtl_Mod", "", "uint16", writable=True
         ),
-        "out_w_rte": RegisterDefinition(
-            base + 12, 1, h, "OutWRte", "%", 1.0, "int16", writable=True
+        "out_w_rte": _sunspec_reg(
+            124,
+            base,
+            "OutWRte",
+            12,
+            "OutWRte",
+            "%",
+            "int16",
+            scale_factor="in_out_w_rte_sf",
+            writable=True,
         ),
-        "in_w_rte": RegisterDefinition(
-            base + 13, 1, h, "InWRte", "%", 1.0, "int16", writable=True
+        "in_w_rte": _sunspec_reg(
+            124,
+            base,
+            "InWRte",
+            13,
+            "InWRte",
+            "%",
+            "int16",
+            scale_factor="in_out_w_rte_sf",
+            writable=True,
         ),
-        "in_out_w_rte_rvrt_tms": RegisterDefinition(
-            base + 15, 1, h, "InOutWRte_RvrtTms", "s", 1.0, "uint16", writable=True
+        "in_out_w_rte_rvrt_tms": _sunspec_reg(
+            124, base, "InOutWRte_RvrtTms", 15, "InOutWRte_RvrtTms", "s", "uint16", writable=True
         ),
-        "in_out_w_rte_sf": RegisterDefinition(base + 25, 1, h, "InOutWRte_SF", "", 1.0, "int16"),
+        "in_out_w_rte_sf": _sunspec_reg(
+            124, base, "InOutWRte_SF", 25, "InOutWRte_SF", "", "int16"
+        ),
     }
+
+
+# ---------------------------------------------------------------------------
+# SunSpec conventions: "not implemented" values and model discovery
+# ---------------------------------------------------------------------------
+
+#: "SunS" (0x53756e53) marks the start of a SunSpec register map.
+SUNSPEC_MARKER = (0x5375, 0x6E53)
+#: Base addresses a SunSpec client probes for the marker, in order.
+SUNSPEC_BASE_ADDRESSES = (40000, 0, 50000)
+#: Model ID of the end model that terminates the chain.
+SUNSPEC_END_MODEL_ID = 0xFFFF
+
+# Raw register values that mean "not implemented" per SunSpec data type.
+# (sunssf and int16 share 0x8000, enum16/bitfield16 share uint16's 0xFFFF;
+# accumulators use 0; float32 uses NaN, checked separately.)
+_SUNSPEC_NOT_IMPLEMENTED: dict[str, int] = {
+    "int16": 0x8000,
+    "uint16": 0xFFFF,
+    "int32": 0x80000000,
+    "uint32": 0xFFFFFFFF,
+    "acc32": 0,
+    "uint64": 0xFFFFFFFFFFFFFFFF,
+}
+
+
+def _raw_int(regs: list[int]) -> int:
+    val = 0
+    for r in regs:
+        val = (val << 16) | (r & 0xFFFF)
+    return val
+
+
+def sunspec_not_implemented(regs: list[int], data_type: str) -> bool:
+    """True when *regs* hold SunSpec's "not implemented" value for *data_type*."""
+    if data_type == "float32":
+        if len(regs) < 2:
+            return True
+        value = float(
+            struct.unpack(">f", struct.pack(">HH", regs[0] & 0xFFFF, regs[1] & 0xFFFF))[0]
+        )
+        return math.isnan(value)  # 0x7FC00000 and other NaN encodings
+    sentinel = _SUNSPEC_NOT_IMPLEMENTED.get(data_type)
+    return sentinel is not None and _raw_int(regs) == sentinel
+
+
+@dataclass(frozen=True)
+class SunSpecModelHeader:
+    """One model in a device's SunSpec chain."""
+
+    model_id: int
+    address: int  # wire address of the model's ID register
+    length: int  # L: registers following ID and L
+
+
+class SunSpecDiscoveryError(RuntimeError):
+    """The device does not expose a readable SunSpec register map."""
+
+
+async def discover_sunspec_models(
+    io: Any,
+    *,
+    unit: int | None = None,
+    base_addresses: tuple[int, ...] = SUNSPEC_BASE_ADDRESSES,
+    max_models: int = 256,
+) -> list[SunSpecModelHeader]:
+    """Walk a device's SunSpec model chain (like pysunspec2's device scan).
+
+    *io* needs ``read_holding(address, count, unit=...)`` (a connected
+    :class:`ModbusAdapter` does). The ``"SunS"`` marker is looked for at
+    40000, 0 and 50000; the chain then starts two registers later and each
+    model header is ``ID`` then ``L``, the next model starting ``L + 2``
+    registers on, until the end model ``0xFFFF``. A read failure after at
+    least one model ends the walk (some devices omit the end model).
+    """
+    base: int | None = None
+    errors: list[str] = []
+    for candidate in base_addresses:
+        try:
+            marker = await io.read_holding(candidate, 2, unit=unit)
+        except Exception as exc:  # no register there -> try the next base
+            errors.append(f"{candidate}: {type(exc).__name__}: {exc}")
+            continue
+        if tuple(marker[:2]) == SUNSPEC_MARKER:
+            base = candidate
+            break
+        errors.append(f"{candidate}: no SunS marker")
+    if base is None:
+        raise SunSpecDiscoveryError("no SunSpec map found (" + "; ".join(errors) + ")")
+
+    models: list[SunSpecModelHeader] = []
+    addr = base + 2
+    for _ in range(max_models):
+        try:
+            [model_id] = await io.read_holding(addr, 1, unit=unit)
+        except Exception:
+            if models:
+                logger.warning("SunSpec chain ends without end model at %d", addr)
+                return models
+            raise
+        if model_id == SUNSPEC_END_MODEL_ID:
+            return models
+        [length] = await io.read_holding(addr + 1, 1, unit=unit)
+        models.append(SunSpecModelHeader(int(model_id), addr, int(length)))
+        addr += int(length) + 2
+        if addr > 0xFFFF:
+            raise SunSpecDiscoveryError("SunSpec model chain runs past the register space")
+    raise SunSpecDiscoveryError(f"SunSpec model chain longer than {max_models} models")
+
+
+def find_sunspec_model(
+    models: list[SunSpecModelHeader], model_id: int
+) -> SunSpecModelHeader | None:
+    """First model with *model_id* in a discovered chain (``None`` if absent)."""
+    return next((m for m in models if m.model_id == model_id), None)
 
 
 class ModbusWriteError(RuntimeError):
@@ -233,6 +482,7 @@ _INT_RANGES: dict[str, tuple[int, int, int]] = {
     "uint16": (0, 0xFFFF, 1),
     "int16": (-0x8000, 0x7FFF, 1),
     "uint32": (0, 0xFFFFFFFF, 2),
+    "acc32": (0, 0xFFFFFFFF, 2),
     "int32": (-0x80000000, 0x7FFFFFFF, 2),
 }
 
@@ -257,7 +507,9 @@ def encode_value(value: float, data_type: str) -> list[int]:
 
 def register_words(data_type: str) -> int:
     """Number of 16-bit registers a value of *data_type* occupies."""
-    return 2 if data_type in ("uint32", "int32", "float32") else 1
+    if data_type == "uint64":
+        return 4
+    return 2 if data_type in ("uint32", "int32", "acc32", "float32") else 1
 
 
 class ModbusAdapter(ProtocolAdapter):
@@ -428,10 +680,11 @@ class ModbusAdapter(ProtocolAdapter):
         if not self.is_connected or self._client is None or self._register_map is None:
             return {}
 
-        values: dict[str, float] = {}
+        decoded: dict[str, float] = {}
         unit = self._register_map.unit_id
+        registers = self._register_map.registers
 
-        for name, reg in self._register_map.registers.items():
+        for name, reg in registers.items():
             try:
                 method: Any
                 if reg.register_type == RegisterType.HOLDING:
@@ -447,11 +700,29 @@ class ModbusAdapter(ProtocolAdapter):
                     self._metrics.errors += 1
                     continue
 
-                raw = self._decode_registers(result.registers, reg)
-                values[name] = raw * reg.scale
+                regs = list(result.registers)
+                if reg.sunspec is not None and sunspec_not_implemented(regs, reg.data_type):
+                    logger.debug("SunSpec register %s not implemented by the device", name)
+                    continue
+                raw = self._decode_registers(regs, reg)
+                if math.isnan(raw):  # float32 NaN: no reading
+                    continue
+                decoded[name] = raw
             except Exception:
                 logger.exception("Error reading register %s", name)
                 self._metrics.errors += 1
+
+        values: dict[str, float] = {}
+        for name, raw in decoded.items():
+            reg = registers[name]
+            if reg.scale_factor is not None:
+                # SunSpec value = raw * 10**sf; without a valid sf there is no value.
+                sf = decoded.get(reg.scale_factor)
+                if sf is None or not -10 <= sf <= 10:
+                    logger.debug("No valid scale factor %s for %s", reg.scale_factor, name)
+                    continue
+                raw = raw * 10.0 ** int(sf)
+            values[name] = raw * reg.scale
 
         self._latest_values = values
         self._metrics.messages_received += 1
@@ -487,7 +758,7 @@ class ModbusAdapter(ProtocolAdapter):
         elif defn.data_type == "int16":
             val = regs[0]
             return float(val - 65536 if val >= 32768 else val)
-        elif defn.data_type in ("uint32", "uint64"):
+        elif defn.data_type in ("uint32", "acc32", "uint64"):
             val = 0
             for r in regs:
                 val = (val << 16) | r

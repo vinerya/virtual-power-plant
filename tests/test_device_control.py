@@ -97,8 +97,8 @@ class ModbusServer:
 async def modbus_server():
     servers: list[ModbusServer] = []
 
-    async def make(initial: dict[int, int] | None = None) -> ModbusServer:
-        server = await ModbusServer(initial).start()
+    async def make(initial: dict[int, int] | None = None, size: int = 512) -> ModbusServer:
+        server = await ModbusServer(initial, size).start()
         servers.append(server)
         return server
 
@@ -209,7 +209,7 @@ async def test_poll_reads_with_current_pymodbus_and_profiles_stay_shared(modbus_
 
 async def test_sunspec_123_curtailment_write_verify_and_release(modbus_server):
     base = 40
-    server = await modbus_server({base: 123, base + 23: (-2) & 0xFFFF})  # SF = -2
+    server = await modbus_server({base: 123, base + 1: 24, base + 23: (-2) & 0xFFFF})  # SF -2
     adapter = await _adapter(server.port)
     try:
         writer = _writer(
@@ -320,7 +320,7 @@ class FakeIO:
 
 
 async def test_sunspec_124_charge_discharge_plan_unverified_profile():
-    io = FakeIO({25: 0})  # SF 0
+    io = FakeIO({0: 124, 1: 24, 25: 0})  # model header, SF 0
     writer = _writer({"profile": "sunspec_124", "model_base": 0}, io, reference_kw=10.0)
     assert writer.config.unverified
     assert (await writer.write(4.0)).ok  # discharge 40 %
@@ -329,6 +329,115 @@ async def test_sunspec_124_charge_discharge_plan_unverified_profile():
     assert (io.regs[12], io.regs[13]) == ((-20) & 0xFFFF, 20)
     assert (await writer.release()).ok
     assert io.regs[5] == 0
+
+
+def _sunspec_chain(base: int, models: list[tuple[int, int]]) -> tuple[dict[int, int], dict]:
+    """Registers for "SunS" at *base* followed by *models* (id, L) and the end model."""
+    regs = {base: 0x5375, base + 1: 0x6E53}
+    addr = base + 2
+    where = {}
+    for model_id, length in models:
+        regs[addr], regs[addr + 1] = model_id, length
+        where[model_id] = addr
+        addr += length + 2
+    regs[addr], regs[addr + 1] = 0xFFFF, 0
+    return regs, where
+
+
+async def test_sunspec_discovery_walks_the_model_chain(modbus_server):
+    from vpp.protocols.modbus import (
+        SunSpecDiscoveryError,
+        SunSpecModelHeader,
+        discover_sunspec_models,
+    )
+
+    # 40000 is out of this server's range (exception response) -> base 0 is used.
+    regs, where = _sunspec_chain(0, [(1, 65), (103, 50), (123, 24)])
+    server = await modbus_server(regs)
+    adapter = await _adapter(server.port)
+    try:
+        models = await discover_sunspec_models(adapter)
+        assert models == [
+            SunSpecModelHeader(1, 2, 65),
+            SunSpecModelHeader(103, 69, 50),
+            SunSpecModelHeader(123, where[123], 24),
+        ]
+        # model_base "auto": discovery finds model 123 and the write lands there.
+        writer = _writer({"profile": "sunspec_123", "model_base": "auto"}, adapter, 10.0)
+        assert (await writer.write(5.0)).ok
+        assert await server.read(where[123] + 5, 5) == [50, 0, 0, 0, 1]  # SF 0: 50 %
+    finally:
+        await adapter.disconnect()
+
+    empty = await modbus_server({})
+    adapter = await _adapter(empty.port)
+    try:
+        with pytest.raises(SunSpecDiscoveryError, match="no SunSpec map"):
+            await discover_sunspec_models(adapter)
+        missing = _writer({"profile": "sunspec_124", "model_base": "auto"}, adapter)
+        result = await missing.write(1.0)
+        assert not result.ok and "no SunSpec map" in (result.error or "")
+    finally:
+        await adapter.disconnect()
+
+
+async def test_sunspec_discovery_at_40000_without_end_model():
+    from vpp.protocols.modbus import SunSpecModelHeader, discover_sunspec_models
+
+    regs, _ = _sunspec_chain(40000, [(1, 66), (124, 24)])
+    end = 40000 + 2 + (66 + 2) + (24 + 2)
+
+    class Truncated(FakeIO):
+        """A device whose map stops after the last model (no end model)."""
+
+        async def read_holding(self, address, count=1, *, unit=None):
+            if address >= end:
+                raise OSError("illegal data address")
+            return await super().read_holding(address, count, unit=unit)
+
+    assert await discover_sunspec_models(Truncated(regs)) == [
+        SunSpecModelHeader(1, 40002, 66),
+        SunSpecModelHeader(124, 40070, 24),
+    ]
+
+
+async def test_sunspec_writer_refuses_a_wrong_model_base():
+    io = FakeIO({10: 1, 11: 65, 33: 0})  # common model at 10, not model 123
+    writer = _writer({"profile": "sunspec_123", "model_base": 10}, io)
+    result = await writer.write(1.0)
+    assert not result.ok and "no SunSpec model 123 header at 10" in (result.error or "")
+    assert io.writes == []  # nothing written
+
+
+async def test_solaredge_poll_applies_scale_factors_and_skips_not_implemented(modbus_server):
+    from vpp.protocols.modbus import SUNSPEC_INVERTER_BASE as B
+
+    regs = {
+        B: 103,
+        B + 1: 50,
+        B + 14: 12345,  # W
+        B + 15: (-1) & 0xFFFF,  # W_SF -> 1234.5 W
+        B + 16: 5001,  # Hz
+        B + 17: (-2) & 0xFFFF,  # Hz_SF -> 50.01 Hz
+        B + 24: 0x0001,  # WH (acc32) = 0x0001_86A0 = 100000
+        B + 25: 0x86A0,
+        B + 26: 1,  # WH_SF -> 1 000 000 Wh
+        B + 31: 0x8000,  # DCW not implemented
+        B + 32: 0,
+        B + 34: 4321,  # TmpSnk
+        B + 37: 0x8000,  # Tmp_SF not implemented -> no temperature
+    }
+    server = await modbus_server(regs, size=B + 64)
+    adapter = await _adapter(server.port, device_profile="solaredge_se")
+    try:
+        values = await adapter.poll_once()
+    finally:
+        await adapter.disconnect()
+    assert values["ac_power"] == pytest.approx(1234.5)
+    assert values["frequency"] == pytest.approx(50.01)
+    assert values["ac_energy"] == pytest.approx(1_000_000.0)
+    assert "dc_power" not in values
+    assert "temperature" not in values and "temperature_scale" not in values
 
 
 async def test_readback_mismatch_and_disconnected_device_fail():

@@ -83,6 +83,12 @@ changes** before upgrading.
 
 ### Added
 
+**SunSpec discovery**
+- `vpp.protocols.modbus.discover_sunspec_models()` walks a device's SunSpec
+  chain (the `"SunS"` marker at 40000, 0 or 50000, `ID`/`L` model headers,
+  end model `0xFFFF`), and the SunSpec setpoint profiles accept
+  `"model_base": "auto"` to locate model 123/124 that way.
+
 **Users and credentials**
 - `vpp users create-admin | set-password | list` CLI (password from a
   prompt, stdin, a file or `VPP_ADMIN_PASSWORD`), and a first-boot admin
@@ -362,6 +368,44 @@ changes** before upgrading.
 
 ### Fixed
 
+- **SunSpec register maps verified against the official SunSpec model
+  definitions** (the sunspec/models JSON bundled with pysunspec2 1.3.6);
+  still untested on physical hardware. `tests/test_sunspec_models.py`
+  checks every shipped SunSpec register's offset, size, type, units, write
+  access and scale-factor pairing against the model JSON (skipped without
+  `pysunspec2`, now in the `dev` extra). Discrepancies fixed:
+  - `solaredge_se` (model 101/103, ID at 40069) was off by one (1-based
+    register numbers used as wire addresses): `ac_power` 40084 -> 40083,
+    `ac_power_scale` 40085 -> 40084, `dc_power` 40101 -> 40100,
+    `temperature` 40104 -> 40103 (`TmpSnk`), `ac_energy` 40094 -> 40093
+    and typed `acc32` instead of `uint32`.
+  - `solaredge_se` values ignored their SunSpec scale factors (`ac_power`
+    was the raw count; `temperature` hard-coded 0.01). Each value is now
+    paired with its `*_SF` register (`W_SF`, `Hz_SF`, `WH_SF`, `DCW_SF`,
+    `Tmp_SF`, all read) and polled values are in engineering units.
+    `frequency` was added.
+  - `fronius_symo` (float model 113, ID at 40069): `float32` points read one
+    register instead of two, and three addresses pointed at other points:
+    `ac_power` 40092 -> 40091 (`W`), `frequency` 40086 (`PhVphA`) -> 40093
+    (`Hz`), `ac_energy` 40094 -> 40101 (`WH`), `dc_power` 40101 -> 40107
+    (`DCW`).
+  - Model 123/124 control offsets were already correct; they now record
+    their SunSpec points and scale-factor pairing so the test covers them.
+- SunSpec conventions are honoured when polling: "not implemented" values
+  (0x8000 int16/sunssf, 0xFFFF uint16/enum16/bitfield16, 0x80000000 int32,
+  0xFFFFFFFF uint32, 0 acc32, NaN float32) are dropped instead of being
+  reported as readings, and so is any value whose scale factor is not
+  implemented. Float NaN readings are dropped for every map.
+- The SunSpec setpoint profiles read the model's `ID`/`L` header at
+  `model_base` before the first write and refuse a mismatch, instead of
+  writing to whatever sits at a wrong address.
+- Flaky `test_market_buy_fills_and_persists`: an order's volume-weighted
+  average fill price was accumulated incrementally in floating point and
+  could land one ulp below the lowest fill price (two fills at 46.18
+  averaged 46.179999…), so "average price >= best ask" failed for roughly
+  one in ten order splits; prices depend on the wall clock, which made it
+  intermittent. `Order.update_fill` now keeps the average inside the range
+  of the prices it averages (it is mathematically bounded by them).
 - Python 3.10 (the declared minimum) is supported again:
   - The WebSocket loop caught the builtin `TimeoutError`, which only aliases
     `asyncio.TimeoutError` from 3.11. On 3.10 the token-expiry and

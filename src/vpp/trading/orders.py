@@ -83,13 +83,22 @@ class Order(ABC):
         self.filled_quantity += fill_quantity
         self.remaining_quantity = self.quantity - self.filled_quantity
 
-        # Update average price
+        # Update average price (volume-weighted over all fills)
         if self.filled_quantity > 0:
-            total_value = (
-                self.average_price * (self.filled_quantity - fill_quantity)
-                + fill_price * fill_quantity
-            )
-            self.average_price = total_value / self.filled_quantity
+            prior_quantity = self.filled_quantity - fill_quantity
+            if prior_quantity <= 0:
+                self.average_price = fill_price
+            else:
+                prior_price = self.average_price
+                total_value = prior_price * prior_quantity + fill_price * fill_quantity
+                average = total_value / self.filled_quantity
+                # The new VWAP is a convex combination of the previous average
+                # and this fill's price. Float rounding in the division can land
+                # one ulp outside that range (e.g. two fills at 46.18 averaging
+                # 46.179999...), which breaks "VWAP >= best ask" style checks,
+                # so clamp it back into the mathematically possible interval.
+                lo, hi = min(prior_price, fill_price), max(prior_price, fill_price)
+                self.average_price = min(max(average, lo), hi)
 
         # Update status
         if self.remaining_quantity <= 0:
