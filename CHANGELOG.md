@@ -7,102 +7,332 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+This release turns the library into an operable platform: the API is backed
+by the database end to end, grid protocols talk to real peers, and the web
+console covers operations, trading, optimization, protocols, tariffs and a
+customer portal. Several defaults changed for safety; read **Breaking
+changes** before upgrading.
+
+### Breaking changes
+
+- **WebSocket requires authentication by default.** `/api/v1/ws` (new
+  canonical path) and `/ws` refuse handshakes without a valid JWT with close
+  code `1008` (`VPP_WS_AUTH_REQUIRED=true`). Customer accounts are always
+  refused. Open sockets are closed with `4001` when their credential
+  expires. Browsers should mint a 60 s token with `POST /api/v1/ws/token`.
+- **WebSocket channel semantics.** `alerts` now carries only alert payloads
+  (newly fired alerts). Grid, DR, EV/V2G and protocol events moved to the new
+  `grid_events` channel; every other unmapped event type goes to the new
+  `system` channel. Clients that listened for those events on `alerts` must
+  subscribe to `grid_events` / `system`.
+- **Roles tightened.** Creating/updating/deleting resources, submitting and
+  cancelling orders, ticking markets and running strategies now require
+  `admin` or `operator` (viewers could do all of these). A new `customer`
+  role is refused (`403`) on every operator endpoint.
+- **Inactive users** can no longer obtain tokens.
+- **Resource create/update is typed.** `POST /api/v1/resources` is a
+  discriminated union on `resource_type` (`battery`, `solar`,
+  `wind_turbine`); unknown or foreign fields are rejected with `422` instead
+  of being silently dropped. `resource_type` is canonicalised (`"wind"` →
+  `"wind_turbine"`, case-insensitive) on create and in list filters. `PUT`
+  is a partial update re-validated against the type's model.
+- **Trading `DELETE /api/v1/trading/orders/{id}`** returns the full order
+  (`OrderResponse`) instead of `{"id", "status"}`, and `409` when the order
+  is already final.
+- **`POST /api/v1/v2g/vehicles` with a duplicate `ev_id` returns `409`**
+  instead of overwriting the vehicle. The V2G fleet is now persisted; the
+  previous per-process in-memory fleet is not migrated.
+- **`GET /api/v1/optimization/history`** returns the `DispatchRun` shape
+  (with `start`/`end`/`resource_id`/`offset` filters) used by
+  `/optimization/runs`.
+- **`POST /api/v1/optimization/dispatch`** allocates over the online
+  resources stored in the database instead of the (always empty) in-memory
+  VPP singleton.
+- **`vpp.api.deps.get_vpp` removed.** The legacy in-memory
+  `VirtualPowerPlant` singleton is replaced by an explicit live-config
+  holder (`get_live_config` / `set_live_config` / `reset_live_config`).
+- **Redis removed.** `VPP_REDIS_URL` and the compose `redis` service are
+  gone (nothing used them). A leftover `VPP_REDIS_URL` is ignored.
+- **Grafana moved to port 3001** in the monitoring overlay (3000 is the web
+  console).
+- **Docker Compose**: `VPP_SECRET_KEY` is required; PostgreSQL is no longer
+  published on the host; `docker-compose.dev.yml` is an overlay for
+  `docker-compose.yml` rather than a standalone file.
+- Sub-packages (`vpp.optimization`, `vpp.config`, `vpp.trading`,
+  `vpp.models`) no longer define their own `__version__`; use
+  `vpp.__version__`.
+
 ### Added
 
-**Modbus inverter/meter telemetry ingestion**
-- `ModbusResourcePersister` bridges `ModbusAdapter` polls into live
-  resource state — before this, `ModbusAdapter` (register maps, polling
-  loop, correct pub-sub dispatch) was fully built but nothing in
-  production ever instantiated or connected one to a real device.
-- A resource opts in via its own free-form `metadata["modbus"]` (host/
-  port/mode/device_profile/poll_interval_s/power_register) — no schema
-  migration needed. Each configured resource gets its own `ModbusAdapter`
-  instance, connected and supervised independently, so one device being
-  offline doesn't block the others.
-- Polled values update `ResourceModel.current_power` (converted W → kW
-  from the configured `power_register`, default `"ac_power"`) and publish
-  `RESOURCE_UPDATED` on the event bus.
-- New setting: `VPP_MODBUS_INGESTION_ENABLED` (default off). Resource
-  discovery runs once at startup.
-- Adapters register into the shared protocol registry under a
-  per-resource name (`modbus:{resource_id}`), since `ModbusAdapter`
-  always constructs with the same literal name and the registry requires
-  uniqueness.
+**Optimization**
+- DB-backed dispatch: single-interval allocation LP (Pyomo + HiGHS) with
+  SOC/energy limits, configured charge/discharge limits, SOH-aware battery
+  wear cost and renewables-first merit order; headroom-proportional
+  fallback; reports method, shortfall and solve time.
+- `POST /api/v1/optimization/schedule` (alias `/mpc`): horizon MPC via
+  `MPCController` / `MultiResourceMPCController` from a price series or a
+  stored tariff, degradation-aware wear cost, feeder limits, terminal-SOC
+  policy.
+- `POST /api/v1/optimization/backtest`: closed-loop MPC replay with
+  perfect / persistence / noisy forecasts, scored against idle, rule-based
+  and perfect-foresight baselines (regret).
+- Run history: every run is persisted in `optimization_runs` and publishes
+  `OPTIMIZATION_STARTED/COMPLETED/FAILED`; `GET /optimization/runs`,
+  `/runs/{id}`, `/runs/{id}/explain`, `/api/v1/dispatches[/{id}[/explain]]`.
+- `/optimization/stochastic` builds a real `stochastic_dispatch` problem so
+  the CVaR plugin runs (seeded scenarios, `risk_weight`, optional DB battery).
 
-**Combined tiered + TOU rate structures**
-- `TimeOfUseRate` gains `period_tiers`: an optional inclining-block tier
-  schedule scoped to an individual TOU period, keyed by that period's
-  label. When a URDB `energyratestructure` has more than one TOU period
-  AND at least one of them also has more than one usage tier, that period
-  now bills correctly against its own cumulative kWh for the billing
-  cycle (URDB's per-period tier convention) instead of silently using
-  only its first (lowest) tier's rate for all usage.
-- `urdb.py`'s existing single-period-multiple-tiers shortcut (folds into
-  `TieredEnergyRate`) is unchanged and still used when it applies — the
-  new machinery only engages for the genuinely multi-period case.
+**Trading (simulated venue)**
+- `TradingService` wires `vpp.trading` into the API with a
+  `SimulatedExchange` (seeded synthetic liquidity); state is rebuilt from
+  the `orders`/`trades` tables.
+- Order types market, limit, stop, stop-limit, iceberg, IOC, FOK with
+  GTC/DAY; pre-trade risk checks (`422 risk_limit_breached` with reasons;
+  rejected orders persisted); cancel via `DELETE` or
+  `POST /orders/{id}/cancel`.
+- `GET /portfolio` (positions, realized/unrealized P&L, fees, exposure,
+  parametric VaR, drawdown, limit breaches), `GET /trades`, `GET /markets`
+  (+ depth), `POST /markets/tick`, strategy catalogue, backtests and
+  dry-run execution.
+- `MARKET_DATA`, order and trade events; a lifespan task ticks the venue
+  (`VPP_TRADING_MARKET_DATA_*`).
 
-**NEM 2.0 TOU-period-aware export credit**
-- URDB `energyratestructure[..].sell` is now parsed into
-  `TOUSchedule.sell_rate` and exposed via `TimeOfUseRate.export_rate()`,
-  which falls back to the period's import rate when the source tariff
-  doesn't define a distinct sell rate.
-- Bill simulation's NEM 2.0 export credit now prices each exported
-  interval at *its own* TOU period rate (URDB `sell` if defined, else the
-  same as import) instead of a single bill-wide blended average — the old
-  proxy mis-credited any customer whose export TOU mix differed from
-  their import mix. Tariffs without a TOU component (flat or tiered-only)
-  still fall back to the blended average, which has no period to be more
-  accurate about.
-- The dispatch-side optimizer (`tariff_to_opt_params`, `nem="nem2"`) now
-  prefers the same explicit `sell_rate` per step, while still deferring to
-  a live price-feed override when one is active for that step.
+**Protocols, V2G and demand response**
+- `ProtocolStatus.SIMULATED` and `ProtocolMode` (live/simulated); adapters
+  without a real endpoint never report `connected`; `GET /api/v1/protocols`
+  exposes `mode` / `simulated`.
+- OCPP 1.6-J Central System at `/ocpp/{charge_point_id}` (subprotocol
+  `ocpp1.6`, allow-list, Security Profile 1 Basic auth): Boot, Heartbeat,
+  Status, Authorize, Start/StopTransaction, MeterValues, DataTransfer;
+  RemoteStart/Stop, Set/ClearChargingProfile.
+- OpenADR 2.0b VEN (HTTPS pull): registration, `oadrPoll`,
+  `oadrDistributeEvent` parsing with a hardened XML parser,
+  `oadrCreatedEvent` opt-in/out, re-registration, optional mTLS, backoff.
+- IEEE 2030.5 client (mTLS): DeviceCapability → … → DERControlList,
+  default control, time offset, paging, LFDI/SFDI identity, active controls
+  by primacy.
+- Opt-in settings `VPP_OCPP_*`, `VPP_OPENADR_*`, `VPP_IEEE2030_5_*`; enabled
+  adapters are supervised with exponential-backoff reconnects.
+- Persistent V2G fleet (`v2g_vehicles`, `v2g_charging_sessions`,
+  `v2g_schedules`); `PATCH` vehicle, `PUT/DELETE` binding, `GET` sessions and
+  schedules; automatic EV ↔ charger binding by idTag; meter values update
+  SOC/power; schedules and dispatches pushed as `SetChargingProfile` with
+  per-vehicle delivery results.
+- DR orchestrator (`vpp.dr`): OpenADR SIMPLE / LOAD_DISPATCH / LOAD_CONTROL
+  and IEEE 2030.5 controls → fleet target and limits → DB-backed dispatch →
+  EV setpoints, re-dispatch on change/interval, release when signals end,
+  audit in `dr_event_responses`. **Auto-response off by default**
+  (`VPP_DR_AUTO_RESPONSE_ENABLED`); caps `VPP_DR_MAX_EXPORT_KW` /
+  `VPP_DR_MAX_IMPORT_KW`.
+- Protocol data API: OCPP charge points and transactions, remote start/stop,
+  OpenADR events and opt override, IEEE 2030.5 controls, `/api/v1/dr/status`,
+  `/api/v1/dr/responses`.
+- **Modbus inverter/meter telemetry ingestion.** `ModbusResourcePersister`
+  bridges `ModbusAdapter` polls into live resource state; a resource opts in
+  via its own `metadata["modbus"]` (host/port/mode/device_profile/
+  poll_interval_s/power_register), each device gets its own supervised
+  adapter (`modbus:{resource_id}` in the registry), polled power updates
+  `current_power` (W → kW) and publishes `RESOURCE_UPDATED`.
+  `VPP_MODBUS_INGESTION_ENABLED` (default off); discovery runs once at
+  startup.
+- **MQTT battery telemetry ingestion.** `MQTTTelemetryIngestor` writes
+  `vpp/{site_id}/{resource_type}/{resource_id}/{metric}` messages to
+  `battery_states` and publishes `RESOURCE_UPDATED`;
+  `MQTTAdapter.receive_forever()`; settings `VPP_MQTT_INGESTION_ENABLED`
+  (default off), `VPP_MQTT_BROKER_HOST/PORT`, `VPP_MQTT_TOPIC_PREFIX`,
+  `VPP_MQTT_USERNAME/PASSWORD`; a failed broker connection is retried
+  instead of crashing startup.
 
-**MQTT Battery Telemetry Ingestion (M5)**
-- `MQTTTelemetryIngestor` bridges `MQTTAdapter` messages on
-  `vpp/{site_id}/{resource_type}/{resource_id}/{metric}` topics into
-  `battery_states` rows — closes the gap where the degradation updater's
-  DB-backed telemetry fetch had a correct read path but nothing ever wrote
-  to that table in production.
-- `MQTTAdapter.receive_forever()` — async generator draining the adapter's
-  message queue without busy-polling.
-- Ingested telemetry publishes `RESOURCE_UPDATED` on the event bus, so
-  connected WebSocket clients on `resource_updates` see live updates.
-- New settings: `VPP_MQTT_INGESTION_ENABLED` (default off — dials out to an
-  external broker), `VPP_MQTT_BROKER_HOST`, `VPP_MQTT_BROKER_PORT`,
-  `VPP_MQTT_TOPIC_PREFIX`, `VPP_MQTT_USERNAME`, `VPP_MQTT_PASSWORD`.
-- Ingestion runs as a lifespan-managed background task; a failed initial
-  broker connection is retried on a fixed delay instead of crashing
-  startup, and the adapter registers into the shared protocol registry so
-  `GET /api/v1/protocols` reflects its status.
+**Sites, customers and resources**
+- `customer` role; tokens carry `aud` (`operator` | `customer`) re-checked
+  against the user's current role; `/auth/me` returns `audience`.
+- Sites (`/api/v1/sites`) with lat/lon, region, IANA timezone and owner,
+  live aggregates (power, capacity, SOC, online count, health, active
+  alerts from persisted alerts); revenue-meter interval ingest and read.
+- Customer portal (`/api/v1/customer/*`: me, devices, bill, DR programs,
+  enrollments) and staff admin (`/api/v1/customers`, `/api/v1/programs`);
+  the bill uses the tariff engine on the customer's own meter data and
+  answers `409` instead of inventing a bill when no tariff is assigned.
+- Resource metrics history (`/resources/{id}/metrics`) from
+  `battery_states` and the new `resource_telemetry` table, and a telemetry
+  ingest endpoint; Modbus polls append history.
+- Typed resource responses: `capacity_kwh`, `state_of_charge` (+ source),
+  `current_charge_kwh`, `state_of_health`, `equivalent_full_cycles`.
+
+**Tariffs**
+- `TariffRead` gains derived components, weekday/weekend TOU heatmaps,
+  sector, source, description, `is_tou`, `nem_regime`/`nem_source`,
+  `parse_error`; create/update reject tariffs the engine cannot bill.
+- `GET /tariffs/presets[/{id}]` (presets ship in the wheel, two new
+  illustrative ones); `GET /tariffs/import-urdb` reports whether
+  `OPENEI_API_KEY` is set; OpenEI network errors map to `502`.
+- Simulation load sources `meter_trace`, `synthetic` (residential /
+  commercial shape, optional PV) or `csv`; `timezone`, `billing_cycle`
+  (monthly cycles for long windows), `compare_to`, NEM regimes
+  `none|nem2|nem3|net_billing`; response adds cycles, export totals, notes,
+  load summary, comparison.
+- `vpp.tariffs.nem` shared by the simulator and the customer bill; regime
+  from the tariff's `nem` extension key or URDB `dgrules`; `?nem=` what-if
+  for staff.
+- **Combined tiered + TOU rate structures.** `TimeOfUseRate.period_tiers`
+  bills a multi-period URDB tariff whose periods have usage tiers against
+  each period's own cumulative kWh (previously only the first tier's rate).
+- **NEM 2.0 TOU-period-aware export credit.** URDB `sell` rates are parsed
+  into `TOUSchedule.sell_rate` (`TimeOfUseRate.export_rate()` falls back to
+  the import rate); each exported interval is credited at its own period's
+  rate instead of a bill-wide blended average; the dispatch-side optimizer
+  (`tariff_to_opt_params`, `nem="nem2"`) uses the same per-step sell rate.
+
+**Observability and alerts**
+- `GET /metrics` (when `VPP_METRICS_ENABLED` and `prometheus_client` is
+  installed; optional `VPP_METRICS_BEARER_TOKEN`), Prometheus middleware by
+  route template, EventBus-driven resource/optimization/trading/protocol
+  metrics.
+- Request ids (`X-Request-ID`, bound into structlog contextvars) and one
+  `vpp.access` line per request; `VPP_LOG_JSON`, `VPP_ACCESS_LOG_ENABLED`.
+- Persisted alerts and rules (`/api/v1/alerts`, ack/snooze/resolve, rules
+  CRUD); `AlertService` evaluates rules on `RESOURCE_UPDATED`, de-duplicates,
+  auto-resolves, broadcasts on `alerts`; three default rules seeded.
+- Real webhook delivery with retries/backoff and HMAC-SHA256 signing
+  (`X-VPP-Timestamp`, `X-VPP-Signature`).
+- Grafana datasource/dashboard provisioning with "VPP Overview", "VPP
+  Trading" and "VPP Fleet" dashboards (metric names guarded by a test).
+
+**Configuration and API plumbing**
+- `GET /api/v1/config` (live YAML + hash/version), `GET /config/schema`
+  (strict JSON Schema), `PUT /config` (admin; validated, versioned,
+  applied, optimistic concurrency via `base_hash`), re-applied on startup.
+- `POST /api/v1/auth/token` accepts an OAuth2 form body or JSON.
+- Collection routes are served with or without a trailing slash (no `307`).
+- `vpp migrate` runs `alembic upgrade head`; migrations 0004 (tariffs),
+  0005 (alerts), 0006 (sites, customers, metering, telemetry, config
+  documents), 0007 (V2G and protocols); a drift test compares models and
+  migrations and checks for a single head.
+
+**Web console (`web/`)**
+- Authenticated live updates: `/api/auth/ws-token` exchanges the session
+  cookie for a socket token; the client connects to `/api/v1/ws` directly
+  with backoff, resubscription and connection status.
+- New pages: trading workspace (markets, order ticket, orders, trades,
+  portfolio) and strategies; optimization planner (schedule + backtest);
+  protocols status (LIVE / SIMULATED); tariffs console against the real
+  API (heatmaps, simulator with synthetic/CSV/compare, presets, URDB
+  import); customer portal with real device energy flow.
+- Role-aware session (viewers get read-only views), readable API errors,
+  accessible tabs and fields, server config errors shown inline in the YAML
+  editor.
+- Mock data is opt-in (`NEXT_PUBLIC_USE_MOCKS=1`); failures render error
+  states instead of fake data.
+- Monaco is self-hosted; ESLint config; Playwright end-to-end tests in CI.
+- `web/Dockerfile` (standalone output) and a `vpp-web` compose service.
+
+**Docs**
+- `docs/`: architecture, configuration reference (every `VPP_*` setting),
+  deployment, protocols/V2G/DR, API guide, tariffs, security.
+
+### Changed
+
+- The API lifespan applies the stored config document after `init_db()`.
+- `configure_logging` is called by `create_app`, is idempotent and stamps
+  stdlib records too.
+- `vpp.__version__` comes from the installed distribution metadata (falls
+  back to `pyproject.toml` in a source checkout); the app, `/version` and
+  `vpp_info` use it.
+- `AlertManager` keeps per-source rule state, supports per-rule resource
+  scoping and splits `check()` / `dispatch()`.
+- The OCPP adapter's receive buffer drops the oldest message on overflow
+  instead of counting each overflow as an error.
+- The console login sends a form body; mock fallbacks and silent 404
+  handling were removed from sites, alerts and the portal.
+- API Docker image installs the `protocols`, `solver` and `degradation`
+  extras and psycopg2, ships alembic, and runs as a non-root user with a
+  writable `/app`.
+- README and docs rewritten to describe maturity honestly (production-grade
+  / beta / simulated / research).
+
+### Deprecated
+
+- Credentials as query parameters on `POST /api/v1/auth/token` (still
+  accepted; responses carry `Deprecation` and `Warning` headers).
 
 ### Fixed
 
-- EventBus publishes now reach connected WebSocket clients — previously
-  two disconnected pub/sub systems.
-- Rate limiting middleware (opt-in via `VPP_RATE_LIMIT_ENABLED`, on by
-  default) wired into `create_app()`.
+- EventBus publishes now reach connected WebSocket clients (previously two
+  disconnected pub/sub systems), and non-alert events no longer land on the
+  `alerts` channel.
+- Rate-limiting middleware (`VPP_RATE_LIMIT_ENABLED`, on by default) is
+  wired into `create_app()`.
+- `PUT /api/v1/resources/{id}` no longer 500s (`MissingGreenlet` on the
+  expired `updated_at`).
+- Typed resource fields (capacity, SOC, chemistry, limits, nameplates) were
+  silently dropped on create; the optimizer now reads telemetry SOC and
+  `max_charge_kw` / `max_discharge_kw`.
+- Sites always reported `active_alerts = 0`.
+- Config documents applied with `PUT /api/v1/config` were lost on restart.
+- Trading: portfolio equity double-counted purchase cost; realized P&L
+  attribution, buy-to-cover and fees in daily P&L, partial short covers;
+  historical VaR sign and quantile; risk checks skipped the position limit
+  for new positions; order-book levels stayed inflated after fills; FOK
+  mutated the book before cancelling; stop-limit never filled at its
+  trigger; float-modulo tick/lot checks; markets without sessions;
+  real-time market partial remainders; every market order rejected;
+  zero-quantity fills booked as filled; simulated prices compounding
+  seasonally; strategies replay with data timestamps; arbitrage emitting
+  opportunities twice; the ML strategy no longer claims to load a model.
+- `RiskManager.check_limits()` also checks VaR and concentration, pricing
+  positions from live market data when available.
+- Alembic: `tariffs` and `alerts` tables had no migration; `fileConfig()`
+  disabled every app logger when migrations ran in-process; timestamp
+  columns tightened to `NOT NULL` to match the ORM.
+- `vpp migrate` was a stub.
+- Protocols demo no longer depends on a current event loop and no longer
+  calls the OpenADR handler twice.
+- Console: WebSocket client dialled a proxy path that could never upgrade;
+  asset metrics chart lagged one poll; two-decimal price axis.
+- `wear_cost_hooks_for_telemetry_consistency()` keeps the dispatch model's
+  wear cost consistent with the SOH the telemetry updater persists.
+- Flaky tests: `test_mpc_warm_start_speedup` compares deterministic HiGHS
+  iteration counts (`solver_iterations` /
+  `cumulative_solver_iterations`); the optimization benchmark consistency
+  check uses thread CPU time; `tests/test_db.py` runs standalone.
+- API Dockerfile copied a non-existent `setup.py` and tried to download the
+  package from PyPI.
+
+### Removed
+
+- Redis setting and compose service.
+- Dead modules shadowed by packages: `vpp/models.py`, and the flat
+  `analysis.py`, `config.py`, `events.py`, `optimization.py`,
+  `simulation.py`, `visualization.py`.
+- The console's fake `app/api/tariff-presets` route (presets now come from
+  the backend).
+- Tracked `web/tsconfig.tsbuildinfo`.
+
+### Security
+
+- WebSocket authentication (see Breaking changes); socket-only tokens are
+  rejected by the HTTP API; sockets close when their session expires.
+- Customer accounts are denied by default on operator endpoints and the
+  WebSocket; customer routes scope every response to the caller (foreign
+  ids → `404`).
+- Viewers can no longer create, modify or delete resources or trade.
 - Non-admins can no longer mint an API key with a role higher than their
   own.
-- `RiskManager.check_limits()` now checks VaR and position concentration
-  in addition to position/loss/drawdown limits, pricing positions from
-  live market data when available.
-- `wear_cost_hooks_for_telemetry_consistency()` keeps a live dispatch
-  model's wear-cost term consistent with the Rainflow + calendar-aging
-  model the telemetry updater actually persists as SOH.
-- Removed dead flat modules superseded by their package equivalents
-  (`analysis.py`, `config.py`, `events.py`, `optimization.py`,
-  `simulation.py`, `visualization.py`).
-- `test_mpc_warm_start_speedup` was flaky under full-suite CPU
-  contention — it compared wall-clock solve time, which a
-  handful-of-milliseconds MIP solve doesn't have enough margin to absorb
-  scheduling jitter against. `MPCDecision`/`BacktestResult` now also
-  report `solver_iterations`/`cumulative_solver_iterations` (appsi
-  HiGHS's simplex iteration count, deterministic for a given model and
-  warm-start hint — verified identical across repeated runs), and the
-  test asserts on that instead, falling back to the old wall-clock check
-  only if iteration counts aren't available (non-appsi solver backend).
+- Login credentials move from the query string to the request body.
+- `PUT /api/v1/config` refuses `monitoring.log_file` (server-side file
+  write).
+- Alert webhooks can be HMAC-signed; `/metrics` can require a bearer token.
+- OpenADR / IEEE 2030.5 XML is parsed with entity resolution and network
+  access disabled.
+- Known issue: an API key's requested `role` is recorded but not enforced;
+  the key acts with its creator's role (documented in `docs/security.md`).
 
 ## [2.0.0] - 2025-02-24
+
+> Note (added later): some entries below describe components that are not
+> in the code base — Gaussian-process forecasting and PPO reinforcement
+> learning. `vpp.research` contains baseline forecasters, anomaly
+> detectors and an experiment runner; see ADVANCED_FEATURES.md.
 
 ### Added
 
@@ -176,14 +406,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Core VPP management library with resource models (Battery, Solar, Wind)
 - Stochastic optimization with scenario generation
-- Real-time grid services with sub-millisecond frequency/voltage response
+- Real-time grid services with fast rule-based frequency/voltage response
 - Distributed coordination via ADMM for multi-site VPP portfolios
 - Model Predictive Control for rolling-horizon dispatch
 - Plugin architecture for custom optimization solvers
 - Multi-market trading system (day-ahead, real-time, ancillary services, bilateral)
 - 5 trading strategies: arbitrage, momentum, mean reversion, ML-based, multi-market
 - Portfolio management with P&L tracking and risk controls
-- Physics-based battery models with electrochemical accuracy
+- Physics-based battery models (equivalent-circuit and electrochemical)
 - Solar PV and wind turbine resource models
 - YAML/JSON configuration system with validation and hot reload
 - Rule-based expert system for operational decisions

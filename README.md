@@ -2,414 +2,386 @@
 
 # Virtual Power Plant Platform
 
-The world's first comprehensive, open-source Virtual Power Plant platform.
-Production-ready optimization, multi-protocol DER control, V2G-native, with a reproducible benchmarking suite.
+An open-source platform for aggregating and dispatching distributed energy
+resources: batteries, PV, wind and EV chargers. FastAPI backend, Next.js
+operator console, OCPP / OpenADR / IEEE 2030.5 integrations, and
+transparent optimization you can read, test and change.
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 389 passed](https://img.shields.io/badge/tests-389%20passed-brightgreen.svg)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code Style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Status: Production Ready](https://img.shields.io/badge/status-production%20ready-green.svg)]()
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#what-works-today)
 
-[Features](#features) · [Quick Start](#quick-start) · [Architecture](#architecture) · [Demos](#demo-applications) · [Benchmarks](#benchmarking-suite) · [API](#rest--websocket-api) · [Contributing](#contributing)
+[What works](#what-works-today) · [Quick start](#quick-start) · [Architecture](#architecture) · [API](#api-overview) · [Security](#security-model) · [Docs](docs/) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
 ---
 
-## Why This Exists
+## What it is
 
-The VPP software market is **$6.28B (2025)** growing to **$39.31B by 2034**. Every commercial platform (Tesla Autobidder, Next Kraftwerke, AutoGrid) is a proprietary black box costing **$50K-500K/year**. No comprehensive open-source alternative exists.
+Commercial VPP software is mostly closed. This project is an open,
+self-hostable alternative for startups, researchers, utilities' innovation
+teams and anyone who wants to see exactly how a dispatch decision was made.
 
-This project fills that gap: a **complete, production-ready VPP platform** with transparent algorithms, industry-standard protocol support, and V2G-native design. Built for startups, researchers, and grid operators who need full control over their optimization logic.
+What you get:
 
-**Design principles:** Rule-based production excellence first. AI for research only. Everything is a plugin. Edge-first, cloud-optional.
+- a **REST + WebSocket API** that stores your fleet (resources, sites,
+  customers, telemetry) in PostgreSQL or SQLite, with JWT / API-key auth
+  and role-based access;
+- **dispatch optimization** (Pyomo + HiGHS with rule-based fallback),
+  horizon **MPC schedules** and **closed-loop backtests**, every run
+  persisted and explainable;
+- **grid and device protocols**: an OCPP 1.6-J Central System, an OpenADR
+  2.0b VEN, an IEEE 2030.5 client, MQTT and Modbus telemetry ingestion,
+  and a **demand-response orchestrator** that turns grid signals into fleet
+  dispatch (off by default);
+- **V2G**: persisted vehicles bound to chargers, schedules pushed as OCPP
+  charging profiles with honest per-charger delivery results;
+- **tariffs**: URDB-based bill engine with TOU, tiers, demand charges, NEM
+  2.0 / NEM 3.0 / net billing, bill simulation from CSV or synthetic load;
+- a **trading engine** with risk checks and a portfolio, running on a
+  **simulated venue** (no real market connection);
+- a **web console** for operators and a **customer portal**;
+- Prometheus metrics, Grafana dashboards, persisted alerts with signed
+  webhooks.
 
----
+The project is **beta**. It has a substantial automated test suite, but it
+has not been certified against any protocol conformance suite or proven in
+a field deployment. Read [What works today](#what-works-today) before
+connecting it to equipment.
 
-## Features
+## What works today
 
-### Optimization Engine
-- **Stochastic optimization** with scenario generation (price, renewable, load uncertainty)
-- **Real-time grid services** with sub-millisecond frequency/voltage response
-- **Distributed coordination** via ADMM for multi-site VPP portfolios
-- **Model Predictive Control** for rolling-horizon dispatch
-- **Plugin architecture** — drop in custom solvers with automatic rule-based fallbacks
-- **CVaR risk management** for uncertainty-aware scheduling
+Maturity labels used below:
 
-### Trading System
-- **4 market types**: day-ahead auctions, real-time continuous, ancillary services, bilateral contracts
-- **5 strategy engines**: arbitrage, momentum, mean reversion, ML-based, multi-market
-- **Portfolio management** with real-time P&L, position tracking, and risk metrics
-- **Risk controls**: position limits, daily loss caps, VaR, max drawdown, concentration limits
+- **production-grade** — complete for its stated scope, covered by tests,
+  safe defaults. Still review it for your deployment.
+- **beta** — works end to end and is tested, with known gaps documented in
+  [docs/](docs/). Not proven against real hardware or third-party peers.
+- **simulated** — runs against an in-process simulation only; nothing real
+  is connected.
+- **research** — library code for experiments; not wired into the
+  operational API (or only operating on request-supplied data).
 
-### Protocol Integrations
-- **OpenADR 2.0b** — VEN over HTTPS pull (registration, `oadrPoll`, `oadrDistributeEvent` parsing, opt-in/out via `oadrCreatedEvent`, optional mutual TLS); VTN role is simulation-only
-- **OCPP 1.6-J** — Central System on `ws(s)://<api>/ocpp/{charge_point_id}`: Boot/Heartbeat/Status/Authorize/Start/StopTransaction/MeterValues, plus RemoteStart/Stop and SetChargingProfile (V2G schedules → charging profiles)
-- **MQTT** — IoT telemetry pub/sub with topic hierarchy (`vpp/{site}/{type}/{id}/{metric}`)
-- **Modbus TCP/RTU** — inverter control with pre-built register maps (SMA, Fronius, SolarEdge)
-- **IEEE 2030.5** — mutual-TLS client discovering DeviceCapability → EndDevice → FunctionSetAssignments → DERProgram → DERControl and exposing active DER controls by primacy
-- Adapters without a configured endpoint report status **`simulated`** (never `connected`) in `GET /api/v1/protocols`; all endpoints are opt-in via `VPP_OCPP_*`, `VPP_OPENADR_*`, `VPP_IEEE2030_5_*` (see `.env.example`)
-
-### Vehicle-to-Grid (V2G)
-- **Smart scheduling** — TOU-aware and solar-priority charge/discharge
-- **Fleet aggregation** — aggregate flexibility windows for ancillary services bidding
-- **Departure SOC guarantees** — constraint-based scheduling respects driver needs
-- **Grid-forming inverters** — droop control, virtual synchronous machine (VSM), virtual inertia
-- **Microgrid islanding** — fault detection, seamless island/reconnect transitions, load priority shedding
-
-### Production Infrastructure
-- **FastAPI REST + WebSocket API** with automatic OpenAPI docs
-- **JWT authentication** with role-based access control and API key support
-- **SQLAlchemy 2.0 async** database layer (SQLite dev, PostgreSQL prod)
-- **Pydantic v2 schemas** for request/response validation
-- **Docker Compose** deployment with PostgreSQL
-- **CI/CD pipelines** — GitHub Actions for lint, test, security scan, Docker build, PyPI release
-
-### Monitoring & Observability
-- **Prometheus metrics** — resource gauges, optimization histograms, trading counters
-- **Grafana dashboards** — VPP overview, trading performance, fleet capacity
-- **Structured logging** — JSON (production) / colored (development) via structlog
-- **Alert engine** — threshold, rate-of-change, and Z-score anomaly rules with webhook/log/WS channels
-
-### Research / AI Layer *(non-production, clearly separated)*
-- **Gaussian Process forecasting** for load, price, and renewable prediction
-- **PPO reinforcement learning** for dispatch optimization (shadows rule-based, never controls)
-- **Federated learning** for privacy-preserving multi-site model training
-- **Digital twin simulation** for what-if scenario analysis
-- **Experiment runner** with seed management and reproducible comparison tables
-
-### Benchmarking Suite
-- **4 synthetic datasets**: IEEE residential, California ISO, EU multi-zone grid, 50-vehicle EV fleet
-- **7 scenarios**: peak shaving, frequency response, V2G arbitrage, multi-site coordination, islanding, high renewable, multi-market trading
-- **13 standardized metrics**: peak reduction, self-consumption, battery cycles, Sharpe ratio, max drawdown, CO2 reduction, uptime, and more
-- **Benchmark runner** with method comparison, statistical analysis, and markdown report generation
-
----
+| Area | What it does | Maturity |
+|---|---|---|
+| Database & migrations | SQLAlchemy 2.0 async, PostgreSQL/SQLite, alembic migrations 0001-0007, model/migration drift test | production-grade |
+| Observability | `/metrics` (Prometheus), request ids, structured JSON logs, provisioned Grafana dashboards | production-grade |
+| Auth & RBAC | JWT with `aud` claim, API keys, roles admin/operator/viewer/researcher/customer, deny-by-default for customers, authenticated WebSocket | beta — API-key `role` is not enforced (see [security](docs/security.md)); no user-management endpoints beyond register |
+| Resources, sites, telemetry | typed battery/solar/wind resources, sites with live aggregates, telemetry and meter-reading ingest, time-bucketed history | beta |
+| Dispatch optimization | single-interval allocation LP (Pyomo + HiGHS) over DB resources with SOC/energy limits and SOH-aware wear cost; proportional fallback; run history + explainer | beta — computes and records; does not command devices by itself |
+| MPC schedule & backtest | horizon MPC from prices or a stored tariff; closed-loop backtest vs idle / rule-based / perfect foresight | beta |
+| Stochastic, real-time, ADMM endpoints | CVaR scenario optimization, fast rules, multi-site ADMM on request-supplied data | research |
+| Battery degradation | rainflow + calendar ageing SOH, periodic updater, wear cost for the optimizer | beta |
+| Tariffs & billing | URDB parsing, TOU / tiers / demand / fixed / minimum / taxes, NEM 2.0 / 3.0 / net billing, billing cycles, CSV and synthetic load, presets, OpenEI import | beta |
+| Customer portal | customer accounts, own devices, bill from own meter data, DR program enrollment | beta |
+| Alerts | rules on live telemetry, persisted alerts, ack/snooze/resolve, HMAC-signed webhooks | beta |
+| OCPP 1.6-J Central System | Boot/Heartbeat/Status/Authorize/Start/Stop/MeterValues; RemoteStart/Stop, Set/ClearChargingProfile; Security Profile 1 | beta |
+| OpenADR 2.0b VEN | pull-mode registration, polling, event parsing, opt-in/out, mTLS | beta |
+| IEEE 2030.5 client | mTLS resource-tree walk to active DER controls | beta |
+| DR orchestrator | OpenADR / 2030.5 → fleet target → dispatch → EV setpoints, with caps and audit | beta — **auto-response off by default**; stationary assets only receive an event |
+| V2G | persisted vehicles, charger binding, schedules / dispatch via OCPP profiles | beta — discharge uses a vendor extension (negative limits) |
+| MQTT / Modbus ingestion | telemetry in from brokers and inverters/meters | beta |
+| Trading | order types incl. stop-limit/iceberg/IOC/FOK, pre-trade risk, portfolio, VaR, strategies and backtests | **simulated** venue |
+| Protocol adapters without an endpoint | in-memory state machines, status `simulated` | simulated |
+| Grid-forming inverters, microgrid islanding | models and demos | simulated |
+| Benchmarks | synthetic datasets, scenarios, metrics, runner | research |
+| Forecasting, anomaly detection | `vpp.research` | research |
+| Web console | operator console + customer portal (see [below](#web-console)) | beta |
 
 ## Architecture
 
 ```
-                          ┌─────────────────────────────┐
-                          │     FastAPI REST + WS API    │
-                          │   JWT Auth · Pydantic v2     │
-                          └─────────────┬───────────────┘
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              │                         │                         │
-   ┌──────────▼──────────┐  ┌──────────▼──────────┐  ┌──────────▼──────────┐
-   │   Optimization      │  │      Trading        │  │     Resources       │
-   │                      │  │                      │  │                      │
-   │ Stochastic · MPC     │  │ Day-Ahead · RT      │  │ Battery · Solar     │
-   │ Real-Time · ADMM     │  │ Ancillary · Bilateral│  │ Wind · EV Fleet    │
-   │ Plugin Architecture  │  │ Risk Management     │  │ Physics Models      │
-   └──────────┬──────────┘  └──────────┬──────────┘  └──────────┬──────────┘
-              │                         │                         │
-              └─────────────────────────┼─────────────────────────┘
-                                        │
-   ┌────────────────────────────────────┼────────────────────────────────────┐
-   │                                    │                                    │
-   │  ┌─────────┐ ┌──────┐ ┌──────┐ ┌──▼───┐  ┌───────────┐ ┌───────────┐ │
-   │  │ OpenADR │ │ OCPP │ │ MQTT │ │Modbus│  │    V2G    │ │  Grid     │ │
-   │  │  2.0b   │ │ 1.6  │ │      │ │TCP/RTU│ │ Scheduler │ │ Forming   │ │
-   │  └─────────┘ └──────┘ └──────┘ └──────┘  │ Aggregator│ │ Microgrid │ │
-   │         Protocol Layer                     └───────────┘ └───────────┘ │
-   └────────────────────────────────────────────────────────────────────────┘
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              │                         │                         │
-   ┌──────────▼──────────┐  ┌──────────▼──────────┐  ┌──────────▼──────────┐
-   │   Monitoring        │  │     Research (AI)    │  │    Benchmarks       │
-   │                      │  │   (non-production)   │  │                      │
-   │ Prometheus · Grafana │  │ GP · RL · Federated │  │ 4 Datasets          │
-   │ Alerts · Logging    │  │ Digital Twin         │  │ 7 Scenarios         │
-   └─────────────────────┘  └─────────────────────┘  │ 13 Metrics          │
-                                                       └─────────────────────┘
+                       Browser (operators, customers)
+                        |                         \
+                  HTTPS |                          \ WSS /api/v1/ws
+                        v                           \ (60 s socket token)
+        +-------------------------------+            \
+        | Web console (Next.js 15)      |             \
+        | operator UI + customer portal |              \
+        | httpOnly session, /api/proxy  |               \
+        +---------------+---------------+                \
+                        | HTTP + Bearer JWT (server side)   \
+                        v                                     v
++------------------------------------------------------------------------------+
+| FastAPI API (single process)                                                 |
+|  auth (JWT aud / API keys, RBAC) · rate limit · request ids · /metrics       |
+|                                                                              |
+|  resources · sites · customers/portal · tariffs · alerts · config · V2G      |
+|                                                                              |
+|  +----------------+  +-----------------+  +----------------+  +------------+ |
+|  | Optimization   |  | Trading         |  | Tariff engine  |  | Alerts     | |
+|  | Pyomo/HiGHS LP |  | SIMULATED venue |  | URDB, NEM,     |  | rules,     | |
+|  | MPC, backtest, |  | risk, portfolio |  | bill cycles    |  | webhooks   | |
+|  | fallbacks      |  | strategies      |  |                |  |            | |
+|  +-------+--------+  +--------+--------+  +----------------+  +------------+ |
+|          ^                    |                                              |
+|  +-------+---------------------------------------+                           |
+|  | DR orchestrator: grid signal -> target ->       |                           |
+|  | dispatch -> EV setpoints (auto-response OFF)    |                           |
+|  +-------+-----------------------------+-----------+                           |
+|          |                             |                                     |
+|  EventBus -> WebSocket channels, Prometheus metrics, alert service           |
+|          |                             |                                     |
+|  Protocol registry (each adapter LIVE or SIMULATED)                          |
+|   OCPP 1.6-J Central System  <-- chargers (wss /ocpp/{id}), V2G bridge        |
+|   OpenADR 2.0b VEN           --> utility VTN (HTTPS pull, mTLS)              |
+|   IEEE 2030.5 client         --> utility server (mTLS)                       |
+|   MQTT / Modbus ingestion    --> broker / inverters (telemetry)              |
++-----------------------------------+------------------------------------------+
+                                    |
+                     PostgreSQL / SQLite (alembic migrations)
+
+   Prometheus --> Grafana (:3001)          Research & benchmarks (offline)
 ```
 
----
+More in [docs/architecture.md](docs/architecture.md).
 
-## Quick Start
+## Quick start
 
-### Installation
+### Docker Compose (API + PostgreSQL + console)
 
 ```bash
 git clone https://github.com/vinerya/virtual-power-plant.git
 cd virtual-power-plant
+export VPP_SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(48))")
+export POSTGRES_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(24))")
+docker compose up -d --build
+```
+
+The API runs migrations on start. Create the first admin (there is no
+self-registration) with the snippet in
+[docs/deployment.md](docs/deployment.md#create-the-first-admin), then open
+the console at <http://localhost:3000> and the API docs at
+<http://localhost:8000/docs>.
+
+Add Prometheus (:9090) and Grafana (:3001):
+
+```bash
+docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+```
+
+### Backend without Docker
+
+```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[api,db,protocols,solver,degradation,monitoring,cli,dev]"
+
+export VPP_SECRET_KEY=dev-only-secret      # SQLite ./vpp.db by default
+vpp migrate                                # from the repository root
+# create the first admin: docs/deployment.md#create-the-first-admin
+uvicorn vpp.api.app:create_app --factory --reload
 ```
 
-### Run Tests
+Try it:
 
 ```bash
-pytest tests/ -v    # 389 tests
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token \
+  -d username=admin -d password='change-me-now' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+curl -s -X POST localhost:8000/api/v1/resources -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"name": "home-battery-1", "resource_type": "battery", "rated_power": 5,
+       "capacity_kwh": 13.5, "state_of_charge": 0.6, "chemistry": "lfp"}'
+
+# Split a 3 kW export target across online resources (computes and records;
+# nothing is sent to devices)
+curl -s -X POST localhost:8000/api/v1/optimization/dispatch -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"target_power_kw": 3}'
 ```
 
-### Run a Demo
+### Web console
 
 ```bash
-# 10-home residential VPP with solar + battery
-python -c "from demos.residential_demo import run; run()"
-
-# 50-vehicle V2G parking garage
-python -c "from demos.ev_fleet_demo import run; run()"
-
-# Grid fault → island transition → reconnection
-python -c "from demos.microgrid_demo import run; run()"
-
-# Multi-market arbitrage trading bot
-python -c "from demos.trading_demo import run; run()"
-
-# OpenADR + OCPP + MQTT + Modbus coordination
-python -c "from demos.protocols_demo import run; run()"
-
-# Terminal dashboard with live ASCII visualization
-python -c "from demos.dashboard_demo import run; run()"
+cd web
+cp .env.example .env.local        # API_BASE_URL=http://localhost:8000
+pnpm install
+pnpm dev                          # http://localhost:3000
 ```
 
-### Stochastic Optimization
+See [web/README.md](web/README.md). `NEXT_PUBLIC_USE_MOCKS=1` runs the
+console with bundled demo data and no backend.
 
-```python
-from vpp.optimization import create_stochastic_problem, solve_with_fallback
-
-base_data = {
-    "base_prices": [0.1, 0.15, 0.12, 0.08] * 6,
-    "renewable_forecast": [100, 150, 200, 120] * 6,
-    "battery_capacity": 2000.0,
-    "max_power": 500.0,
-}
-
-problem = create_stochastic_problem(base_data, num_scenarios=20)
-result = solve_with_fallback(problem, timeout_ms=1000)
-print(f"Status: {result.status}, Cost: ${result.objective_value:.2f}")
-```
-
-### V2G Smart Scheduling
-
-```python
-from vpp.v2g import EVFleet, SmartChargingScheduler, TOU_PRIORITY
-
-fleet = EVFleet()
-fleet.add_vehicle(capacity_kwh=60, soc=0.3, departure_soc=0.8,
-                  max_charge_kw=11, v2g_capable=True)
-
-scheduler = SmartChargingScheduler(strategy=TOU_PRIORITY)
-schedule = scheduler.create_schedule(fleet, price_forecast=prices)
-```
-
-### Start the API Server
+### Demos and benchmarks (no server needed)
 
 ```bash
-# Development
-docker-compose -f docker-compose.dev.yml up
-
-# Production
-docker-compose up -d
+# from the repository root; PYTHONPATH=. makes the top-level demos/ and
+# benchmarks/ packages importable for the `vpp` command
+PYTHONPATH=. vpp demo                    # list: residential, ev_fleet, microgrid, trading, protocols, dashboard
+PYTHONPATH=. vpp demo residential
+PYTHONPATH=. vpp benchmark list
+PYTHONPATH=. vpp benchmark run PEAK_SHAVING
 ```
 
-### Run Benchmarks
+Demos and benchmarks run on synthetic data.
 
-```python
-from benchmarks import BenchmarkRunner, ScenarioRegistry, DatasetRegistry
+## Configuration
 
-runner = BenchmarkRunner()
-scenario = ScenarioRegistry.get("PEAK_SHAVING")
-result = runner.run(scenario, seed=42)
-print(runner.generate_report())
-```
+All API settings are `VPP_*` environment variables (or a `.env` file);
+every one is listed with its default in
+[docs/configuration.md](docs/configuration.md), and
+[.env.example](.env.example) is a ready template. The ones you must set for
+anything beyond local development: `VPP_SECRET_KEY`, `VPP_DATABASE_URL`,
+`VPP_CORS_ORIGINS`. Protocols and DR auto-response are opt-in.
 
----
+## API overview
 
-## CLI Reference
+Interactive docs at `/docs`, schema at `/openapi.json`. Full route list with
+required roles: [docs/api.md](docs/api.md#routes).
 
-| Command | Description |
-|---------|-------------|
-| `vpp serve` | Start the FastAPI server |
-| `vpp init` | Initialize database and configuration |
-| `vpp config show` | Display current configuration |
-| `vpp config validate` | Validate configuration file |
-| `vpp dispatch <target>` | Run optimization dispatch |
-| `vpp status` | Show VPP system status |
-| `vpp benchmark list` | List available datasets and scenarios |
-| `vpp benchmark run <SCENARIO>` | Run benchmark with all methods |
-| `vpp benchmark report` | Generate comparison report |
-| `vpp demo [name]` | Run a demo (residential, ev_fleet, microgrid, trading, protocols, dashboard) |
+| Group | Routes |
+|---|---|
+| Health | `GET /health`, `/ready`, `/version`; `GET /metrics` |
+| Auth | `POST /api/v1/auth/token` (form or JSON body), `POST /api/v1/auth/register` (admin), `GET /api/v1/auth/me`, `POST /api/v1/auth/api-key` |
+| Resources | `GET/POST /api/v1/resources`, `GET/PUT/DELETE /api/v1/resources/{id}`, `GET .../{id}/metrics`, `POST .../{id}/telemetry` |
+| Sites | `GET/POST /api/v1/sites`, `GET/PATCH/DELETE /api/v1/sites/{id}`, `GET/POST .../{id}/meter-readings` |
+| Customers | portal `GET /api/v1/customer/me`, `/me/bill`, `/me/devices`, `/programs`, `POST/DELETE /enrollments`; staff `/api/v1/customers`, `/api/v1/programs` |
+| Optimization | `POST /api/v1/optimization/dispatch`, `/schedule`, `/backtest`, `/stochastic`, `/realtime`, `/distributed`; `GET /runs`, `/runs/{id}`, `/runs/{id}/explain`, `/history`, `/stats`; `GET /api/v1/dispatches[/{id}[/explain]]` |
+| Trading (simulated) | `POST/GET /api/v1/trading/orders`, `GET/DELETE /orders/{id}`, `POST /orders/{id}/cancel`, `GET /trades`, `/portfolio`, `/markets`, `POST /markets/tick`, `GET /strategies`, `POST /strategies/{name}/backtest`, `/run` |
+| Tariffs | `GET/POST /api/v1/tariffs`, `GET/PUT/DELETE /api/v1/tariffs/{id}`, `POST /{id}/simulate`, `POST /simulate`, `GET /presets[/{id}]`, `GET/POST /import-urdb` |
+| V2G | `GET/POST /api/v1/v2g/vehicles`, `GET/PATCH/DELETE /vehicles/{ev_id}`, `PUT/DELETE /vehicles/{ev_id}/binding`, `GET /sessions`, `/fleet`, `/flexibility`, `POST /schedule`, `GET /schedules`, `POST /dispatch`, `POST /bid`, `GET /bids`, `/metrics` |
+| Protocols | `GET /api/v1/protocols`, `POST /{name}/connect\|disconnect`, `GET /{name}/metrics`; OCPP charge points, transactions, remote start/stop; OpenADR events + opt override; IEEE 2030.5 controls |
+| Demand response | `GET /api/v1/dr/status`, `GET /api/v1/dr/responses` |
+| Alerts | `GET /api/v1/alerts[/{id}]`, `POST /{id}/ack\|snooze\|resolve`, rules CRUD under `/api/v1/alerts/rules` |
+| Config | `GET/PUT /api/v1/config`, `GET /schema`, `POST /validate` |
+| Degradation | `GET /api/v1/batteries/{id}/soh[/history]`, `POST .../soh/update` |
+| WebSocket | `POST /api/v1/ws/token`; `WS /api/v1/ws` (alias `/ws`) |
+| OCPP | `WS /ocpp/{charge_point_id}` (subprotocol `ocpp1.6`, when enabled) |
 
----
+### WebSocket channels
 
-## Demo Applications
+Connect to `/api/v1/ws` with a token (see [docs/api.md](docs/api.md#websocket)),
+then subscribe via `?channels=...` or `{"action": "subscribe", "channel": ...}`:
 
-| Demo | What it shows |
-|------|---------------|
-| **Residential VPP** | 10 homes with solar + battery, peak shaving optimization, cost savings analysis |
-| **EV Fleet V2G** | 50-vehicle parking garage, smart vs. dumb charging, V2G revenue optimization |
-| **Microgrid Islanding** | Grid fault detection, seamless island transition, grid-forming inverters, reconnection |
-| **Trading Bot** | Multi-market arbitrage (DA/RT/ancillary), P&L tracking, Sharpe ratio, risk controls |
-| **Multi-Protocol** | OpenADR DR events + OCPP charger control + MQTT telemetry + Modbus inverters in concert |
-| **Dashboard** | Terminal UI with ASCII progress bars, live resource/grid/trading panels, alert feed |
+| Channel | Events |
+|---|---|
+| `resource_updates` | resource added/removed/updated/fault, telemetry, OCPP meter values |
+| `optimization_events` | optimization started/completed/failed, dispatch executed |
+| `market_data` | simulated quotes, order and trade events |
+| `alerts` | newly fired alerts only |
+| `grid_events` | protocol status, DR events and responses, EV plug-in/out, V2G dispatch, islanding |
+| `system` | everything else |
+| `*` | all channels |
 
----
+Close codes: `1008` handshake refused (missing/invalid token, customer
+account), `4001` the session behind the socket expired — reconnect with a
+fresh token.
 
-## Benchmarking Suite
+## Web console
 
-### Datasets
+| Page | What it shows |
+|---|---|
+| `/` | fleet overview (count, online, rated and current kW, resource table) |
+| `/assets`, `/assets/[id]` | resource detail with stored power/SOC history |
+| `/sites` | map of sites with health |
+| `/alerts` | live alert feed, ack / snooze, bulk ack |
+| `/optimization` | schedule planner and closed-loop backtest |
+| `/trading`, `/trading/dispatches`, `/trading/strategies` | simulated-venue workspace, dispatch history + explainer, strategy backtests |
+| `/tariffs`, `/tariffs/[id]` | tariff browser, TOU heatmaps, bill simulator, URDB import |
+| `/protocols` | adapters with LIVE / SIMULATED badges, connect/disconnect |
+| `/settings` | platform config YAML editor with schema validation |
+| `/portal/*` | customer portal: overview, bill, devices, program enrollment |
 
-| Dataset | Description | Resolution |
-|---------|-------------|------------|
-| IEEE Test Case | 24h residential DER (load, solar, price, temperature) | 15 min (96 steps) |
-| California ISO | 7-day grid-scale with duck curve, LMP, regulation prices | 15 min (672 steps) |
-| EU Grid Data | 48h European multi-zone (DA/intraday/balancing prices, cross-border) | 15 min (192 steps) |
-| EV Fleet | 50-vehicle fleet with arrival/departure patterns, SOC, V2G capability | Per-vehicle |
+Viewers get read-only pages; the backend enforces every permission
+regardless of what the UI shows.
 
-### Scenarios
+## Security model
 
-Peak Shaving · Frequency Response · V2G Arbitrage · Multi-Site Coordination · Islanding · High Renewable Penetration · Multi-Market Trading
+- **Roles**: `admin`, `operator`, `viewer`, `researcher` (currently the
+  same as viewer) and `customer`. Customers are refused on every operator
+  endpoint and on the WebSocket; customer routes only return the caller's
+  own data. Writes that change device or venue state need operator or
+  admin.
+- **JWT**: HS256 signed with `VPP_SECRET_KEY`, `aud` = `operator` or
+  `customer`, re-checked against the user's current role on each request.
+  Credentials go in the request body (query-string login is deprecated).
+- **API keys**: `X-API-Key`, stored hashed. A key currently acts with its
+  creator's full role — give integrations their own low-privilege users.
+- **WebSocket**: authentication required by default; browsers use a 60 s
+  socket-only token passed as a subprotocol, and sockets close with `4001`
+  when the session expires.
+- **Grid safety**: DR auto-response is off by default; utility limits and
+  operator caps clamp every DR target; protocols are opt-in and report
+  SIMULATED unless really connected.
 
-### Metrics
-
-Peak Reduction · Total Cost · Self-Consumption · Renewable Utilization · Battery Cycles · Frequency RMSE · V2G Utilization · Departure SOC Compliance · Curtailment · Sharpe Ratio · Max Drawdown · CO2 Reduction · Uptime
-
----
-
-## REST + WebSocket API
-
-The FastAPI server auto-generates interactive docs at `/docs` (Swagger UI) and `/redoc`.
-
-### Key Endpoints
-
-| Group | Endpoints |
-|-------|-----------|
-| **Health** | `GET /health`, `GET /ready`, `GET /version` |
-| **Auth** | `POST /auth/token`, `POST /auth/register`, `GET /auth/me` |
-| **Resources** | `GET/POST /api/v1/resources`, `GET/PUT/DELETE /api/v1/resources/{id}` |
-| **Optimization** | `POST /dispatch`, `POST /stochastic`, `POST /realtime`, `POST /distributed` |
-| **Trading** | `POST/GET /orders`, `GET /portfolio`, `GET /trades`, `GET /markets` |
-| **Protocols** | `GET /protocols`, `POST /protocols/{name}/connect` |
-| **V2G** | `POST /v2g/vehicles`, `GET /v2g/fleet`, `POST /v2g/schedule` |
-| **Alerts** | `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/ack\|snooze\|resolve`, `GET/POST /api/v1/alerts/rules`, `GET/PATCH/DELETE /api/v1/alerts/rules/{id}` |
-| **Metrics** | `GET /metrics` (Prometheus format; unauthenticated unless `VPP_METRICS_BEARER_TOKEN` is set) |
-
-### WebSocket Channels
-
-Connect to `/ws` and subscribe to: `resource_updates`, `optimization_events`, `market_data`, `alerts`
-
-### Observability & Alerting
-
-- Every HTTP response carries an `X-Request-ID` (a sane incoming one is reused); it is bound into the structured-log context, so all log lines for a request share it. Set `VPP_LOG_JSON=true` for JSON logs (default in production).
-- `/metrics` exposes request count/latency per route template, per-resource power/SOC gauges and telemetry freshness (from `RESOURCE_UPDATED` events), optimization and trading counters, and alerts fired. See `src/vpp/metrics.py` for the event data keys it reads and the helper hooks.
-- Alert rules are stored in the database and evaluated against live telemetry; fired alerts are persisted, de-duplicated per rule and resource, pushed on the `alerts` WebSocket channel and optionally POSTed to `VPP_ALERT_WEBHOOK_URL` (retried with backoff, HMAC-signed with `VPP_ALERT_WEBHOOK_SECRET`). Three default rules (SOC low, over-temperature, SOH degraded) are seeded when no rule exists (`VPP_ALERTS_SEED_DEFAULT_RULES=false` to disable).
-
----
-
-## Docker Deployment
-
-```bash
-# Full stack: API + PostgreSQL
-docker-compose up -d
-
-# With monitoring: + Prometheus (:9090) + Grafana (:3001, dashboards
-# "VPP Overview", "VPP Trading", "VPP Fleet" auto-provisioned)
-docker-compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
-
-# Development mode with live reload
-docker-compose -f docker-compose.dev.yml up
-```
-
----
-
-## Project Structure
-
-```
-virtual-power-plant/
-├── src/vpp/
-│   ├── api/                 # FastAPI REST + WebSocket
-│   │   ├── routes/          # Resource, optimization, trading, auth, protocol, V2G endpoints
-│   │   └── websocket.py     # Real-time WebSocket manager
-│   ├── auth/                # JWT authentication + RBAC
-│   ├── cli/                 # Click CLI (vpp serve, dispatch, benchmark, demo)
-│   ├── db/                  # SQLAlchemy 2.0 async models + repositories
-│   ├── events/              # Typed event bus with async publish
-│   ├── grid/                # Grid-forming inverters, microgrid controller
-│   ├── optimization/        # Stochastic, real-time, distributed, MPC, ADMM, plugins
-│   ├── protocols/           # OpenADR, OCPP, MQTT, Modbus, IEEE 2030.5
-│   ├── research/            # GP forecasting, RL dispatch, federated learning, digital twin
-│   ├── schemas/             # Pydantic v2 request/response models
-│   ├── trading/             # Markets, orders, strategies, portfolio, risk
-│   ├── v2g/                 # EV models, smart scheduler, fleet aggregator
-│   ├── alerts.py            # Alert rules + manager
-│   ├── metrics.py           # Prometheus metrics collector
-│   ├── settings.py          # Pydantic BaseSettings (.env)
-│   └── resources.py         # Battery, Solar, Wind physics models
-├── benchmarks/              # Datasets, scenarios, metrics, runner
-├── demos/                   # 6 interactive demo applications
-├── tests/                   # 389 tests (pytest)
-├── monitoring/              # Prometheus + Grafana configs
-├── Dockerfile               # Multi-stage production build
-├── docker-compose.yml       # Production deployment
-├── docker-compose.dev.yml   # Development with live reload
-└── pyproject.toml           # PEP 621 metadata + tool configs
-```
-
----
+Details, including what is *not* implemented (MFA, lockout, user
+management, key revocation): [docs/security.md](docs/security.md).
 
 ## Testing
 
 ```bash
-# Run all 389 tests
-pytest tests/ -v
+pip install -e ".[api,db,protocols,solver,degradation,monitoring,cli,dev]"
+pytest                                   # 800+ backend tests
+pytest tests/test_alembic_drift.py       # models vs migrations
+ruff check src tests && mypy src/vpp
 
-# Run specific test modules
-pytest tests/test_protocols.py -v    # Protocol adapters
-pytest tests/test_v2g.py -v          # V2G scheduling
-pytest tests/test_grid.py -v         # Grid-forming inverters
-pytest tests/test_benchmarks.py -v   # Benchmarking suite
-pytest tests/test_demos.py -v        # Demo applications
-pytest tests/test_trading.py -v      # Trading system (via test_api_trading.py)
+cd web
+pnpm lint && pnpm typecheck && pnpm build
+pnpm exec playwright install chromium
+pnpm test:e2e                            # Playwright, backend stubbed
 ```
 
----
+Protocol tests run against in-process mock peers (no certification suites).
+
+## Project structure
+
+```
+├── src/vpp/
+│   ├── api/            FastAPI app, routes, WebSocket, middleware, observability
+│   ├── auth/           JWT / API keys, RBAC, rate limiting
+│   ├── db/             SQLAlchemy models, engine, repositories
+│   ├── schemas/        Pydantic request/response models
+│   ├── optimization/   allocation LP, MPC, backtest, stochastic/real-time/ADMM, fallbacks
+│   ├── degradation/    battery SOH model and updater
+│   ├── trading/        markets, orders, portfolio, risk, strategies, simulated venue
+│   ├── tariffs/        URDB engine, NEM, billing cycles, CSV/synthetic load, presets, feeds
+│   ├── protocols/      OCPP 1.6-J, OpenADR 2.0b, IEEE 2030.5, MQTT, Modbus, bootstrap
+│   ├── v2g/            EV fleet models, scheduler, store, OCPP bridge
+│   ├── dr/             demand-response translation rules and orchestrator
+│   ├── portal/         sites, customer scoping, customer billing, telemetry history
+│   ├── grid/           grid-forming inverter and microgrid models
+│   ├── research/       forecasting, anomaly detection, experiment runner
+│   ├── config/         platform configuration document and schema
+│   ├── events/         in-process EventBus
+│   ├── cli/            `vpp` command
+│   └── settings.py     VPP_* settings
+├── web/                Next.js console + customer portal (Playwright tests in web/tests)
+├── alembic/            database migrations
+├── monitoring/         Prometheus + Grafana (compose overlay, dashboards)
+├── benchmarks/         synthetic datasets, scenarios, metrics, runner
+├── demos/, examples/   runnable scripts
+├── docs/               architecture, configuration, deployment, protocols, API, tariffs, security
+├── tests/              pytest suite
+├── Dockerfile, web/Dockerfile, docker-compose*.yml
+└── pyproject.toml
+```
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Configuration reference](docs/configuration.md)
+- [Deployment](docs/deployment.md)
+- [Protocols, V2G and DR](docs/protocols.md)
+- [API guide](docs/api.md)
+- [Tariffs and billing](docs/tariffs.md)
+- [Security](docs/security.md)
+- [Library features](ADVANCED_FEATURES.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 ## Contributing
 
-We welcome contributions. This project aims to become the **industry standard** for open-source VPP platforms.
-
-### Priority Areas
-- New resource types (fuel cells, pumped hydro, thermal storage)
-- Additional protocol adapters (SunSpec, DNP3, IEC 61850)
-- Real grid data integration (ISO APIs, utility feeds)
-- Advanced optimization algorithms
-- Documentation, tutorials, and case studies
-
-### Development Setup
-
-```bash
-git clone https://github.com/vinerya/virtual-power-plant.git
-cd virtual-power-plant
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-pre-commit install
-pytest tests/ -v
-```
-
-### Guidelines
-- Follow PEP 8, use type hints, add docstrings
-- Maintain test coverage — add tests for all new features
-- Rule-based logic for production; AI/ML in `research/` only
-- Open a PR with a clear description and test plan
-
----
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Useful
+areas: field testing against real chargers/VTNs/2030.5 servers, device
+drivers for stationary setpoints, user management, additional protocols
+(SunSpec, DNP3, IEC 61850), and real market/ISO integrations.
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
+MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-Made with care by [Moudather Chelbi](https://www.linkedin.com/in/moudatherchelbi/) & [Mariem Khemir](https://www.linkedin.com/in/mariem-khemir/)
+Made by [Moudather Chelbi](https://www.linkedin.com/in/moudatherchelbi/) & [Mariem Khemir](https://www.linkedin.com/in/mariem-khemir/)
 
-[Star this repo](https://github.com/vinerya/virtual-power-plant) · [Report issues](https://github.com/vinerya/virtual-power-plant/issues) · [Request features](https://github.com/vinerya/virtual-power-plant/issues/new)
+[Report issues](https://github.com/vinerya/virtual-power-plant/issues) · [Request features](https://github.com/vinerya/virtual-power-plant/issues/new)
 
 </div>

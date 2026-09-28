@@ -1,124 +1,187 @@
-# Contributing to Virtual Power Plant
+# Contributing
 
-We love your input! We want to make contributing to the Virtual Power Plant platform as easy and transparent as possible, whether it's:
+Thanks for helping. Bug reports, fixes, docs, field-test reports against
+real chargers / VTNs / IEEE 2030.5 servers and new features are all
+welcome.
 
-- Reporting a bug
-- Discussing the current state of the code
-- Submitting a fix
-- Proposing new features
-- Becoming a maintainer
+## Workflow
 
-## We Develop with Github
-We use GitHub to host code, to track issues and feature requests, as well as accept pull requests.
+We use GitHub Flow:
 
-## Development Process
-We use GitHub Flow, so all code changes happen through pull requests:
+1. Fork the repository and branch from `main`.
+2. Make your change with tests. If you change an API, a setting or a
+   behaviour, update the docs (`README.md`, `docs/`, `CHANGELOG.md` under
+   `[Unreleased]`) in the same pull request.
+3. Make sure the checks below pass locally.
+4. Open a pull request describing the change and how you tested it.
 
-1. Fork the repo and create your branch from `main`
-2. If you've added code that should be tested, add tests
-3. If you've changed APIs, update the documentation
-4. Ensure the test suite passes (`pytest tests/ -v` — all 226 tests must pass)
-5. Make sure your code lints
-6. Issue that pull request!
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat(tariffs): ...`, `fix(ws): ...`, `docs: ...`).
 
-## Development Setup
+## Backend setup
 
-1. Clone the repository:
+Python 3.10+.
+
 ```bash
 git clone https://github.com/vinerya/virtual-power-plant.git
 cd virtual-power-plant
-```
-
-2. Create a virtual environment and activate it:
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
-
-3. Install development dependencies:
-```bash
-pip install -e ".[dev]"
-```
-
-4. Install pre-commit hooks:
-```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[api,db,protocols,solver,degradation,monitoring,cli,dev]"
 pre-commit install
 ```
 
-5. Run the test suite:
+Run the API against a local SQLite database:
+
 ```bash
-pytest tests/ -v
+export VPP_SECRET_KEY=dev-only-secret
+vpp migrate                                   # from the repository root
+uvicorn vpp.api.app:create_app --factory --reload
 ```
 
-## Code Style
-- We use [Black](https://github.com/psf/black) for code formatting
-- Type hints are required for all functions and classes
-- Docstrings should follow Google style
-- Maximum line length is 88 characters (Black default)
+Create a first admin as described in
+[docs/deployment.md](docs/deployment.md#create-the-first-admin).
 
-## Architecture Principles
+## Web console setup
 
-- **Rule-based logic for production** — AI/ML goes in `src/vpp/research/` only, never in production code paths
-- **Plugin architecture** — new optimization methods, protocols, and strategies should be plugins
-- **Edge-first, cloud-optional** — the platform must run standalone without external services
+Node 20+ (CI uses 20) and pnpm 9 (`corepack enable`).
 
-## Testing
-- All new code must include tests
-- Tests are written using pytest
-- Run tests with: `pytest tests/ -v`
-- Aim for 90%+ test coverage
-- Test files go in `tests/` with the naming convention `test_<module>.py`
+```bash
+cd web
+cp .env.example .env.local        # API_BASE_URL=http://localhost:8000
+pnpm install
+pnpm dev                          # http://localhost:3000
+```
 
-## Project Structure
+`NEXT_PUBLIC_USE_MOCKS=1` in `.env.local` runs the console against bundled
+demo data without a backend. See [web/README.md](web/README.md).
 
-Key directories for contributors:
+## Checks
 
-| Directory | What it contains |
-|-----------|-----------------|
-| `src/vpp/optimization/` | Stochastic, real-time, distributed optimizers, plugin system |
-| `src/vpp/trading/` | Markets, orders, strategies, portfolio, risk management |
-| `src/vpp/protocols/` | OpenADR, OCPP, MQTT, Modbus, IEEE 2030.5 adapters |
-| `src/vpp/v2g/` | EV models, smart scheduling, fleet aggregation |
-| `src/vpp/grid/` | Grid-forming inverters, microgrid controller |
-| `src/vpp/research/` | ML/AI models (non-production) |
-| `src/vpp/api/` | FastAPI REST + WebSocket endpoints |
-| `benchmarks/` | Datasets, scenarios, metrics, benchmark runner |
-| `demos/` | Interactive demo applications |
-| `tests/` | Test suite (226 tests) |
+Backend:
 
-## Priority Contribution Areas
+```bash
+pytest                                        # whole suite
+pytest tests/test_api_tariffs.py -q           # one module
+ruff check src tests
+ruff format --check src tests
+mypy src/vpp --ignore-missing-imports
+```
 
-- **New resource types**: fuel cells, pumped hydro, thermal storage
-- **Protocol adapters**: SunSpec, DNP3, IEC 61850
-- **Real grid data**: ISO API integrations, utility data feeds
-- **Optimization algorithms**: new solver plugins
-- **Documentation**: tutorials, case studies, and deployment guides
+Pre-commit runs ruff (with `--fix`), ruff-format, whitespace/YAML/JSON
+checks, `detect-private-key` and mypy on every commit;
+`pre-commit run --all-files` runs them on demand.
 
-## Pull Request Process
-1. Update the README.md with details of changes if needed
-2. Update the documentation with any new features
-3. The PR will be merged once you have the sign-off of two maintainers
+Web console:
 
-## Any contributions you make will be under the MIT Software License
-In short, when you submit code changes, your submissions are understood to be under the same [MIT License](http://choosealicense.com/licenses/mit/) that covers the project. Feel free to contact the maintainers if that's a concern.
+```bash
+cd web
+pnpm lint
+pnpm typecheck
+pnpm build
+```
 
-## Report bugs using Github's [issue tracker](https://github.com/vinerya/virtual-power-plant/issues)
-We use GitHub issues to track public bugs. Report a bug by [opening a new issue](https://github.com/vinerya/virtual-power-plant/issues/new).
+### Playwright end-to-end tests
 
-## Write bug reports with detail, background, and sample code
+The specs in `web/tests/*.spec.ts` stub every backend call with
+`page.route()` / `page.routeWebSocket()`, so no FastAPI server is needed.
 
-**Great Bug Reports** tend to have:
+```bash
+cd web
+pnpm exec playwright install chromium         # once
+pnpm test:e2e                                 # starts `pnpm dev` on :3000
+CI=1 pnpm build && CI=1 pnpm test:e2e         # as CI does: against `pnpm start`
+pnpm exec playwright test tests/trading.spec.ts --headed
+```
 
-- A quick summary and/or background
-- Steps to reproduce
-  - Be specific!
-  - Give sample code if you can
-- What you expected would happen
-- What actually happens
-- Notes (possibly including why you think this might be happening, or stuff you tried that didn't work)
+Knobs: `E2E_PORT` (port of the auto-started server), `E2E_BASE_URL` (test an
+already running app), `E2E_NO_SERVER=1`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE`
+(use a preinstalled Chromium).
+
+## Code style
+
+- Python: ruff for linting, import sorting and formatting (line length
+  99, target Python 3.10). Type hints on public functions; docstrings on
+  modules and non-trivial functions.
+- TypeScript: ESLint (`next/core-web-vitals`, `next/typescript`), strict
+  TypeScript, validate API responses with zod in `web/lib/api/*`.
+- Prefer honest behaviour over optimistic UI: report what actually
+  happened (e.g. a charger's answer), label simulated data as simulated,
+  and surface errors instead of falling back to fake data.
+
+## Database migrations
+
+The ORM models (`src/vpp/db/models.py`) and the alembic migrations
+(`alembic/versions/`) must stay in sync; `tests/test_alembic_drift.py`
+fails when they differ or when there is more than one head.
+
+When you change a model:
+
+```bash
+# 1. Start from a database at the current head
+export VPP_DATABASE_URL=sqlite+aiosqlite:///./migrate-dev.db
+rm -f migrate-dev.db && vpp migrate
+
+# 2. Generate a revision (run from the repository root)
+alembic revision --autogenerate -m "add widgets" --rev-id 0008_add_widgets
+#    alembic names the file 0008_add_widgets_add_widgets.py; rename it to
+#    0008_add_widgets.py so file name and revision id match the others.
+
+# 3. Review and edit the generated file: autogenerate misses renames,
+#    server defaults and data migrations. down_revision must be the
+#    previous head.
+
+# 4. Verify
+vpp migrate
+pytest tests/test_alembic_drift.py tests/test_alembic_migrations.py
+```
+
+Migrations must work on both SQLite and PostgreSQL (use `batch_alter_table`
+for SQLite column changes). Never edit a migration that has been released;
+add a new one.
+
+## Architecture principles
+
+- **Safe by default.** Anything that dials out or commands equipment is
+  opt-in (`VPP_*_ENABLED`), and DR auto-response is off unless an operator
+  turns it on.
+- **Honest status.** Adapters without a real endpoint report `simulated`;
+  APIs return what really happened.
+- **Rules first, research separate.** Operational code paths use
+  deterministic optimization and rules; experimental ML lives in
+  `src/vpp/research/` and is not called by the API.
+- **Deny by default.** New operator endpoints depend on `get_current_user`
+  (which rejects customers) or `require_role(...)`; customer-facing routes
+  must scope every query to the caller.
+- **Plugins.** New optimization methods implement `OptimizationPlugin`;
+  new protocols implement `ProtocolAdapter` and register in the protocol
+  registry.
+
+## Project layout
+
+| Directory | Contents |
+|---|---|
+| `src/vpp/api/` | FastAPI app, routes, WebSocket, middleware |
+| `src/vpp/optimization/` | allocation LP, MPC, backtest, plugins, fallbacks |
+| `src/vpp/protocols/` | OCPP, OpenADR, IEEE 2030.5, MQTT, Modbus |
+| `src/vpp/dr/`, `src/vpp/v2g/` | DR orchestrator, V2G fleet and OCPP bridge |
+| `src/vpp/tariffs/` | URDB engine, NEM, billing |
+| `src/vpp/trading/` | simulated venue, portfolio, risk, strategies |
+| `src/vpp/research/` | non-operational ML experiments |
+| `web/` | Next.js console and customer portal |
+| `alembic/` | migrations |
+| `docs/` | user and operator documentation |
+| `tests/` | pytest suite |
+
+More in [docs/architecture.md](docs/architecture.md).
+
+## Reporting bugs
+
+Open an issue at <https://github.com/vinerya/virtual-power-plant/issues>
+with what you did, what you expected, what happened, versions (`GET
+/version`), and logs (include the `X-Request-ID` of a failing request).
+Report security issues privately (see [docs/security.md](docs/security.md)).
 
 ## License
-By contributing, you agree that your contributions will be licensed under its MIT License.
 
-## References
-This document was adapted from the open-source contribution guidelines for [Facebook's Draft](https://github.com/facebook/draft-js/blob/a9316a723f9e918afde44dea68b5f9f39b7d9b00/CONTRIBUTING.md).
+By contributing you agree that your contributions are licensed under the
+project's [MIT License](LICENSE).

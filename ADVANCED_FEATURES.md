@@ -1,458 +1,193 @@
-# Advanced Virtual Power Plant Library Features
+# Library features
 
-This document describes the enhanced capabilities of the Virtual Power Plant library, focusing on advanced model-based, heuristic, and rule-based approaches for robust and configurable VPP management.
+The `vpp` package can be used as a Python library, without the API server.
+This page describes the building blocks that exist today, with snippets
+that run against the current code, and is explicit about what is only a
+configuration field without behaviour behind it.
 
-## 🚀 Overview
+For the operational platform (API, console, protocols) start with the
+[README](README.md) and [docs/](docs/). Maturity labels (production-grade /
+beta / simulated / research) are defined in the README.
 
-The advanced VPP library provides sophisticated tools for virtual power plant management with emphasis on:
+Install with the extras you need, e.g.
+`pip install -e ".[solver,degradation]"` (Pyomo + HiGHS, rainflow).
 
-- **Physics-based modeling** for accurate resource behavior simulation
-- **Multi-objective optimization** with configurable objectives and constraints
-- **Rule-based systems** for intelligent decision making
-- **Comprehensive configuration management** with validation and hot reload
-- **Advanced analytics** for performance monitoring and optimization
+## Contents
 
-## 📋 Table of Contents
+- [Platform configuration document](#platform-configuration-document)
+- [Battery models](#battery-models)
+- [Optimization framework](#optimization-framework)
+- [Battery degradation](#battery-degradation)
+- [Tariff engine](#tariff-engine)
+- [Trading package](#trading-package)
+- [V2G, grid and research modules](#v2g-grid-and-research-modules)
+- [Not implemented](#not-implemented)
 
-- [Configuration System](#configuration-system)
-- [Physics-Based Models](#physics-based-models)
-- [Optimization Framework](#optimization-framework)
-- [Rule-Based Systems](#rule-based-systems)
-- [Getting Started](#getting-started)
-- [Examples](#examples)
-- [API Reference](#api-reference)
+## Platform configuration document
 
-## 🔧 Configuration System
+`vpp.config.VPPConfig` is a typed, validated description of a VPP:
+optimization objectives and constraints, heuristic and rule-engine
+settings, monitoring, simulation, security and resources. It loads from
+YAML or JSON and validates with detailed errors. The API serves the same
+structure as a strict JSON Schema (`GET /api/v1/config/schema`) and applies
+documents with `PUT /api/v1/config` (versioned in the database).
 
-### Hierarchical Configuration
-
-The advanced configuration system provides a hierarchical, type-safe approach to VPP configuration:
-
-```python
-from vpp.config import VPPConfig, OptimizationObjective, ConstraintConfig
-
-# Load from file
-config = VPPConfig.load_from_file("config.yaml")
-
-# Create programmatically
-config = VPPConfig(
-    name="My Advanced VPP",
-    location="California",
-    timezone="America/Los_Angeles"
-)
-```
-
-### Key Features
-
-- **Type Safety**: All configuration parameters are type-checked
-- **Validation**: Comprehensive validation with detailed error reporting
-- **Multiple Formats**: Support for YAML and JSON configuration files
-- **Hot Reload**: Dynamic configuration updates without restart
-- **Merging**: Combine multiple configuration sources
-- **Backup**: Automatic configuration backup and versioning
-
-### Configuration Structure
-
-```yaml
-# Basic VPP settings
-name: "Advanced Research VPP"
-description: "Demonstration of advanced capabilities"
-location: "Research Facility"
-timezone: "UTC"
-
-# Optimization configuration
-optimization:
-  strategy: "multi_objective"
-  objectives:
-    - name: "cost_minimization"
-      weight: 0.4
-      priority: 1
-    - name: "emissions_reduction"
-      weight: 0.3
-      priority: 2
-
-# Rule engine configuration
-rules:
-  inference_method: "forward_chaining"
-  conflict_resolution: "priority"
-  rules:
-    - name: "emergency_shutdown"
-      priority: 1
-      conditions:
-        system_fault: true
-      actions:
-        shutdown_all: true
-
-# Resource definitions
-resources:
-  - name: "main_battery"
-    type: "battery"
-    parameters:
-      nominal_capacity: 2000.0
-      model_type: "advanced"
-```
-
-## 🔋 Physics-Based Models
-
-### Advanced Battery Modeling
-
-The library includes sophisticated battery models with electrochemical accuracy:
-
-#### Simple Equivalent Circuit Model
-- Basic electrical behavior simulation
-- Aging effects (cycle and calendar)
-- Thermal dynamics
-- Efficiency modeling
-
-#### Advanced Electrochemical Model
-- Lithium concentration dynamics
-- Butler-Volmer kinetics
-- Diffusion limitations
-- Detailed aging mechanisms
-- Thermal-electrochemical coupling
-
-```python
-from vpp.models.battery import BatteryParameters, create_battery_model
-
-# Define battery parameters
-params = BatteryParameters(
-    nominal_capacity=2000.0,  # Ah
-    nominal_voltage=400.0,    # V
-    max_current=500.0,        # A
-    internal_resistance=0.01, # Ohm
-    charge_efficiency=0.95,
-    discharge_efficiency=0.95
-)
-
-# Create advanced model
-battery = create_battery_model("advanced", params, config)
-
-# Simulate operation
-state = battery.update(power_setpoint=100.0, dt=60.0)
-print(f"SOC: {state.soc:.3f}, Temperature: {state.temperature:.1f}°C")
-```
-
-### Model Features
-
-- **State Tracking**: SOC, SOH, temperature, voltage, current
-- **Aging Simulation**: Capacity fade and resistance growth
-- **Safety Limits**: Temperature, voltage, and SOC constraints
-- **Performance Metrics**: Efficiency, available energy, power limits
-- **History Recording**: State history for analysis
-
-## 🎯 Optimization Framework
-
-### Multi-Objective Optimization
-
-Configure multiple optimization objectives with weights and priorities:
-
-```python
-from vpp.config import OptimizationObjective, ConstraintConfig
-
-# Define objectives
-objectives = [
-    OptimizationObjective(
-        name="cost_minimization",
-        weight=0.4,
-        priority=1,
-        parameters={"include_demand_charges": True}
-    ),
-    OptimizationObjective(
-        name="emissions_reduction",
-        weight=0.3,
-        priority=2,
-        parameters={"carbon_price": 50.0}
-    ),
-    OptimizationObjective(
-        name="reliability_maximization",
-        weight=0.3,
-        priority=3,
-        parameters={"reserve_margin": 0.1}
-    )
-]
-
-# Define constraints
-constraints = [
-    ConstraintConfig(
-        name="ramp_rate_limits",
-        parameters={"max_ramp_up": 50.0, "max_ramp_down": 30.0},
-        violation_penalty=1000.0
-    ),
-    ConstraintConfig(
-        name="reserve_requirements",
-        parameters={"spinning_reserve": 0.05},
-        violation_penalty=2000.0
-    )
-]
-```
-
-### Supported Strategies
-
-- **Linear Programming**: Optimal solutions for linear problems
-- **Mixed Integer Programming**: Handle discrete decisions
-- **Genetic Algorithms**: Global optimization for complex landscapes
-- **Particle Swarm Optimization**: Swarm intelligence approaches
-- **Multi-objective**: Pareto-optimal solutions
-
-### Constraint Types
-
-- **Power Balance**: Supply-demand matching
-- **Ramp Rate Limits**: Rate of change constraints
-- **Reserve Requirements**: Grid stability reserves
-- **Resource Limits**: Individual resource constraints
-- **Grid Stability**: Frequency and voltage regulation
-
-## 📋 Rule-Based Systems
-
-### Expert System Framework
-
-Implement intelligent decision-making with configurable rules:
-
-```python
-from vpp.config import RuleConfig
-
-# Safety rule
-safety_rule = RuleConfig(
-    name="battery_temperature_protection",
-    priority=1,  # Highest priority
-    conditions={"battery_temperature": ">= 55"},
-    actions={"reduce_power": 0.5, "send_alert": "high_temperature"}
-)
-
-# Economic rule
-economic_rule = RuleConfig(
-    name="peak_shaving",
-    priority=5,
-    conditions={
-        "time_of_day": "17:00-21:00",
-        "electricity_price": "> 0.15"
-    },
-    actions={
-        "discharge_battery": True,
-        "target_power": "peak_demand * 0.8"
-    }
-)
-```
-
-### Rule Engine Features
-
-- **Forward/Backward Chaining**: Flexible inference methods
-- **Conflict Resolution**: Priority, specificity, recency
-- **Explanation System**: Trace decision-making process
-- **Dynamic Rules**: Runtime rule modification
-- **Rule Validation**: Ensure rule consistency
-
-### Rule Categories
-
-1. **Safety Rules**: Equipment protection and emergency response
-2. **Economic Rules**: Cost optimization and arbitrage
-3. **Environmental Rules**: Emissions reduction and renewable maximization
-4. **Grid Rules**: Frequency response and voltage regulation
-5. **Operational Rules**: Maintenance and scheduling
-
-## 🚀 Getting Started
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/vinerya/virtual-power-plant.git
-cd virtual-power-plant
-
-# Create virtual environment and install
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
-### Quick Start
-
-1. **Load Configuration**:
 ```python
 from vpp.config import VPPConfig
 
 config = VPPConfig.load_from_file("configs/advanced_vpp_config.yaml")
+assert config.validate_and_log()
+print(config.name, [r.name for r in config.resources])
 ```
 
-2. **Validate Configuration**:
-```python
-if config.validate_and_log():
-    print("Configuration is valid!")
-```
+`configs/advanced_vpp_config.yaml` is a complete example. Note that several
+sections are **descriptive only** today — see [Not implemented](#not-implemented).
 
-3. **Create Battery Model**:
+## Battery models
+
+`vpp.models.battery` provides two cell-level simulation models behind one
+factory. **Maturity: research** (used by examples, not by the API's
+optimizer, which uses its own linear battery model and the degradation
+package).
+
+- `SimpleEquivalentCircuitModel` — SOC, voltage, internal resistance,
+  efficiency, simple thermal and ageing terms.
+- `AdvancedElectrochemicalModel` — adds lithium concentration dynamics,
+  Butler-Volmer kinetics and more detailed ageing; parameters are
+  illustrative, not fitted to a specific cell.
+
 ```python
 from vpp.models.battery import BatteryParameters, create_battery_model
 
-# Get battery config
-battery_config = config.get_resource("main_battery")
-
-# Create model
-battery = create_battery_model("advanced", params, battery_config)
+params = BatteryParameters(
+    nominal_capacity=200.0,    # Ah
+    nominal_voltage=400.0,     # V
+    max_voltage=450.0,         # V
+    min_voltage=320.0,         # V
+    max_current=100.0,         # A
+    internal_resistance=0.01,  # Ohm
+    charge_efficiency=0.95,
+    discharge_efficiency=0.95,
+)
+battery = create_battery_model("simple", params, config.resources[0])  # or "advanced"
+for hour in range(3):
+    state = battery.update(power_setpoint=10.0, dt=3600.0)  # kW, seconds
+    print(f"hour {hour}: SOC={state.soc:.3f} T={state.temperature:.1f}C")
 ```
 
-4. **Run Simulation**:
-```python
-# Simulate battery operation
-for hour in range(24):
-    power = 100.0 if hour < 12 else -150.0  # Charge morning, discharge evening
-    state = battery.update(power, 3600.0)  # 1 hour time step
-    print(f"Hour {hour}: SOC={state.soc:.3f}, Power={state.power:.1f}kW")
-```
+## Optimization framework
 
-## 📚 Examples
+`vpp.optimization` combines exact solvers with rule-based fallbacks behind
+a plugin interface (`OptimizationPlugin`, `OptimizationEngine`,
+`solve_with_fallback`). If a plugin is unavailable, times out or returns an
+invalid solution, the engine falls back to rules and says so in the result
+status (`FALLBACK_USED`).
 
-### Basic Configuration Demo
+| Component | What it is | Maturity |
+|---|---|---|
+| `planning.build_allocation_problem` + `solvers/allocation_plugin.py` | single-interval fleet allocation LP (Pyomo + HiGHS) used by `POST /api/v1/optimization/dispatch` and the DR orchestrator | beta |
+| `mpc.MPCController`, `MultiResourceMPCController` | rolling-horizon MPC (Pyomo + HiGHS) with warm start, wear cost, tariff hooks, terminal SOC | beta |
+| `backtest.run_backtest` | closed-loop MPC replay with perfect / persistence / noisy forecasts and baselines | beta |
+| `solvers/stochastic_plugin.py` | scenario-based stochastic dispatch with CVaR | research |
+| `realtime` | fast rule-based dispatch and an MPC plugin for grid-service signals | research |
+| `distributed` | ADMM coordination across sites plus consensus rules | research |
 
-Run the comprehensive configuration demonstration:
+Try MPC from the command line (synthetic CAISO-like prices):
 
 ```bash
-cd virtual-power-plant
-python examples/advanced_configuration_demo.py
+vpp mpc --horizon 24 --ticks 24
 ```
 
-This example demonstrates:
-- Configuration loading and validation
-- Programmatic configuration creation
-- Physics-based battery model integration
-- Configuration management features
+Solvers: Pyomo with HiGHS (`highspy`) is the supported backend (`solver`
+extra). PuLP is a core dependency used by older code paths. Without the
+`solver` extra the API falls back to rule-based allocation.
 
-### Advanced VPP Configuration
+## Battery degradation
 
-See `configs/advanced_vpp_config.yaml` for a complete configuration example including:
-- Multi-objective optimization setup
-- Rule-based system configuration
-- Advanced resource parameters
-- Monitoring and security settings
+`vpp.degradation` (**beta**): throughput, calendar and rainflow
+(cycle-counting) degradation models with LFP / NMC presets, a
+`DegradationUpdater` that turns stored SOC history into state-of-health
+samples (`battery_soh_samples`), and wear-cost hooks that keep the
+optimizer's cost of cycling consistent with the SOH model. The API runs
+the updater periodically (`VPP_DEGRADATION_UPDATER_*`).
 
-## 🔍 API Reference
+## Tariff engine
 
-### Configuration Classes
+`vpp.tariffs` (**beta**) parses URDB JSON into components (TOU energy with
+per-period tiers and sell rates, tiered energy, TOU/flat demand, fixed,
+minimum, adders, taxes) and bills interval data, including billing cycles
+and NEM export credit. Full rules: [docs/tariffs.md](docs/tariffs.md).
 
-- `VPPConfig`: Main configuration class
-- `OptimizationConfig`: Optimization strategy configuration
-- `HeuristicConfig`: Heuristic algorithm configuration
-- `RuleEngineConfig`: Rule-based system configuration
-- `ResourceConfig`: Individual resource configuration
+```python
+from datetime import datetime, timedelta, timezone
 
-### Battery Models
+from vpp.tariffs import MeterTrace, load_urdb_json
+from vpp.tariffs.simulation import simulate_bill
 
-- `BatteryModel`: Abstract base class for battery models
-- `SimpleEquivalentCircuitModel`: Basic electrical model
-- `AdvancedElectrochemicalModel`: Detailed electrochemical model
-- `BatteryParameters`: Physical and electrical parameters
-- `BatteryState`: Current battery state
+tariff = load_urdb_json("src/vpp/tariffs/presets/pge_etouc.json")
+start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+hours = 24 * 31
+trace = MeterTrace(
+    timestamps=[start + timedelta(hours=h) for h in range(hours)],
+    import_kwh=[0.8 if 16 <= h % 24 < 21 else 0.4 for h in range(hours)],
+    export_kwh=[1.5 if 11 <= h % 24 < 14 else 0.0 for h in range(hours)],
+)
+result = simulate_bill(tariff, trace, start, start + timedelta(hours=hours), nem_regime="nem2")
+print(f"total ${result.total:.2f}, export credit ${result.export_credit:.2f}")
+for item in result.line_items:
+    print(f"  {item.label}: {item.amount:.2f}")
+```
 
-### Validation
+Price feeds in `vpp.tariffs.feeds` (CAISO LMP, ComEd hourly pricing,
+OpenADR price signals, synthetic) plug into tariff-to-optimizer conversion;
+they are library features and are not polled by the API.
 
-- `ConfigValidationResult`: Validation results with errors and warnings
-- `ValidationLevel`: Validation strictness levels
-- `BaseConfig`: Abstract base for all configuration classes
+## Trading package
 
-## 🔬 Advanced Features
+`vpp.trading` (**simulated**): markets (day-ahead, real-time, ancillary,
+bilateral), order books with market / limit / stop / stop-limit / iceberg /
+IOC / FOK orders, a trading engine, portfolio accounting (realized and
+unrealized P&L, fees, drawdown), a risk manager (position, daily loss,
+drawdown, VaR, concentration limits) and strategies (arbitrage, momentum,
+mean reversion, a machine-learning placeholder, multi-market) with
+backtests. The API exposes it on a simulated venue with synthetic
+liquidity; there is no connection to a real exchange or ISO market.
 
-### Physics-Based Modeling
+## V2G, grid and research modules
 
-- **Electrochemical Dynamics**: Lithium concentration and diffusion
-- **Thermal Modeling**: Heat generation and dissipation
-- **Aging Mechanisms**: SEI growth, active material loss, lithium plating
-- **Safety Monitoring**: Temperature, voltage, and SOC limits
+- `vpp.v2g` (**beta** through the API): EV and fleet models, a scheduler
+  (TOU-aware, departure-SOC constrained), an aggregator for flexibility
+  windows and bids, and the persistent store / OCPP bridge used by the API.
+- `vpp.grid` (**simulated**): grid-forming inverter models (droop control,
+  virtual synchronous machine, virtual inertia) and a microgrid controller
+  (fault detection, islanding, reconnection, load shedding) used by the
+  microgrid demo.
+- `vpp.research` (**research**): baseline forecasters (persistence,
+  linear, exponential smoothing, ensemble), anomaly detectors (Z-score,
+  IQR, moving average) and a seeded experiment runner. Nothing in the
+  operational path depends on it. There is no Gaussian-process,
+  reinforcement-learning, federated-learning or digital-twin code, despite
+  what older release notes said.
+- `benchmarks/` (**research**): synthetic datasets (residential, CAISO-like,
+  EU multi-zone, EV fleet), scenarios, metrics and a runner
+  (`PYTHONPATH=. vpp benchmark run PEAK_SHAVING` from the repository root).
 
-### Optimization Capabilities
+## Not implemented
 
-- **Multi-Objective**: Simultaneous optimization of multiple goals
-- **Constraint Handling**: Soft and hard constraints with penalties
-- **Solver Integration**: Multiple solver backends (PuLP, CVXPY)
-- **Performance Tuning**: Warm start, caching, preprocessing
+These appear in the configuration schema or older docs but have no
+behaviour behind them yet:
 
-### Rule-Based Intelligence
-
-- **Expert Systems**: Knowledge-based decision making
-- **Inference Engines**: Forward and backward chaining
-- **Conflict Resolution**: Multiple strategies for rule conflicts
-- **Explanation**: Trace and explain decisions
-
-### Configuration Management
-
-- **Type Safety**: Compile-time type checking
-- **Validation**: Runtime validation with detailed feedback
-- **Hot Reload**: Dynamic configuration updates
-- **Version Control**: Configuration versioning and backup
-
-## 🛠️ Development
-
-### Adding New Models
-
-1. Inherit from appropriate base class
-2. Implement required abstract methods
-3. Add to factory function
-4. Update configuration schema
-
-### Adding New Rules
-
-1. Define rule conditions and actions
-2. Add to rule engine configuration
-3. Implement condition evaluators
-4. Implement action handlers
-
-### Extending Configuration
-
-1. Add new configuration classes
-2. Implement validation methods
-3. Update serialization methods
-4. Add to main configuration
-
-## 📈 Performance
-
-### Optimization
-
-- **Parallel Processing**: Multi-threaded optimization
-- **Caching**: Solution and constraint caching
-- **Warm Start**: Initialize from previous solutions
-- **Preprocessing**: Constraint simplification
-
-### Memory Management
-
-- **History Limits**: Configurable history buffer sizes
-- **Lazy Loading**: Load configurations on demand
-- **Garbage Collection**: Automatic cleanup of old data
-
-### Monitoring
-
-- **Performance Profiling**: Built-in performance monitoring
-- **Metrics Collection**: Comprehensive system metrics
-- **Alert System**: Configurable threshold-based alerts
-
-## 🔒 Security
-
-### Configuration Security
-
-- **Validation**: Prevent malicious configuration
-- **Encryption**: Optional configuration encryption
-- **Access Control**: Role-based configuration access
-
-### Runtime Security
-
-- **Rate Limiting**: API rate limiting
-- **Authentication**: Optional authentication system
-- **Audit Logging**: Security event logging
-
-## 🤝 Contributing
-
-We welcome contributions to the advanced VPP library! Areas of particular interest:
-
-- **New Physics Models**: Solar, wind, generator models
-- **Optimization Algorithms**: New heuristic and exact methods
-- **Rule Systems**: Enhanced rule engines and conflict resolution
-- **Configuration**: New configuration features and validation
-- **Documentation**: Examples, tutorials, and API documentation
-
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
----
-
-**Made with ❤️ by the VPP Development Team**
-
-For questions, issues, or contributions, please visit our [GitHub repository](https://github.com/vinerya/virtual-power-plant).
+- **Rule engine execution.** `rules` (inference method, conflict
+  resolution, rule conditions/actions) is validated and stored, but no
+  engine evaluates those rules. Alerting rules are a separate, working
+  feature (`/api/v1/alerts/rules`).
+- **Heuristic solvers** such as genetic algorithms or particle swarm
+  optimization: only configuration fields exist.
+- **`enable_hot_reload`, `security.encryption_enabled`,
+  `backup_config`**: flags only. Configuration changes are applied through
+  `PUT /api/v1/config`, not by watching files; `VPPConfig.backup_to_file()`
+  exists but is not called automatically.
+- **Multi-objective optimization**: `optimization.objectives` and
+  `constraints` are validated and stored, but no optimizer reads them; the
+  dispatch LP and MPC have fixed cost functions (energy cost, wear cost,
+  penalties).
