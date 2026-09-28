@@ -70,6 +70,9 @@ class FleetAsset:
     eta_discharge: float = 0.95
     soc_min: float = 0.05
     soc_max: float = 0.95
+    # Per-direction power limits (kW); ``None`` means "rated_power_kw".
+    max_charge_kw: float | None = None
+    max_discharge_kw: float | None = None
     # Non-battery availability (kW) and where it came from.
     available_kw: float | None = None
     availability_basis: str = "nameplate"
@@ -85,6 +88,20 @@ class FleetAsset:
         cap = float(self.capacity_kwh or 0.0)
         return max(1e-6, cap * max(0.0, min(1.0, self.soh)))
 
+    @property
+    def charge_limit_kw(self) -> float:
+        """Charge power limit: the recorded limit, capped at rated power."""
+        rated = max(0.0, float(self.rated_power_kw))
+        return rated if self.max_charge_kw is None else max(0.0, min(rated, self.max_charge_kw))
+
+    @property
+    def discharge_limit_kw(self) -> float:
+        """Discharge power limit: the recorded limit, capped at rated power."""
+        rated = max(0.0, float(self.rated_power_kw))
+        if self.max_discharge_kw is None:
+            return rated
+        return max(0.0, min(rated, self.max_discharge_kw))
+
     def soc_clamped(self) -> float:
         soc = 0.5 if self.soc is None else float(self.soc)
         return max(self.soc_min, min(self.soc_max, soc))
@@ -93,8 +110,8 @@ class FleetAsset:
         """Parameters for the M1 single-battery dispatch formulation."""
         return {
             "battery_capacity_kwh": self.effective_capacity_kwh,
-            "max_charge_kw": float(self.rated_power_kw),
-            "max_discharge_kw": float(self.rated_power_kw),
+            "max_charge_kw": self.charge_limit_kw,
+            "max_discharge_kw": self.discharge_limit_kw,
             "soc_init": self.soc_clamped(),
             "soc_min": self.soc_min,
             "soc_max": self.soc_max,
@@ -116,8 +133,8 @@ class FleetAsset:
                     "capacity_kwh": self.effective_capacity_kwh,
                     "nominal_capacity_kwh": self.capacity_kwh,
                     "capacity_source": self.capacity_source,
-                    "max_charge_kw": float(self.rated_power_kw),
-                    "max_discharge_kw": float(self.rated_power_kw),
+                    "max_charge_kw": self.charge_limit_kw,
+                    "max_discharge_kw": self.discharge_limit_kw,
                     "soc_init": self.soc_clamped(),
                     "soc_source": self.soc_source,
                     "soc_min": self.soc_min,
@@ -231,8 +248,8 @@ def build_allocation_problem(
             soc = a.soc_clamped()
             dis_energy_kw = max(0.0, soc - a.soc_min) * cap * a.eta_discharge / dt_hours
             chg_energy_kw = max(0.0, a.soc_max - soc) * cap / (a.eta_charge * dt_hours)
-            hi = min(rated, dis_energy_kw)
-            lo = -min(rated, chg_energy_kw)
+            hi = min(a.discharge_limit_kw, dis_energy_kw)
+            lo = -min(a.charge_limit_kw, chg_energy_kw)
             wear = (
                 soh_adjusted_wear_cost(a, replacement_cost_per_kwh).throughput_cost_per_kwh
                 if wear_cost
@@ -541,8 +558,8 @@ def plan_schedule(
             FleetBattery(
                 id=b.id,
                 capacity_kwh=b.effective_capacity_kwh,
-                max_charge_kw=float(b.rated_power_kw),
-                max_discharge_kw=float(b.rated_power_kw),
+                max_charge_kw=b.charge_limit_kw,
+                max_discharge_kw=b.discharge_limit_kw,
                 soc_init=b.soc_clamped(),
                 soc_min=b.soc_min,
                 soc_max=b.soc_max,

@@ -19,16 +19,14 @@ from .optimization import (
 )
 from .resources import (
     BatteryCreate,
-    BatteryResponse,
     ResourceCreate,
+    ResourceCreateRequest,
     ResourceMetrics,
     ResourceResponse,
     ResourceType,
     ResourceUpdate,
     SolarCreate,
-    SolarResponse,
     WindTurbineCreate,
-    WindTurbineResponse,
 )
 from .trading import (
     MarketDataResponse,
@@ -42,14 +40,12 @@ from .trading import (
 __all__ = [
     # Resources
     "ResourceCreate",
+    "ResourceCreateRequest",
     "ResourceResponse",
     "ResourceUpdate",
     "BatteryCreate",
-    "BatteryResponse",
     "SolarCreate",
-    "SolarResponse",
     "WindTurbineCreate",
-    "WindTurbineResponse",
     "ResourceMetrics",
     "ResourceType",
     # Optimization

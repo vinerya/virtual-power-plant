@@ -11,23 +11,39 @@ export interface Token {
 export interface ResourceResponse {
   id: string;
   name: string;
-  resource_type: "battery" | "solar" | "wind" | string;
+  // Canonical backend type names. The API also accepts "wind" as an input
+  // alias of "wind_turbine" but always responds with "wind_turbine".
+  resource_type: "battery" | "solar" | "wind_turbine" | string;
   rated_power: number;
   current_power: number;
   online: boolean;
   efficiency?: number | null;
+  site_id?: string | null;
+  // Battery (0-1 fractions for SOC/SOH)
   state_of_charge?: number | null;
+  state_of_charge_source?: "telemetry" | "configured" | null;
   state_of_health?: number | null;
   capacity_kwh?: number | null;
-  cycle_count?: number | null;
-  charge_limit_kw?: number | null;
-  discharge_limit_kw?: number | null;
+  current_charge_kwh?: number | null;
+  equivalent_full_cycles?: number | null;
+  chemistry?: string | null;
+  max_charge_kw?: number | null;
+  max_discharge_kw?: number | null;
+  soc_min?: number | null;
+  soc_max?: number | null;
+  // Solar
   irradiance?: number | null;
   dc_capacity_kw?: number | null;
   ac_capacity_kw?: number | null;
+  panel_area_m2?: number | null;
+  panel_efficiency?: number | null;
+  // Wind turbine
   wind_speed_ms?: number | null;
-  cut_in_speed?: number | null;
-  cut_out_speed?: number | null;
+  cut_in_speed_ms?: number | null;
+  cut_out_speed_ms?: number | null;
+  rated_speed_ms?: number | null;
+  rotor_diameter_m?: number | null;
+  hub_height_m?: number | null;
   created_at?: string;
   updated_at: string;
   metadata?: Record<string, unknown> | null;

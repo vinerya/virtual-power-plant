@@ -13,9 +13,9 @@ const BATTERY = {
   efficiency: 0.95,
   capacity_kwh: 500,
   state_of_charge: 0.65,
-  cycle_count: 412,
-  charge_limit_kw: 200,
-  discharge_limit_kw: 200,
+  equivalent_full_cycles: 412,
+  max_charge_kw: 200,
+  max_discharge_kw: 200,
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };

@@ -22,10 +22,11 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from vpp.db.models import BatteryStateModel, OptimizationRunModel, ResourceModel
+from vpp.db.models import OptimizationRunModel, ResourceModel
 from vpp.db.repositories import OptimizationRepository
 from vpp.events import Event, EventType, get_event_bus
 from vpp.optimization.planning import FleetAsset
+from vpp.portal.telemetry import latest_soc
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -63,14 +64,9 @@ def _first_number(*candidates: Any) -> float | None:
 
 
 async def _latest_soc(session: AsyncSession, resource_id: str) -> float | None:
-    stmt = (
-        select(BatteryStateModel.soc)
-        .where(BatteryStateModel.resource_id == resource_id)
-        .order_by(BatteryStateModel.timestamp.desc())
-        .limit(1)
-    )
-    val = (await session.execute(stmt)).scalar_one_or_none()
-    return None if val is None else float(val) / 100.0
+    """Newest telemetry SOC (0-1) from ``battery_states`` (MQTT) or
+    ``resource_telemetry`` (Modbus / ingest endpoint), whichever is newer."""
+    return (await latest_soc(session, [resource_id])).get(resource_id)
 
 
 def _fraction(v: float | None) -> float | None:
@@ -132,6 +128,8 @@ async def resource_to_asset(session: AsyncSession, row: ResourceModel) -> FleetA
             ("discharge_efficiency", "eta_discharge"),
             ("soc_min", "soc_min"),
             ("soc_max", "soc_max"),
+            ("max_charge_kw", "max_charge_kw"),
+            ("max_discharge_kw", "max_discharge_kw"),
         ):
             v = _first_number(cfg.get(key), meta.get(key))
             if v is not None:
@@ -140,6 +138,10 @@ async def resource_to_asset(session: AsyncSession, row: ResourceModel) -> FleetA
             asset.eta_charge = asset.eta_discharge = 0.95
         if not (0.0 <= asset.soc_min < asset.soc_max <= 1.0):
             asset.soc_min, asset.soc_max = 0.05, 0.95
+        for attr in ("max_charge_kw", "max_discharge_kw"):
+            v = getattr(asset, attr)
+            if v is not None and v <= 0:
+                setattr(asset, attr, None)
     else:
         avail = _first_number(meta.get("available_kw"), cfg.get("available_kw"))
         if avail is not None:
