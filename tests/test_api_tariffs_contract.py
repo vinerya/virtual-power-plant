@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
+from _iso import parse_iso
 from _portal_helpers import (
     FLAT_TARIFF_URDB,
     create_customer,
@@ -201,7 +202,7 @@ async def test_simulate_synthetic_is_deterministic_and_labelled(client, auth_hea
     assert summary["intervals"] == 720
     # 0.8 kW average residential shape (+/- the day-to-day modulation).
     assert 500 < summary["import_kwh"] < 660
-    assert datetime.fromisoformat(a["period_start"]) == datetime(
+    assert parse_iso(a["period_start"]) == datetime(
         2024, 7, 1, tzinfo=ZoneInfo("America/Los_Angeles")
     )
     assert len(a["cycles"]) == 1

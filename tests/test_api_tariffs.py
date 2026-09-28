@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from _iso import parse_iso
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -130,7 +131,7 @@ async def test_simulate_bill(client: AsyncClient, auth_headers: dict):
     # Compare to direct Tariff.bill().
     tariff = load_urdb_json(preset)
     n = len(body["meter_trace"]["timestamps"])
-    timestamps = [datetime.fromisoformat(ts) for ts in body["meter_trace"]["timestamps"]]
+    timestamps = [parse_iso(ts) for ts in body["meter_trace"]["timestamps"]]
     trace = MeterTrace(timestamps=timestamps, import_kwh=[1.0] * n, interval_minutes=60)
     period = BillingPeriod(start=start, end=start + timedelta(days=30))
     direct = tariff.bill(trace, period)

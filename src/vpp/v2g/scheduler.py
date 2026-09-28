@@ -21,6 +21,33 @@ from vpp.v2g.models import (
 logger = logging.getLogger(__name__)
 
 
+def _lp_solver() -> Any:
+    """Return an available PuLP solver: HiGHS (a core dependency), else CBC.
+
+    PuLP 4 no longer bundles CBC, so ``PULP_CBC_CMD`` can't be relied on.
+    """
+    import pulp
+
+    highs = pulp.getSolver("HiGHS", msg=False)
+    if highs.available():
+        return highs
+    return pulp.getSolver("PULP_CBC_CMD", msg=False)
+
+
+#: PuLP's "optimal" status code (``LpStatusOptimal`` / ``LpSolveStatus.Optimal``).
+_LP_OPTIMAL = 1
+
+
+def _solve_status(result: Any) -> int:
+    """Normalise ``LpProblem.solve()``'s return value to a status code.
+
+    PuLP 3 returns the integer status; PuLP 4 returns an ``LpSolveStats``
+    whose ``status`` is an ``LpSolveStatus`` enum.
+    """
+    status = getattr(result, "status", result)
+    return int(getattr(status, "value", status))
+
+
 # ---------------------------------------------------------------------------
 # Schedule slot
 # ---------------------------------------------------------------------------
@@ -127,7 +154,7 @@ class V2GScheduler:
             try:
                 result = self._optimised_schedule(fleet, windows, prices, num_slots)
             except Exception:
-                logger.warning("Optimiser failed, falling back to rule-based")
+                logger.warning("Optimiser failed, falling back to rule-based", exc_info=True)
                 result = self._rule_based_schedule(fleet, windows, prices, num_slots)
         else:
             result = self._rule_based_schedule(fleet, windows, prices, num_slots)
@@ -297,9 +324,15 @@ class V2GScheduler:
             if ev is None:
                 continue
             for t in range(num_slots):
-                charge[eid, t] = pulp.LpVariable(f"chg_{eid}_{t}", 0, ev.max_charge_kw)
-                discharge[eid, t] = pulp.LpVariable(
-                    f"dis_{eid}_{t}", 0, ev.max_discharge_kw if ev.v2g_capable else 0
+                # prob.add_variable works on PuLP 3.x and 4.x (4.x removed
+                # positional LpVariable(name, low, up)).
+                charge[eid, t] = prob.add_variable(
+                    f"chg_{eid}_{t}", lowBound=0, upBound=ev.max_charge_kw
+                )
+                discharge[eid, t] = prob.add_variable(
+                    f"dis_{eid}_{t}",
+                    lowBound=0,
+                    upBound=ev.max_discharge_kw if ev.v2g_capable else 0,
                 )
 
         # Objective
@@ -362,10 +395,9 @@ class V2GScheduler:
                 prob += cumulative <= max_headroom, f"max_soc_{eid}_{t_end}"
 
         # Solve
-        prob.solve(pulp.PULP_CBC_CMD(msg=0))
-
-        if prob.status != pulp.constants.LpStatusOptimal:
-            raise RuntimeError(f"LP infeasible or unbounded (status={prob.status})")
+        status = _solve_status(prob.solve(_lp_solver()))
+        if status != _LP_OPTIMAL:
+            raise RuntimeError(f"LP infeasible or unbounded (status={status})")
 
         # Extract schedule
         schedule: list[ScheduleSlot] = []

@@ -8,13 +8,18 @@ it falls back to parsing ``pyproject.toml`` directly.
 
 from __future__ import annotations
 
+import re
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+from typing import Any
 
 try:  # Python 3.11+
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    tomllib = None  # type: ignore[assignment]
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
 
 DISTRIBUTION_NAME = "virtual-power-plant"
 UNKNOWN_VERSION = "0.0.0+unknown"
@@ -22,15 +27,31 @@ UNKNOWN_VERSION = "0.0.0+unknown"
 _PYPROJECT = Path(__file__).resolve().parents[2] / "pyproject.toml"
 
 
+def _project_table_fallback(text: str) -> dict[str, Any]:
+    """Read ``name``/``version`` from ``[project]`` without a TOML library.
+
+    Only used on Python 3.10 when ``tomli`` isn't installed; both keys are
+    plain strings in this repository's pyproject.
+    """
+    table = re.search(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+    if table is None:
+        return {}
+    return dict(re.findall(r'^(name|version)\s*=\s*"([^"]*)"', table.group(1), re.M))
+
+
 def _version_from_pyproject(path: Path | None = None) -> str | None:
-    if tomllib is None:
-        return None
     try:
-        with (path or _PYPROJECT).open("rb") as fh:
-            data = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+        raw = (path or _PYPROJECT).read_bytes()
+    except OSError:
         return None
-    project = data.get("project", {})
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+            return None
+        project = data.get("project", {})
+    else:
+        project = _project_table_fallback(raw.decode("utf-8", errors="replace"))
     if project.get("name") != DISTRIBUTION_NAME:
         return None
     value = project.get("version")

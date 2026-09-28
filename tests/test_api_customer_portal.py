@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import pytest_asyncio
+from _iso import parse_iso
 from _portal_helpers import (
     create_customer,
     create_resource,
@@ -159,8 +160,8 @@ async def test_bill_from_meter_data_and_tariff(client: AsyncClient, auth_headers
     assert kinds["fixed"]["amount"] == pytest.approx(10.0)
     assert kinds["energy"]["amount"] == pytest.approx(9.6)
     assert all({"kind", "name", "amount"} <= set(li) for li in bill["line_items"])
-    assert datetime.fromisoformat(bill["period"]["start"]) == july
-    assert datetime.fromisoformat(bill["period"]["end"]) == datetime(2026, 8, 1, tzinfo=CHI)
+    assert parse_iso(bill["period"]["start"]) == july
+    assert parse_iso(bill["period"]["end"]) == datetime(2026, 8, 1, tzinfo=CHI)
     meta = bill["metadata"]
     assert meta["meter_intervals"] == 48
     assert meta["expected_intervals"] == 744

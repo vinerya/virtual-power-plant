@@ -437,7 +437,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
                     raw = await asyncio.wait_for(
                         ws.receive_text(), timeout=max(0.0, min(remaining, next_check - now))
                     )
-                except TimeoutError:
+                except asyncio.TimeoutError:  # not the builtin until Python 3.11
                     continue
             try:
                 msg = json.loads(raw)

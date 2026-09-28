@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
+from _iso import parse_iso
 from _portal_helpers import (
     create_customer,
     create_resource,
@@ -84,7 +85,7 @@ async def test_downsampled_history_custom_range(
     assert body["bucket_seconds"] == 900
     pts = body["points"]
     assert len(pts) == 4
-    assert [datetime.fromisoformat(p["timestamp"]) for p in pts] == [
+    assert [parse_iso(p["timestamp"]) for p in pts] == [
         T0 + timedelta(minutes=15 * i) for i in range(4)
     ]
     # Bucket 0: 15 generic samples (0..14, mean 7) + 2 battery rows at 0 kW.

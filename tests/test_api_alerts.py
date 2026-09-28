@@ -9,6 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from _iso import parse_iso
 from httpx import AsyncClient
 from sqlalchemy import select
 
@@ -117,7 +118,7 @@ async def test_list_alerts_matches_console_shape(client, auth_headers, db_sessio
     assert item["severity"] == "critical"
     assert item["status"] == "active"
     assert item["source_link"] == f"/assets/{row.source}"
-    datetime.fromisoformat(item["timestamp"])
+    parse_iso(item["timestamp"])
 
 
 @pytest.mark.asyncio
@@ -183,7 +184,7 @@ async def test_snooze_and_expiry(client, auth_headers, db_session):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "snoozed"
-    assert datetime.fromisoformat(body["snoozed_until"]) == until
+    assert parse_iso(body["snoozed_until"]) == until
 
     snoozed = await client.get(
         f"/api/v1/alerts?source={row.source}&status=snoozed", headers=auth_headers

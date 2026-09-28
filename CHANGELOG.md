@@ -362,6 +362,17 @@ changes** before upgrading.
 
 ### Fixed
 
+- Python 3.10 (the declared minimum) is supported again:
+  - The WebSocket loop caught the builtin `TimeoutError`, which only aliases
+    `asyncio.TimeoutError` from 3.11. On 3.10 the token-expiry and
+    session-revocation checks never ran and the loop crashed instead.
+  - The version fallback for uninstalled checkouts needed `tomllib` (3.11+);
+    it now uses `tomli` or a minimal `[project]` parser.
+- The V2G LP scheduler works on PuLP 4: it solves with HiGHS (a core
+  dependency) instead of the no-longer-bundled CBC, creates variables with
+  `prob.add_variable`, and reads the solve status in a version-independent
+  way. Previously it silently fell back to the rule-based schedule; the
+  fallback now logs the underlying exception.
 - Per-user rate limiting behind the console: the Next.js proxy and auth
   routes forward the client address (`X-Forwarded-For` / `X-Real-IP`), and
   the API honours those headers only from `VPP_TRUSTED_PROXIES` (new, empty
