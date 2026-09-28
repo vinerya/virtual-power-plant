@@ -114,7 +114,7 @@ vpp = "vpp.cli.main:cli"
 where = ["src"]
 
 [tool.setuptools.package-data]
-vpp = ["py.typed"]
+vpp = ["py.typed", "tariffs/presets/*.json"]
 
 [tool.ruff]
 target-version = "py310"

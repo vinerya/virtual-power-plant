@@ -18,9 +18,17 @@ For a customer and a calendar month the bill is::
   same tariff is applied to that energy spread flat across the month. This
   is a declared-typical-usage comparison, not a measured counterfactual;
   ``metadata.baseline_method`` says so.
-* **Exports** are reported (``metadata.export_kwh``) but no NEM credit is
-  applied: net-metering treatment is program-specific and the customer
-  profile does not carry it yet.
+* **Exports** (``metadata.export_kwh``) are credited under the NEM regime
+  of the assigned tariff, derived from its URDB JSON by
+  :func:`vpp.tariffs.nem.nem_config_from_urdb` (extension key ``nem`` /
+  ``nem3_avoided_cost``, else URDB ``dgrules``). The regime is therefore a
+  property of the tariff a customer is on: customers on different NEM
+  vintages are assigned different tariff rows. Staff may pass an explicit
+  ``nem_override`` (what-if); customers cannot. ``metadata`` reports
+  ``nem_regime``, ``nem_source``, ``export_credit`` and whether a credit was
+  applied; a regime that cannot be evaluated (nem3 without an avoided-cost
+  vector) is reported in ``export_credit_note`` rather than guessed. Credits
+  are per month (no roll-over / annual true-up).
 """
 
 from __future__ import annotations
@@ -39,7 +47,8 @@ from vpp.db.models import CustomerProfileModel, MeterReadingModel, SiteModel
 from vpp.db.repositories import TariffRepository
 from vpp.portal.access import owned_sites
 from vpp.portal.telemetry import as_utc
-from vpp.tariffs import BillingPeriod, MeterTrace, load_urdb_json
+from vpp.tariffs import Bill, BillingPeriod, MeterTrace, load_urdb_json
+from vpp.tariffs.nem import NEMConfigError, compute_export_credit, nem_config_from_urdb
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,7 +159,11 @@ def _bill_dict(
 
 
 async def compute_customer_bill(
-    session: AsyncSession, user_id: str, month: str | None = None
+    session: AsyncSession,
+    user_id: str,
+    month: str | None = None,
+    *,
+    nem_override: str | None = None,
 ) -> dict[str, Any]:
     profile = (
         await session.execute(
@@ -162,8 +175,9 @@ async def compute_customer_bill(
     row = await TariffRepository.get(session, profile.tariff_id)
     if row is None:
         raise BillingError(409, "The tariff assigned to this account no longer exists")
+    urdb_json = json.loads(row.urdb_json) if row.urdb_json else {}
     try:
-        tariff = load_urdb_json(json.loads(row.urdb_json) if row.urdb_json else {})
+        tariff = load_urdb_json(urdb_json)
     except Exception as exc:  # surface as a data error, not a 500
         raise BillingError(409, f"The assigned tariff cannot be evaluated: {exc}") from exc
 
@@ -185,6 +199,34 @@ async def compute_customer_bill(
     period = BillingPeriod(start=start, end=end)
     bill = tariff.bill(trace, period)
 
+    nem_cfg = nem_config_from_urdb(urdb_json)
+    regime = nem_override or nem_cfg.regime
+    nem_source = "override" if nem_override else nem_cfg.source
+    credit_note = ""
+    credit_amount = 0.0
+    try:
+        credit = compute_export_credit(
+            tariff,
+            trace,
+            start,
+            end,
+            regime=regime,
+            avoided_cost=nem_cfg.avoided_cost,
+            bill=bill,
+        )
+        credit_note = credit.note
+    except NEMConfigError as exc:
+        credit = None
+        credit_note = str(exc)
+    if credit is not None and credit.line_item is not None:
+        credit_amount = credit.amount
+        bill = Bill(
+            line_items=[*bill.line_items, credit.line_item],
+            total=round(bill.total - credit.amount, 4),
+            period=bill.period,
+            tariff_name=bill.tariff_name,
+        )
+
     hours = (end - start).total_seconds() / 3600.0
     expected = round(hours * 60 / series.interval_minutes)
     this_kwh = sum(series.import_kwh)
@@ -198,8 +240,13 @@ async def compute_customer_bill(
         "data_coverage": round(len(series.timestamps) / expected, 4) if expected else 0.0,
         "import_kwh": round(this_kwh, 3),
         "export_kwh": round(sum(series.export_kwh), 3),
-        "export_credit_applied": False,
+        "export_credit_applied": credit_amount > 0,
+        "export_credit": round(credit_amount, 2),
+        "nem_regime": regime,
+        "nem_source": nem_source,
     }
+    if credit_note:
+        metadata["export_credit_note"] = credit_note
     bill_out = _bill_dict(bill, tariff_id=row.id, start=start, end=end, metadata=metadata)
 
     py, pm = _prev_month(year, mon)

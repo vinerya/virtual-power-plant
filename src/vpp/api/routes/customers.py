@@ -46,6 +46,7 @@ from vpp.schemas.customer import (
     DRProgramResponse,
     DRProgramUpdate,
 )
+from vpp.tariffs.nem import NEMConfigError, normalize_regime
 
 router = APIRouter(tags=["Customers"])
 
@@ -167,12 +168,24 @@ async def update_customer(
 async def get_customer_bill(
     customer_id: str,
     month: str | None = Query(None, description="YYYY-MM; default: current month"),
+    nem: str | None = Query(
+        None,
+        description=(
+            "What-if export-credit regime (none|nem2|nem3|net_billing) overriding the "
+            "one derived from the customer's tariff"
+        ),
+    ),
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(_staff),
 ):
     user = await _customer_user(session, customer_id)
+    if nem is not None:
+        try:
+            nem = normalize_regime(nem)
+        except NEMConfigError as exc:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
     try:
-        return await compute_customer_bill(session, user.id, month)
+        return await compute_customer_bill(session, user.id, month, nem_override=nem)
     except BillingError as exc:
         raise_billing(exc)
 
