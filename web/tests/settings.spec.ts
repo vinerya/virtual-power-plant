@@ -121,3 +121,65 @@ test("load YAML, modify with bad value, validate shows error, fix, see diff, app
   // Toast appears on success — check by text on the document.
   await expect(page.getByText(/configuration applied/i)).toBeVisible();
 });
+
+test("server-side 422 errors are shown inline in the editor", async ({ page }) => {
+  await page.route("**/api/proxy/api/v1/config", (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    return route.fulfill({
+      status: 422,
+      contentType: "application/json",
+      body: JSON.stringify({
+        detail: {
+          message: "Configuration is invalid",
+          errors: [
+            { path: "/optimizer/gap_tolerance", message: "must be less than 0.5" },
+            { path: "/service/port", message: "port 9090 is reserved" },
+          ],
+        },
+      }),
+    });
+  });
+  await page.goto("/login");
+  await page.getByLabel("Username").fill("operator");
+  await page.getByLabel("Password").fill("pw");
+  await page.getByRole("button", { name: /sign in/i }).click();
+
+  await page.goto("/settings");
+  await page.waitForSelector(".monaco-editor", { timeout: 30_000 });
+  // Valid for the client-side schema; the server rejects it.
+  const next = `service:\n  name: vpp\n  port: 9090\noptimizer:\n  solver: GLPK\n  gap_tolerance: 0.9\n`;
+  await page.evaluate((text) => {
+    interface MonacoLike {
+      editor: { getModels: () => { setValue: (s: string) => void }[] };
+    }
+    const w = window as unknown as { monaco?: MonacoLike };
+    w.monaco?.editor.getModels()[0]?.setValue(text);
+  }, next);
+
+  await page.getByTestId("apply-button").click();
+  await page.getByTestId("apply-confirm-button").click();
+
+  const list = page.getByTestId("validation-errors");
+  await expect(list).toHaveAttribute("data-source", "server");
+  await expect(list).toContainText("The server rejected this configuration");
+  await expect(list).toContainText("line 6");
+  await expect(list).toContainText("must be less than 0.5");
+  await expect(list).toContainText("line 3");
+  await expect(list).toContainText("port 9090 is reserved");
+  await expect(page.getByTestId("apply-confirm")).toHaveCount(0);
+
+  // The same errors are Monaco markers on the offending lines.
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        interface MonacoLike {
+          editor: { getModelMarkers: (f: object) => { startLineNumber: number }[] };
+        }
+        const w = window as unknown as { monaco?: MonacoLike };
+        return (w.monaco?.editor.getModelMarkers({ owner: "vpp-config" }) ?? [])
+          .map((m) => m.startLineNumber)
+          .sort();
+      }),
+    )
+    .toEqual([3, 6]);
+});

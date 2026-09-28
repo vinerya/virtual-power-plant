@@ -12,6 +12,30 @@ import { YamlEditor } from "./yaml-editor";
 import { ConfigDiff } from "./config-diff";
 import { applyConfig, getConfig, getConfigSchema } from "@/lib/api/config";
 import type { ConfigValidationError } from "@/lib/api/types";
+import { apiDetail, apiErrorMessage, apiStatus } from "@/lib/api/errors";
+import { pointerToLine } from "@/lib/yaml-pointer";
+
+/** `{message, errors}` from a 422 PUT /config, or null for other failures. */
+function serverConfigErrors(
+  e: unknown,
+): { message: string; errors: ConfigValidationError[] } | null {
+  if (apiStatus(e) !== 422) return null;
+  const d = apiDetail(e) as { message?: unknown; errors?: unknown } | null;
+  if (!d || typeof d !== "object" || !Array.isArray(d.errors)) return null;
+  const errors = d.errors
+    .filter(
+      (x): x is { path?: unknown; message?: unknown } => !!x && typeof x === "object",
+    )
+    .map((x) => ({
+      path: typeof x.path === "string" && x.path ? x.path : "$",
+      message: typeof x.message === "string" ? x.message : "invalid",
+    }));
+  if (!errors.length) return null;
+  return {
+    message: typeof d.message === "string" ? d.message : "Configuration is invalid",
+    errors,
+  };
+}
 
 export function SettingsView() {
   const qc = useQueryClient();
@@ -28,6 +52,7 @@ export function SettingsView() {
 
   const [draft, setDraft] = useState<string>("");
   const [errors, setErrors] = useState<ConfigValidationError[]>([]);
+  const [errorSource, setErrorSource] = useState<"client" | "server">("client");
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Seed draft from live config the first time it loads.
@@ -43,6 +68,7 @@ export function SettingsView() {
 
   async function runValidate() {
     setErrors([]);
+    setErrorSource("client");
     const errs: ConfigValidationError[] = [];
     let parsed: unknown = null;
     try {
@@ -84,8 +110,19 @@ export function SettingsView() {
       setConfirmOpen(false);
     },
     onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : "Apply failed";
-      toast.error(msg);
+      // 422 → {detail: {message, errors: [{path, message}]}}: show the
+      // server's findings inline in the editor, like client-side errors.
+      const server = serverConfigErrors(e);
+      setConfirmOpen(false);
+      if (server) {
+        setErrors(server.errors);
+        setErrorSource("server");
+        toast.error(server.message, {
+          description: `${server.errors.length} problem${server.errors.length === 1 ? "" : "s"} found by the server`,
+        });
+        return;
+      }
+      toast.error("Apply failed", { description: apiErrorMessage(e, "The server rejected the change.") });
     },
   });
 
@@ -149,22 +186,33 @@ export function SettingsView() {
               </TabsTrigger>
             </TabsList>
             <TabsContent value="edit">
-              <YamlEditor value={draft} onChange={setDraft} />
+              <YamlEditor value={draft} onChange={setDraft} markers={errors} />
               {errors.length > 0 && (
-                <ul
-                  className="mt-3 space-y-1 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive"
+                <div
+                  className="mt-3 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive"
+                  role="alert"
                   data-testid="validation-errors"
-                  aria-live="polite"
+                  data-source={errorSource}
                 >
-                  {errors.map((e, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-                      <span>
-                        <code className="font-mono">{e.path}</code> — {e.message}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
+                  <p className="mb-1 font-medium">
+                    {errorSource === "server"
+                      ? "The server rejected this configuration:"
+                      : "Validation errors:"}
+                  </p>
+                  <ul className="space-y-1">
+                    {errors.map((e, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                        <span>
+                          <span className="text-muted-foreground">
+                            line {pointerToLine(draft, e.path)}
+                          </span>{" "}
+                          <code className="font-mono">{e.path}</code> — {e.message}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               {errors.length === 0 && dirty && (
                 <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
