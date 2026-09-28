@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.0
+    rev: v0.15.8  # keep in sync with the ruff pin in pyproject.toml / ci.yml
     hooks:
       - id: ruff
         args: [--fix]
@@ -17,11 +17,14 @@ repos:
         args: ["--maxkb=500"]
       - id: detect-private-key
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+  # mypy runs in the project environment (``pip install -e ".[dev,api,db,cli]"``)
+  # rather than an isolated hook env: it needs the pydantic plugin and the real
+  # third-party types to give the same answer as CI.
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic>=2.0]
-        args: [--ignore-missing-imports]
+        name: mypy
+        entry: mypy src/vpp --ignore-missing-imports
+        language: system
+        types: [python]
         pass_filenames: false
-        entry: mypy src/vpp
