@@ -11,7 +11,7 @@ keeps in its ``metadata`` (see :mod:`vpp.protocols.modbus_ingestion`)::
         "control": {
           "enabled": true,
           "profile": "sunspec_123",       # or "register" / "sunspec_124"
-          "model_base": 40236,            # address of the model's ID register
+          "model_base": "auto",           # or the address of the model's ID register
           "revert_timeout_s": 900,        # device-side fallback (WMaxLimPct_RvrtTms)
           "min_kw": 0, "max_kw": 8,       # extra clamp inside the resource limits
           "deadband_kw": 0.2, "min_interval_s": 10,
@@ -37,17 +37,28 @@ Profiles
     otherwise 0).
 ``sunspec_123``
     SunSpec model 123 Immediate Controls: ``WMaxLimPct`` = setpoint as % of
-    ``reference_kw`` (curtailment; negative setpoints clamp to 0 %),
-    ``WMaxLim_Ena`` = 1; release sets ``WMaxLim_Ena`` = 0. The scale factor
-    is read from ``WMaxLimPct_SF``. ``revert_timeout_s`` programs
-    ``WMaxLimPct_RvrtTms`` so the inverter reverts on its own if the VPP
-    goes silent.
-``sunspec_124`` (**generic/unverified**)
+    ``reference_kw`` (the spec defines it as % of ``WMax``, so set
+    ``reference_kw`` to the inverter's ``WMax``; curtailment, negative
+    setpoints clamp to 0 %), ``WMaxLim_Ena`` = 1; release sets
+    ``WMaxLim_Ena`` = 0. The scale factor is read from ``WMaxLimPct_SF``.
+    ``revert_timeout_s`` programs ``WMaxLimPct_RvrtTms`` so the inverter
+    reverts on its own if the VPP goes silent.
+``sunspec_124`` (semantics **unverified**)
     SunSpec model 124 Storage: ``OutWRte``/``InWRte`` as % of
-    ``reference_kw`` (forced discharge: ``OutWRte`` = p, ``InWRte`` = -p;
-    forced charge the reverse), ``StorCtl_Mod`` = 3; release sets
-    ``StorCtl_Mod`` = 0. Vendors interpret these registers differently;
-    validate against your device before enabling.
+    ``reference_kw`` (spec: % of ``WDisChaMax`` / ``WChaMax``; forced
+    discharge: ``OutWRte`` = p, ``InWRte`` = -p; forced charge the reverse),
+    ``StorCtl_Mod`` = 3 (bit 0 CHARGE + bit 1 DISCHARGE limits active);
+    release sets ``StorCtl_Mod`` = 0. Vendors interpret forced
+    charge/discharge differently; validate against your device before
+    enabling.
+
+For both SunSpec profiles ``model_base`` is the address of the model's
+``ID`` register, or ``"auto"`` to find it by walking the device's SunSpec
+chain (:func:`vpp.protocols.modbus.discover_sunspec_models`). Before the
+first write the ``ID``/``L`` header at ``model_base`` is read back and must
+match the model, so a wrong address is refused instead of written. The
+register offsets are verified against the SunSpec model definitions (see
+:mod:`vpp.protocols.modbus`) but have not been tested on physical hardware.
 
 Register addresses are what pymodbus sends on the wire (0-based). Vendor
 documentation often lists 1-based register *numbers* -- subtract one.
@@ -61,9 +72,13 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from vpp.protocols.modbus import (
+    SUNSPEC_MODEL_123_LENGTH,
+    SUNSPEC_MODEL_124_LENGTH,
     RegisterDefinition,
     RegisterType,
+    discover_sunspec_models,
     encode_value,
+    find_sunspec_model,
     register_words,
     sunspec_model_123_registers,
     sunspec_model_124_registers,
@@ -72,7 +87,15 @@ from vpp.protocols.modbus import (
 logger = logging.getLogger(__name__)
 
 PROFILES = ("register", "sunspec_123", "sunspec_124")
+# Register layout verified against the SunSpec model, but the *semantics* of
+# forced charge/discharge through model 124 are vendor-specific.
 UNVERIFIED_PROFILES = frozenset({"sunspec_124"})
+
+# profile -> (SunSpec model ID, minimum model length L, register builder)
+_SUNSPEC_MODELS: dict[str, tuple[int, int, Callable[[int], dict[str, RegisterDefinition]]]] = {
+    "sunspec_123": (123, SUNSPEC_MODEL_123_LENGTH, sunspec_model_123_registers),
+    "sunspec_124": (124, SUNSPEC_MODEL_124_LENGTH, sunspec_model_124_registers),
+}
 
 
 class ControlConfigError(ValueError):
@@ -106,6 +129,15 @@ def _opt_float(cfg: dict[str, Any], key: str) -> float | None:
         raise ControlConfigError(f"control.{key} must be a number") from exc
 
 
+def _model_base(value: Any) -> int | None:
+    if value is None or value == "auto":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ControlConfigError('control.model_base must be an address or "auto"') from exc
+
+
 @dataclass
 class ModbusControlConfig:
     """Parsed ``metadata["modbus"]["control"]``."""
@@ -127,6 +159,7 @@ class ModbusControlConfig:
     release_value: float | None = None
     # SunSpec profiles
     model_base: int | None = None
+    discover_model: bool = False  # model_base "auto": walk the SunSpec chain
     revert_timeout_s: int | None = None
     reference_kw: float | None = None
     unit_id: int | None = None
@@ -172,7 +205,8 @@ class ModbusControlConfig:
             enable_value=int(cfg.get("enable_value", 1)),
             disable_value=int(cfg.get("disable_value", 0)),
             release_value=_opt_float(cfg, "release_value"),
-            model_base=int(cfg["model_base"]) if cfg.get("model_base") is not None else None,
+            model_base=_model_base(cfg.get("model_base")),
+            discover_model=cfg.get("model_base") == "auto",
             revert_timeout_s=int(cfg["revert_timeout_s"])
             if cfg.get("revert_timeout_s") is not None
             else None,
@@ -197,7 +231,7 @@ class ModbusControlConfig:
             raise ControlConfigError("control.scale must be non-zero")
         if profile == "register" and out.register is None and out.address is None:
             raise ControlConfigError("control.register or control.address is required")
-        if profile != "register" and out.model_base is None:
+        if profile != "register" and out.model_base is None and not out.discover_model:
             raise ControlConfigError(f"control.model_base is required for {profile}")
         if out.revert_timeout_s is not None and out.keepalive_s is None:
             # Refresh the device-side revert timer well before it fires.
@@ -247,13 +281,42 @@ class ModbusSetpointWriter:
         self._provider = adapter_provider
         self.reference_kw = float(config.reference_kw or reference_kw or 0.0)
         self._scale: float | None = None
-        base = config.model_base or 0
-        if config.profile == "sunspec_123":
-            self._regs = sunspec_model_123_registers(base)
-        elif config.profile == "sunspec_124":
-            self._regs = sunspec_model_124_registers(base)
+        self._model_checked = config.profile not in _SUNSPEC_MODELS
+        self._regs = self._model_registers(config.model_base or 0)
+
+    def _model_registers(self, base: int) -> dict[str, RegisterDefinition]:
+        spec = _SUNSPEC_MODELS.get(self.config.profile)
+        return spec[2](base) if spec else {}
+
+    async def _ensure_model(self, io: RegisterIO) -> None:
+        """Locate (``model_base: "auto"``) or verify the SunSpec model header.
+
+        Writing to a wrong ``model_base`` would poke unrelated registers, so
+        before the first write the ``ID``/``L`` header must match the model.
+        """
+        if self._model_checked:
+            return
+        cfg = self.config
+        model_id, min_length, _ = _SUNSPEC_MODELS[cfg.profile]
+        if cfg.model_base is None:
+            models = await discover_sunspec_models(io, unit=cfg.unit_id)
+            header = find_sunspec_model(models, model_id)
+            if header is None:
+                found = sorted({m.model_id for m in models})
+                raise ControlConfigError(
+                    f"SunSpec model {model_id} not found on the device (models: {found})"
+                )
+            base = header.address
         else:
-            self._regs = {}
+            base = cfg.model_base
+        mid, length = await io.read_holding(base, 2, unit=cfg.unit_id)
+        if mid != model_id or length < min_length:
+            raise ControlConfigError(
+                f"no SunSpec model {model_id} header at {base} "
+                f"(read ID={mid}, L={length}; expected ID={model_id}, L>={min_length})"
+            )
+        self._regs = self._model_registers(base)
+        self._model_checked = True
 
     # -- register resolution -------------------------------------------------
 
@@ -301,6 +364,7 @@ class ModbusSetpointWriter:
     async def _plan(self, io: RegisterIO, kw: float | None) -> list[_Write]:
         """Writes for setpoint *kw*; ``None`` plans the release sequence."""
         cfg = self.config
+        await self._ensure_model(io)
         scale = await self._scale_for(io)
         writes: list[_Write] = []
 
