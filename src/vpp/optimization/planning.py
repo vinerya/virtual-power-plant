@@ -441,6 +441,7 @@ def plan_schedule(
         MPCStep,
         MultiResourceMPCConfig,
         MultiResourceMPCController,
+        MultiResourceMPCDecision,
         MultiResourceMPCStep,
     )
 
@@ -578,9 +579,9 @@ def plan_schedule(
                 return -value * sum(m.soc[r, H - 1] - m.soc_0[r] for r in m.R)
 
             fleet_terms.append(_fleet_terminal_credit)
-        decision = None
+        fleet_decision: MultiResourceMPCDecision | None = None
         if not force_fallback:
-            ctl = MultiResourceMPCController(
+            fleet_ctl = MultiResourceMPCController(
                 MultiResourceMPCConfig(
                     horizon_steps=H,
                     interval_minutes=interval_minutes,
@@ -597,19 +598,19 @@ def plan_schedule(
                 forecast["load_kw"] = [float(x) for x in load_kw]
             if solar_kw is not None:
                 forecast["solar_kw"] = [float(x) for x in solar_kw]
-            decision = ctl.step(
+            fleet_decision = fleet_ctl.step(
                 MultiResourceMPCStep(
                     timestamp=now,
                     forecast=forecast,
                     additional_objective_terms=fleet_terms,
                 )
             )
-            if decision.method == "admm" and wear_costs:
+            if fleet_decision.method == "admm" and wear_costs:
                 notes.append("ADMM path does not include the wear-cost term")
-        if decision is not None and not decision.fallback_used:
-            method = "milp_highs" if decision.method == "monolithic" else "admm_highs"
-            objective = float(decision.expected_cost_remaining)
-            for rid, p in decision.metadata.get("plan", {}).items():
+        if fleet_decision is not None and not fleet_decision.fallback_used:
+            method = "milp_highs" if fleet_decision.method == "monolithic" else "admm_highs"
+            objective = float(fleet_decision.expected_cost_remaining)
+            for rid, p in fleet_decision.metadata.get("plan", {}).items():
                 cap = next(b.effective_capacity_kwh for b in batteries if b.id == rid)
                 per_resource[rid] = {
                     "p_charge": list(p["p_charge"]),
@@ -617,12 +618,14 @@ def plan_schedule(
                     "soc": [s / cap for s in p.get("soc", [])],
                 }
             for k in ("iterations", "converged", "primal_residual", "dual_residual"):
-                if k in decision.metadata:
-                    solver_meta[k] = decision.metadata[k]
+                if k in fleet_decision.metadata:
+                    solver_meta[k] = fleet_decision.metadata[k]
         else:
             method, fallback_used = "rule_based_threshold", True
             fallback_reason = (
-                "forced" if decision is None else str(decision.metadata.get("fallback_reason", ""))
+                "forced"
+                if fleet_decision is None
+                else str(fleet_decision.metadata.get("fallback_reason", ""))
             )
             if feeder_max_import_kw is not None or feeder_max_export_kw is not None:
                 notes.append("rule fallback does not enforce feeder limits")
@@ -1007,7 +1010,7 @@ def explain_schedule(inputs: dict[str, Any], solution: dict[str, Any]) -> dict[s
         naive_delta = 0.0
         for b in batteries:
             try:
-                params = {
+                params: dict[str, Any] = {
                     "battery_capacity_kwh": float(b["capacity_kwh"]),
                     "max_charge_kw": float(b["max_charge_kw"]),
                     "max_discharge_kw": float(b["max_discharge_kw"]),

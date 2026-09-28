@@ -275,10 +275,10 @@ class DayAheadMarket(Market):
         demand = sorted(self.demand_bids[current_period], reverse=True)
 
         # Find intersection
-        supply_cumulative = 0
-        demand_cumulative = 0
+        supply_cumulative = 0.0
+        demand_cumulative = 0.0
 
-        for i, (supply_price, supply_qty) in enumerate(supply):
+        for _i, (supply_price, supply_qty) in enumerate(supply):
             supply_cumulative += supply_qty
 
             for j, (demand_price, demand_qty) in enumerate(demand):
@@ -527,7 +527,6 @@ class BilateralMarket(Market):
     def execute_order(self, order: Order) -> dict[str, Any]:
         """Execute bilateral contract order."""
         try:
-            contract_type = order.metadata.get("contract_type", "standard")
             counterparty = order.metadata.get("counterparty")
 
             if not counterparty:
@@ -609,7 +608,7 @@ class BilateralMarket(Market):
         }
 
 
-def create_market(market_type: str, name: str = None, **kwargs) -> Market:
+def create_market(market_type: str, name: str | None = None, **kwargs) -> Market:
     """
     Factory function to create markets.
 

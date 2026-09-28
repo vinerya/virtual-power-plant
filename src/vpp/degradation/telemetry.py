@@ -8,12 +8,11 @@ exposes a long-running async loop suitable for FastAPI background tasks.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from typing import TYPE_CHECKING
 
 from .models import (
     LFP_PRESET,
@@ -21,6 +20,11 @@ from .models import (
     CalendarDegradation,
     RainflowDegradation,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +202,7 @@ class DegradationUpdater:
             for bid in battery_ids:
                 try:
                     res = fetch_telemetry(bid)
-                    window = await res if asyncio.iscoroutine(res) else res
+                    window = await res if inspect.isawaitable(res) else res
                     if window is not None:
                         await self.apply_window(window)
                 except Exception:  # pragma: no cover - defensive

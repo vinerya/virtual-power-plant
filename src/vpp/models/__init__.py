@@ -25,11 +25,10 @@ __author__ = "VPP Development Team"
 
 # Export all public classes and functions
 __all__ = [
-    # Battery models
-    "BatteryState",
-    "BatteryParameters",
-    "BatteryModel",
-    "SimpleEquivalentCircuitModel",
     "AdvancedElectrochemicalModel",
+    "BatteryModel",
+    "BatteryParameters",
+    "BatteryState",
+    "SimpleEquivalentCircuitModel",
     "create_battery_model",
 ]

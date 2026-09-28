@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 - resolved at runtime by FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from vpp.api.optimization_support import (
@@ -36,7 +36,7 @@ from vpp.api.optimization_support import (
 )
 from vpp.auth.security import get_current_user
 from vpp.db.engine import get_db
-from vpp.db.models import UserModel  # noqa: TC001 - resolved at runtime by FastAPI
+from vpp.db.models import UserModel
 from vpp.db.repositories import OptimizationRepository, TariffRepository
 from vpp.optimization.planning import (
     FleetAsset,
@@ -545,6 +545,8 @@ async def _tariff_prices(
     from vpp.tariffs import load_urdb_json
     from vpp.tariffs.optimization import load_nem3_avoided_cost_2024, tariff_to_opt_params
 
+    if body.tariff_id is None:  # callers check first; ScheduleRequest validates it
+        raise HTTPException(status_code=422, detail="tariff_id is required")
     row = await TariffRepository.get(session, body.tariff_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Tariff not found")
@@ -732,6 +734,10 @@ async def backtest(
         battery = assets[0]
     else:
         spec = body.battery
+        if spec is None:  # excluded by the request model's validator
+            raise HTTPException(
+                status_code=422, detail="provide exactly one of resource_id or battery"
+            )
         battery = FleetAsset(
             id="inline",
             name="inline battery",

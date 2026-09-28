@@ -21,7 +21,7 @@ which one they report in ``state_of_charge_source``.
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 -- pydantic resolves annotations at runtime
+from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Literal
 

@@ -53,3 +53,9 @@ class ResourceCapacityError(ResourceError):
     """Exception raised for resource capacity issues."""
 
     pass
+
+
+class ForecastError(VPPError):
+    """Exception raised when a forecast cannot be produced."""
+
+    pass

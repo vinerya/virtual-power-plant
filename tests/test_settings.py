@@ -1,6 +1,7 @@
 """Tests for application settings."""
 
 import pytest
+from pydantic import ValidationError
 
 from vpp.settings import Settings
 
@@ -19,7 +20,7 @@ def test_production_flag():
 
 
 def test_invalid_log_level():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError, match="log_level must be one of"):
         Settings(log_level="VERBOSE", secret_key="x")
 
 

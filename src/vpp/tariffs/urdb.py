@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .components import (
     AdderRate,
@@ -132,9 +132,9 @@ def _build_tou_schedules(
             sig_to_months: dict[tuple, list[int]] = {}
             for month, runs in month_map.items():
                 sig_to_months.setdefault(tuple(runs), []).append(month)
-            for runs, months in sig_to_months.items():
+            for run_sig, months in sig_to_months.items():
                 season = frozenset(months)
-                for hr in runs:
+                for hr in run_sig:
                     scheds.append(
                         TOUSchedule(
                             weekday_mask=mask,
@@ -232,7 +232,7 @@ def load_urdb_json(path_or_dict: str | Path | dict) -> Tariff:
     fixed = data.get("fixedchargefirstmeter")
     if fixed:
         units = data.get("fixedchargeunits", "$/month")
-        freq = "daily" if "day" in units.lower() else "monthly"
+        freq: Literal["daily", "monthly"] = "daily" if "day" in units.lower() else "monthly"
         components.append(FixedCharge(amount=float(fixed), frequency=freq))
 
     # --- Minimum charge ---

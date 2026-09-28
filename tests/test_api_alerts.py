@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from httpx import AsyncClient  # noqa: TC002
+from httpx import AsyncClient
 from sqlalchemy import select
 
 from vpp.alert_service import (

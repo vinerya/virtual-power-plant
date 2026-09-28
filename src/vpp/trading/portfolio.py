@@ -238,7 +238,7 @@ class Portfolio:
                 total += position.get_notional_value(market_prices[market])
         return total
 
-    def calculate_total_pnl(self, market_prices: dict[str, float] = None) -> float:
+    def calculate_total_pnl(self, market_prices: dict[str, float] | None = None) -> float:
         """Calculate total portfolio P&L."""
         if market_prices is None:
             market_prices = {}
@@ -263,25 +263,24 @@ class Portfolio:
             for market, position in self.positions.items()
         )
 
-    def calculate_daily_pnl(self, date: datetime = None) -> float:
+    def calculate_daily_pnl(self, date: datetime | None = None) -> float:
         """Realized P&L net of fees for trades on a given day (default today).
 
         Counts every closing trade -- covering a short is a *buy* -- where
         the old implementation only looked at sells (and read a
         ``realized_pnl`` field that was never populated).
         """
-        if date is None:
-            date = datetime.now().date()
-        elif isinstance(date, datetime):
-            date = date.date()
+        day = datetime.now().date() if date is None else date
+        if isinstance(day, datetime):
+            day = day.date()
 
         return sum(
             trade.realized_pnl - trade.fees - trade.commission
             for trade in self.trades
-            if trade.timestamp.date() == date
+            if trade.timestamp.date() == day
         )
 
-    def calculate_max_drawdown(self, market_prices: dict[str, float] = None) -> float:
+    def calculate_max_drawdown(self, market_prices: dict[str, float] | None = None) -> float:
         """Calculate maximum drawdown."""
         if not self.equity_curve:
             return 0.0
@@ -300,7 +299,7 @@ class Portfolio:
         self.max_drawdown = max_dd
         return max_dd
 
-    def get_equity(self, market_prices: dict[str, float] = None) -> float:
+    def get_equity(self, market_prices: dict[str, float] | None = None) -> float:
         """Get current portfolio equity: cash plus mark-to-market position value.
 
         Cash already reflects what was paid/received for every trade, so the
@@ -352,12 +351,14 @@ class Portfolio:
         )
         self.max_drawdown = max(self.max_drawdown, current_drawdown)
 
-    def get_position_summary(self, market_prices: dict[str, float] = None) -> dict[str, Any]:
+    def get_position_summary(
+        self, market_prices: dict[str, float] | None = None
+    ) -> dict[str, Any]:
         """Get summary of all positions."""
         if market_prices is None:
             market_prices = {}
 
-        summary = {
+        summary: dict[str, Any] = {
             "total_positions": len(self.positions),
             "long_positions": 0,
             "short_positions": 0,
@@ -395,7 +396,9 @@ class Portfolio:
 
         return summary
 
-    def get_performance_metrics(self, market_prices: dict[str, float] = None) -> dict[str, Any]:
+    def get_performance_metrics(
+        self, market_prices: dict[str, float] | None = None
+    ) -> dict[str, Any]:
         """Calculate comprehensive performance metrics."""
         if not self.trades:
             return {}
@@ -480,7 +483,7 @@ class PnLCalculator:
             return {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "total_pnl": 0.0}
 
         # Group trades by market
-        market_trades = {}
+        market_trades: dict[str, list[Trade]] = {}
         for trade in trades:
             if trade.market not in market_trades:
                 market_trades[trade.market] = []
@@ -617,7 +620,7 @@ class RiskMetrics:
         # Scale by time horizon
         var_scaled = var_1d * np.sqrt(time_horizon) * current_equity
 
-        return var_scaled
+        return float(var_scaled)
 
     def calculate_position_concentration(
         self, market_prices: dict[str, float]
@@ -639,7 +642,7 @@ class RiskMetrics:
     ) -> dict[str, dict[str, float]]:
         """Calculate correlation matrix for portfolio positions."""
         markets = list(self.portfolio.positions.keys())
-        correlation_matrix = {}
+        correlation_matrix: dict[str, dict[str, float]] = {}
 
         for market1 in markets:
             correlation_matrix[market1] = {}

@@ -67,7 +67,7 @@ class LinearForecaster(ResearchModel):
         X_b = np.column_stack([X, np.ones(X.shape[0])])
         # Least squares: w = (X^T X)^-1 X^T y
         try:
-            w, residuals, rank, sv = np.linalg.lstsq(X_b, y, rcond=None)
+            w, _residuals, _rank, _sv = np.linalg.lstsq(X_b, y, rcond=None)
             self._weights = w[:-1]
             self._bias = float(w[-1])
         except np.linalg.LinAlgError:

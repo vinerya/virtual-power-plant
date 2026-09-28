@@ -361,6 +361,6 @@ class TestRunner:
             seeds=[42, 123, 456],
         )
         stats = comparison["summary"]
-        for metric, method_data in stats.items():
-            for method_name, data in method_data.items():
+        for _metric, method_data in stats.items():
+            for _method_name, data in method_data.items():
                 assert data["n"] == 3  # 3 seeds

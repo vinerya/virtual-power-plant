@@ -21,7 +21,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,  # noqa: TC002 -- FastAPI resolves dependency annotations at runtime
+    AsyncSession,
 )
 
 from vpp.api.routes.customer import customer_payload, devices_for, raise_billing

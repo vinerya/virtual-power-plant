@@ -125,6 +125,60 @@ class BatteryModel(ABC):
         )
 
 
+def _ecm_max_charge_power(parameters: BatteryParameters, state: BatteryState) -> float:
+    """Max charging power (kW) from current/voltage/SOC/temperature limits."""
+    # Current limit
+    max_current = parameters.max_current
+
+    # Voltage limit
+    voltage_headroom = parameters.max_voltage - state.voltage
+    if voltage_headroom <= 0:
+        return 0.0
+
+    # SOC limit
+    if state.soc >= parameters.max_soc:
+        return 0.0
+
+    # Temperature limit
+    if state.temperature >= parameters.max_temperature:
+        return 0.0
+
+    # Calculate power limit
+    max_power = min(
+        max_current * parameters.nominal_voltage / 1000,  # Current limit
+        voltage_headroom * max_current / 1000,  # Voltage limit
+    )
+
+    return max_power * parameters.charge_efficiency
+
+
+def _ecm_max_discharge_power(parameters: BatteryParameters, state: BatteryState) -> float:
+    """Max discharging power (kW) from current/voltage/SOC/temperature limits."""
+    # Current limit
+    max_current = parameters.max_current
+
+    # Voltage limit
+    voltage_margin = state.voltage - parameters.min_voltage
+    if voltage_margin <= 0:
+        return 0.0
+
+    # SOC limit
+    if state.soc <= parameters.min_soc:
+        return 0.0
+
+    # Temperature limit
+    if state.temperature <= parameters.min_temperature:
+        return 0.0
+
+    # Calculate power limit
+    max_power = min(
+        max_current * parameters.nominal_voltage / 1000,  # Current limit
+        voltage_margin * max_current / 1000,  # Voltage limit
+    )
+
+    return max_power / parameters.discharge_efficiency
+
+
 class SimpleEquivalentCircuitModel(BatteryModel):
     """Simple equivalent circuit battery model with aging."""
 
@@ -213,55 +267,11 @@ class SimpleEquivalentCircuitModel(BatteryModel):
 
     def get_max_charge_power(self) -> float:
         """Get maximum charging power considering all constraints."""
-        # Current limit
-        max_current = self.parameters.max_current
-
-        # Voltage limit
-        voltage_headroom = self.parameters.max_voltage - self.state.voltage
-        if voltage_headroom <= 0:
-            return 0.0
-
-        # SOC limit
-        if self.state.soc >= self.parameters.max_soc:
-            return 0.0
-
-        # Temperature limit
-        if self.state.temperature >= self.parameters.max_temperature:
-            return 0.0
-
-        # Calculate power limit
-        max_power = min(
-            max_current * self.parameters.nominal_voltage / 1000,  # Current limit
-            voltage_headroom * max_current / 1000,  # Voltage limit
-        )
-
-        return max_power * self.parameters.charge_efficiency
+        return _ecm_max_charge_power(self.parameters, self.state)
 
     def get_max_discharge_power(self) -> float:
         """Get maximum discharging power considering all constraints."""
-        # Current limit
-        max_current = self.parameters.max_current
-
-        # Voltage limit
-        voltage_margin = self.state.voltage - self.parameters.min_voltage
-        if voltage_margin <= 0:
-            return 0.0
-
-        # SOC limit
-        if self.state.soc <= self.parameters.min_soc:
-            return 0.0
-
-        # Temperature limit
-        if self.state.temperature <= self.parameters.min_temperature:
-            return 0.0
-
-        # Calculate power limit
-        max_power = min(
-            max_current * self.parameters.nominal_voltage / 1000,  # Current limit
-            voltage_margin * max_current / 1000,  # Voltage limit
-        )
-
-        return max_power / self.parameters.discharge_efficiency
+        return _ecm_max_discharge_power(self.parameters, self.state)
 
 
 class AdvancedElectrochemicalModel(BatteryModel):
@@ -378,7 +388,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
         # Simplified OCV curve for lithium-ion
         x = concentration
         ocv = 4.2 - 1.5 * x + 0.5 * np.sin(2 * np.pi * x) + 0.1 * np.sin(4 * np.pi * x)
-        return np.clip(ocv, self.parameters.min_voltage, self.parameters.max_voltage)
+        return float(np.clip(ocv, self.parameters.min_voltage, self.parameters.max_voltage))
 
     def _calculate_activation_overpotential(self, current: float) -> float:
         """Calculate activation overpotential using Butler-Volmer kinetics."""
@@ -397,7 +407,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
         # Butler-Volmer equation (linearized for small overpotentials)
         eta = (R * T / (alpha * F)) * np.asinh(current / (2 * i0))
 
-        return eta
+        return float(eta)
 
     def _calculate_concentration_overpotential(self, current: float) -> float:
         """Calculate concentration overpotential."""
@@ -413,7 +423,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
         c_ratio = self.surface_concentration / self.bulk_concentration
         eta_conc = (R * T / F) * np.log(c_ratio)
 
-        return eta_conc
+        return float(eta_conc)
 
     def _calculate_entropy_coefficient(self) -> float:
         """Calculate entropy coefficient for reversible heat calculation."""
@@ -447,8 +457,9 @@ class AdvancedElectrochemicalModel(BatteryModel):
 
     def get_max_charge_power(self) -> float:
         """Get maximum charging power with electrochemical constraints."""
-        # Basic constraints from parent class
-        basic_limit = super().get_max_charge_power()
+        # Basic current/voltage/SOC/temperature constraints.  (``BatteryModel``'s
+        # version is abstract and returns None, so it cannot be used via super().)
+        basic_limit = _ecm_max_charge_power(self.parameters, self.state)
 
         # Concentration constraint (prevent lithium plating)
         if self.surface_concentration > 0.95:
@@ -465,8 +476,8 @@ class AdvancedElectrochemicalModel(BatteryModel):
 
     def get_max_discharge_power(self) -> float:
         """Get maximum discharging power with electrochemical constraints."""
-        # Basic constraints from parent class
-        basic_limit = super().get_max_discharge_power()
+        # Basic constraints (see get_max_charge_power).
+        basic_limit = _ecm_max_discharge_power(self.parameters, self.state)
 
         # Concentration constraint (prevent over-discharge)
         if self.surface_concentration < 0.05:

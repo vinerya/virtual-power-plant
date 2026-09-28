@@ -10,10 +10,17 @@ the operations a new revision would need.
 Server defaults are intentionally *not* compared: several migrations add
 ``server_default`` values for columns whose ORM definition uses a Python-side
 ``default``; that is a deliberate, harmless difference.
+
+By default the drift check runs against a throwaway SQLite file.  Set
+``VPP_MIGRATION_TEST_DB_URL`` to a *sync* SQLAlchemy URL (e.g.
+``postgresql+psycopg2://vpp:vpp@localhost:5432/vpp_migrations``) to run it
+against a real server instead; CI does this against PostgreSQL.  The database
+is upgraded to ``head`` (a no-op if it already is) and left there.
 """
 
 from __future__ import annotations
 
+import os
 import pprint
 from pathlib import Path
 
@@ -29,28 +36,34 @@ from vpp.db.base import Base
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
+DB_URL_ENV = "VPP_MIGRATION_TEST_DB_URL"
 
 
-def _make_config(db_path: Path) -> Config:
+def _sqlite_url(db_path: Path) -> str:
+    return f"sqlite:///{db_path}"
+
+
+def _make_config(db_url: str) -> Config:
     cfg = Config(str(ALEMBIC_INI))
     cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
+    # ConfigParser interpolation: a literal "%" (URL-encoded passwords) must be doubled.
+    cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
     return cfg
 
 
 def test_single_migration_head(tmp_path: Path) -> None:
     """Concurrent branches must be merged; multiple heads break ``upgrade head``."""
-    script = ScriptDirectory.from_config(_make_config(tmp_path / "unused.db"))
+    script = ScriptDirectory.from_config(_make_config(_sqlite_url(tmp_path / "unused.db")))
     heads = script.get_heads()
     assert len(heads) == 1, f"multiple alembic heads: {heads}"
 
 
 def test_migrations_match_models(tmp_path: Path) -> None:
     """``alembic upgrade head`` yields exactly the schema in ``Base.metadata``."""
-    db_path = tmp_path / "drift.db"
-    command.upgrade(_make_config(db_path), "head")
+    db_url = os.environ.get(DB_URL_ENV) or _sqlite_url(tmp_path / "drift.db")
+    command.upgrade(_make_config(db_url), "head")
 
-    engine = create_engine(f"sqlite:///{db_path}")
+    engine = create_engine(db_url)
     try:
         with engine.connect() as conn:
             ctx = MigrationContext.configure(conn, opts={"compare_type": True})
@@ -66,11 +79,11 @@ def test_migrations_match_models(tmp_path: Path) -> None:
 
 def test_tariffs_table_round_trips(tmp_path: Path) -> None:
     """Revision 0004 creates ``tariffs`` and its downgrade removes it cleanly."""
-    db_path = tmp_path / "tariffs.db"
-    cfg = _make_config(db_path)
+    db_url = _sqlite_url(tmp_path / "tariffs.db")
+    cfg = _make_config(db_url)
     command.upgrade(cfg, "0004_add_tariffs")
 
-    engine = create_engine(f"sqlite:///{db_path}")
+    engine = create_engine(db_url)
     try:
         inspector = inspect(engine)
         assert "tariffs" in inspector.get_table_names()

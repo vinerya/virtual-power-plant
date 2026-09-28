@@ -17,15 +17,18 @@ from .portfolio import Portfolio
 
 def _latest_timestamp(market_data: dict[str, Any]) -> datetime:
     """Most recent ``timestamp`` among the market data snapshots, else now."""
-    stamps = [getattr(data, "timestamp", None) for data in market_data.values()]
-    stamps = [t for t in stamps if isinstance(t, datetime)]
+    stamps = [
+        t
+        for t in (getattr(data, "timestamp", None) for data in market_data.values())
+        if isinstance(t, datetime)
+    ]
     return max(stamps) if stamps else datetime.now()
 
 
 class TradingStrategy(ABC):
     """Base class for trading strategies."""
 
-    def __init__(self, name: str, config: dict[str, Any] = None):
+    def __init__(self, name: str, config: dict[str, Any] | None = None):
         """Initialize trading strategy."""
         self.name = name
         self.config = config or {}
@@ -105,7 +108,7 @@ class TradingStrategy(ABC):
         adjusted_quantity = base_quantity * confidence
 
         # Apply position size limits
-        return min(adjusted_quantity, self.max_position_size)
+        return float(min(adjusted_quantity, self.max_position_size))
 
     def get_performance_metrics(self) -> dict[str, Any]:
         """Get strategy performance metrics."""
@@ -135,7 +138,7 @@ class ArbitrageStrategy(TradingStrategy):
         self, market_data: dict[str, Any], portfolio: Portfolio
     ) -> list[dict[str, Any]]:
         """Generate arbitrage signals based on price differences."""
-        signals = []
+        signals: list[dict[str, Any]] = []
 
         try:
             # Get current prices for monitored markets
@@ -451,12 +454,13 @@ class MeanReversionStrategy(TradingStrategy):
 class MLTradingStrategy(TradingStrategy):
     """Machine learning-based trading strategy."""
 
-    def __init__(self, model_path: str = None, **kwargs):
+    def __init__(self, model_path: str | None = None, **kwargs):
         """Initialize ML trading strategy."""
         super().__init__("ml_trading", kwargs)
         self.model_path = model_path
         self.model = None
-        self.feature_history: dict[str, list[dict[str, float]]] = {}
+        # Each entry: {"timestamp": datetime, **features}
+        self.feature_history: dict[str, list[dict[str, Any]]] = {}
         self.prediction_threshold = kwargs.get("prediction_threshold", 0.6)
 
         # Try to load model
@@ -489,9 +493,13 @@ class MLTradingStrategy(TradingStrategy):
                 if hasattr(data, "volume"):
                     features[f"{market_name}_volume"] = data.volume
 
-                if hasattr(data, "bid_price") and hasattr(data, "ask_price"):
-                    if data.bid_price and data.ask_price:
-                        features[f"{market_name}_spread"] = data.ask_price - data.bid_price
+                if (
+                    hasattr(data, "bid_price")
+                    and hasattr(data, "ask_price")
+                    and data.bid_price
+                    and data.ask_price
+                ):
+                    features[f"{market_name}_spread"] = data.ask_price - data.bid_price
 
             # Portfolio features
             total_positions = len(portfolio.positions)
@@ -552,7 +560,7 @@ class MLTradingStrategy(TradingStrategy):
         self, market_data: dict[str, Any], portfolio: Portfolio
     ) -> list[dict[str, Any]]:
         """Generate ML-based trading signals."""
-        signals = []
+        signals: list[dict[str, Any]] = []
 
         try:
             # Extract features
@@ -624,7 +632,7 @@ class MLTradingStrategy(TradingStrategy):
 class MultiMarketStrategy(TradingStrategy):
     """Multi-market strategy that combines multiple approaches."""
 
-    def __init__(self, strategies: list[TradingStrategy] = None, **kwargs):
+    def __init__(self, strategies: list[TradingStrategy] | None = None, **kwargs):
         """Initialize multi-market strategy."""
         super().__init__("multi_market", kwargs)
         self.strategies = strategies or []
@@ -680,7 +688,7 @@ class MultiMarketStrategy(TradingStrategy):
         self, strategy_signals: dict[str, list[dict[str, Any]]]
     ) -> list[dict[str, Any]]:
         """Aggregate signals using weighted average."""
-        market_signals = {}
+        market_signals: dict[Any, list[dict[str, Any]]] = {}
 
         # Group signals by market
         for strategy_name, signals in strategy_signals.items():
@@ -749,10 +757,10 @@ class MultiMarketStrategy(TradingStrategy):
         self, strategy_signals: dict[str, list[dict[str, Any]]]
     ) -> list[dict[str, Any]]:
         """Aggregate signals using majority vote."""
-        market_signals = {}
+        market_signals: dict[Any, list[dict[str, Any]]] = {}
 
         # Group signals by market
-        for strategy_name, signals in strategy_signals.items():
+        for _strategy_name, signals in strategy_signals.items():
             for signal in signals:
                 market = signal.get("market")
                 if market not in market_signals:

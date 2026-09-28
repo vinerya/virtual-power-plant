@@ -7,6 +7,7 @@ SolarEdge) and a generic mode for custom register definitions.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass
@@ -214,10 +215,8 @@ class ModbusAdapter(ProtocolAdapter):
     async def disconnect(self) -> None:
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._poll_task
-            except asyncio.CancelledError:
-                pass
         if self._client is not None:
             self._client.close()
             self._client = None
@@ -337,5 +336,5 @@ class ModbusAdapter(ProtocolAdapter):
             import struct
 
             raw = struct.pack(">HH", regs[0], regs[1] if len(regs) > 1 else 0)
-            return struct.unpack(">f", raw)[0]
+            return float(struct.unpack(">f", raw)[0])
         return float(regs[0])

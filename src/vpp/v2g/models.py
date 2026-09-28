@@ -46,7 +46,7 @@ class EVBattery:
 
     ev_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     capacity_kwh: float = 60.0
-    current_soc: float = 0.5  # 0.0–1.0
+    current_soc: float = 0.5  # 0.0-1.0
     min_soc: float = 0.2  # never drain below this
     max_charge_kw: float = 11.0
     max_discharge_kw: float = 11.0  # V2G discharge limit

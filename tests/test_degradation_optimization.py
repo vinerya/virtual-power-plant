@@ -250,7 +250,6 @@ def test_calendar_bias_lowers_idle_soc():
     _solve(m_bias)
 
     soc = _soc_trace(m_bias)
-    cap = pyo.value(m_bias.cap)
     avg_soc = sum(soc) / len(soc)
     # Mean SOC under bias should be much closer to 0.5 than to 0.8.
     assert abs(avg_soc - 0.5) < abs(avg_soc - 0.8), (

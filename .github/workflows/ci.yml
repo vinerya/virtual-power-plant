@@ -18,8 +18,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # mypy needs the runtime dependencies: the pydantic mypy plugin and the
+      # real SQLAlchemy/FastAPI/NumPy types (without them every ORM query is
+      # ``Any``).  Linter versions are pinned to match the ``dev`` extra.
       - name: Install dependencies
-        run: pip install ruff mypy
+        run: pip install -e ".[api,db,cli,protocols,monitoring,solver,degradation]" ruff==0.15.8 mypy==2.3.1 types-PyYAML
       - name: Ruff check
         run: ruff check src/ tests/
       - name: Ruff format check
@@ -51,6 +54,46 @@ jobs:
         with:
           file: coverage.xml
           fail_ci_if_error: false
+
+  migrations:
+    # Run the alembic history against real PostgreSQL: upgrade to head, check
+    # the migrated schema matches the ORM models, then downgrade to base.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vpp
+          POSTGRES_PASSWORD: vpp
+          POSTGRES_DB: vpp_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U vpp -d vpp_migrations"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      VPP_ENV: testing
+      VPP_SECRET_KEY: "test-secret-key"
+      MIGRATION_DB_URL: "postgresql+psycopg2://vpp:vpp@localhost:5432/vpp_migrations"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package with migration dependencies
+        run: pip install -e ".[dev,db,migrations]"
+      - name: alembic upgrade head
+        run: alembic -x url="$MIGRATION_DB_URL" upgrade head
+      - name: Schema drift check against PostgreSQL
+        run: pytest tests/test_alembic_drift.py -v
+        env:
+          VPP_MIGRATION_TEST_DB_URL: ${{ env.MIGRATION_DB_URL }}
+      - name: alembic downgrade base
+        run: alembic -x url="$MIGRATION_DB_URL" downgrade base
+      - name: alembic upgrade head (again, after a full downgrade)
+        run: alembic -x url="$MIGRATION_DB_URL" upgrade head
 
   security:
     runs-on: ubuntu-latest

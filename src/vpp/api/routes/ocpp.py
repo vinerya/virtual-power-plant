@@ -20,7 +20,7 @@ import logging
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from vpp.api.routes.protocols import get_registry
-from vpp.protocols.base import ProtocolRegistry  # noqa: TC001 (FastAPI resolves at runtime)
+from vpp.protocols.base import ProtocolRegistry
 from vpp.protocols.ocpp import OCPPAdapter
 from vpp.protocols.ocpp_j import OCPP16_SUBPROTOCOL
 

@@ -7,11 +7,12 @@ automated comparison tables (rule-based vs ML).
 from __future__ import annotations
 
 import logging
-from typing import Any
-
-import numpy as np
+from typing import TYPE_CHECKING, Any
 
 from vpp.research.base import ResearchExperiment, ResearchModel
+
+if TYPE_CHECKING:
+    import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ class ExperimentRunner:
         all_metrics: set[str] = set()
         for r in results.values():
             if isinstance(r, dict):
-                all_metrics.update(k for k in r.keys() if k != "error")
+                all_metrics.update(k for k in r if k != "error")
 
         best: dict[str, dict[str, Any]] = {}
         for metric in all_metrics:
@@ -101,9 +102,9 @@ class ExperimentRunner:
             if values:
                 # Lower is better for error metrics (mae, rmse), higher for r2, f1
                 if metric in ("r2", "f1", "precision", "recall"):
-                    best_name = max(values, key=values.get)
+                    best_name = max(values, key=values.__getitem__)
                 else:
-                    best_name = min(values, key=values.get)
+                    best_name = min(values, key=values.__getitem__)
                 best[metric] = {"model": best_name, "value": values[best_name]}
 
         return {

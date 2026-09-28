@@ -256,8 +256,8 @@ class MicrogridController:
 
         # Need to shed: shed lowest priority first
         sorted_loads = sorted(
-            [l for l in self._loads.values() if not l.is_shed and l.priority > 1],
-            key=lambda l: -l.priority,  # highest number = lowest priority
+            [ld for ld in self._loads.values() if not ld.is_shed and ld.priority > 1],
+            key=lambda ld: -ld.priority,  # highest number = lowest priority
         )
 
         excess = demand - available

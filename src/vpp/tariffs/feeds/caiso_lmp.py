@@ -28,12 +28,14 @@ import csv
 import io
 import zipfile
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from .base import PriceFeed, PricePoint
-from .cache import FeedCache
+
+if TYPE_CHECKING:
+    from .cache import FeedCache
 
 CAISO_URL = "https://oasis.caiso.com/oasisapi/SingleZip"
 

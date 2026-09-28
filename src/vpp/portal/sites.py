@@ -74,7 +74,8 @@ async def summarize_sites(session: AsyncSession, sites: list[SiteModel]) -> list
     )
     by_site: dict[str, list[ResourceModel]] = {sid: [] for sid in site_ids}
     for r in resources:
-        by_site[r.site_id].append(r)
+        if r.site_id is not None:  # always true: resources were selected by site_id
+            by_site[r.site_id].append(r)
 
     socs = await latest_soc(session, [r.id for r in resources if r.resource_type == "battery"])
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient  # noqa: TC002
+from httpx import AsyncClient
 from sqlalchemy import delete
 
 from vpp.api.websocket import event_to_channel

@@ -8,6 +8,7 @@ fetch always saw an empty history.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime
 
 import pytest
@@ -279,10 +280,8 @@ async def test_run_ingests_queued_messages_until_cancelled(db_session, app):
             pytest.fail("ingestor.run() did not persist queued messages in time")
     finally:
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
     rows = await BatteryStateRepository.get_latest(db_session, battery.id, limit=10)
     assert len(rows) == 2
@@ -319,10 +318,8 @@ async def test_run_skips_bad_message_and_continues(db_session, app):
             pytest.fail("ingestor.run() stalled after a malformed message")
     finally:
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
     rows = await BatteryStateRepository.get_latest(db_session, battery.id, limit=10)
     assert len(rows) == 1

@@ -66,7 +66,8 @@ def create_access_token(data: dict[str, Any], settings: Settings | None = None) 
     settings = settings or get_settings()
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expire_minutes)
     payload = {**data, "exp": expire}
-    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
+    token: str = jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
+    return token
 
 
 def decode_access_token(token: str, settings: Settings | None = None) -> TokenPayload:

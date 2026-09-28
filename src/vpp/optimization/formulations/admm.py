@@ -52,13 +52,24 @@ Returns dict
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 import pyomo.environ as pyo
 
 from ..solvers.pyomo_plugin import _try_import_pyomo
 from .dispatch import build_battery_dispatch_model
 from .fleet_dispatch import FleetBattery, FleetCoupling
+
+
+class _LocalSolution(TypedDict):
+    """One battery's solution of its local ADMM subproblem."""
+
+    p_charge: list[float]
+    p_discharge: list[float]
+    soc: list[float]
+    is_charging: list[int]
+    energy_cost: float
+    p_local: list[float]
 
 
 def _make_l1_consensus_term(
@@ -73,7 +84,6 @@ def _make_l1_consensus_term(
     """
 
     def _builder(model, params):
-        T = len(target)
         if not hasattr(model, "admm_dev"):
             model.admm_dev = pyo.Var(model.T, domain=pyo.NonNegativeReals)
 
@@ -104,7 +114,7 @@ def _solve_subproblem(
     solver_factory,
     pyo_mod,
     time_limit_s: float = 5.0,
-) -> dict[str, list[float]]:
+) -> _LocalSolution:
     """Solve battery r's local augmented Lagrangian subproblem."""
     params: dict[str, Any] = {
         "battery_capacity_kwh": battery.capacity_kwh,
@@ -136,7 +146,7 @@ def _solve_subproblem(
     p_chg = [float(pyo_mod.value(model.p_charge[t])) for t in range(T)]
     p_dis = [float(pyo_mod.value(model.p_discharge[t])) for t in range(T)]
     soc = [float(pyo_mod.value(model.soc[t])) for t in range(T)]
-    is_chg = [int(round(float(pyo_mod.value(model.is_charging[t])))) for t in range(T)]
+    is_chg = [round(float(pyo_mod.value(model.is_charging[t]))) for t in range(T)]
     energy_cost = float(pyo_mod.value(model.energy_cost))
 
     return {
@@ -145,7 +155,7 @@ def _solve_subproblem(
         "soc": soc,
         "is_charging": is_chg,
         "energy_cost": energy_cost,
-        "p_local": [d - c for c, d in zip(p_chg, p_dis)],
+        "p_local": [d - c for c, d in zip(p_chg, p_dis, strict=True)],
     }
 
 
@@ -202,7 +212,7 @@ def admm_fleet_solve(
     # u[r][t]: per-resource scaled dual.
     z = [0.0] * T
     u = [[0.0] * T for _ in range(R)]
-    per_battery: dict[str, dict[str, list[float]]] = {}
+    per_battery: dict[str, _LocalSolution] = {}
 
     primal_res = float("inf")
     dual_res = float("inf")

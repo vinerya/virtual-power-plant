@@ -52,23 +52,32 @@ def _token(sub: str = "u-1") -> str:
 
 @pytest.mark.parametrize("path", ["/api/v1/ws", "/ws"])
 def test_unauthenticated_socket_is_rejected(ws_app, path):
-    with TestClient(ws_app) as tc, pytest.raises(WebSocketDisconnect) as exc:
-        with tc.websocket_connect(path) as ws:
-            ws.receive_text()
+    with (
+        TestClient(ws_app) as tc,
+        pytest.raises(WebSocketDisconnect) as exc,
+        tc.websocket_connect(path) as ws,
+    ):
+        ws.receive_text()
     assert exc.value.code == ws_module.WS_POLICY_VIOLATION
 
 
 def test_invalid_token_is_rejected(ws_app):
-    with TestClient(ws_app) as tc, pytest.raises(WebSocketDisconnect) as exc:
-        with tc.websocket_connect("/api/v1/ws?token=not.a.jwt") as ws:
-            ws.receive_text()
+    with (
+        TestClient(ws_app) as tc,
+        pytest.raises(WebSocketDisconnect) as exc,
+        tc.websocket_connect("/api/v1/ws?token=not.a.jwt") as ws,
+    ):
+        ws.receive_text()
     assert exc.value.code == ws_module.WS_POLICY_VIOLATION
 
 
 def test_token_for_unknown_user_is_rejected(ws_app):
-    with TestClient(ws_app) as tc, pytest.raises(WebSocketDisconnect):
-        with tc.websocket_connect(f"/api/v1/ws?token={_token('ghost')}") as ws:
-            ws.receive_text()
+    with (
+        TestClient(ws_app) as tc,
+        pytest.raises(WebSocketDisconnect),
+        tc.websocket_connect(f"/api/v1/ws?token={_token('ghost')}") as ws,
+    ):
+        ws.receive_text()
 
 
 @pytest.mark.parametrize("path", ["/api/v1/ws", "/ws"])
@@ -115,14 +124,16 @@ def test_auth_can_be_disabled(ws_app, monkeypatch):
 
 
 def test_broadcast_reaches_socket_subscribed_via_query(ws_app):
-    with TestClient(ws_app) as tc:
-        with tc.websocket_connect(f"/api/v1/ws?token={_token()}&channels=alerts") as ws:
-            assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
-            tc.portal.call(ws_module.manager.broadcast, "alerts", {"title": "hi"})
-            msg = json.loads(ws.receive_text())
-            assert msg["channel"] == "alerts"
-            assert msg["data"] == {"title": "hi"}
-            assert "timestamp" in msg
+    with (
+        TestClient(ws_app) as tc,
+        tc.websocket_connect(f"/api/v1/ws?token={_token()}&channels=alerts") as ws,
+    ):
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
+        tc.portal.call(ws_module.manager.broadcast, "alerts", {"title": "hi"})
+        msg = json.loads(ws.receive_text())
+        assert msg["channel"] == "alerts"
+        assert msg["data"] == {"title": "hi"}
+        assert "timestamp" in msg
 
 
 # ---------------------------------------------------------------------------

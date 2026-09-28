@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -133,10 +134,9 @@ async def _mqtt_ingestion_loop(settings, *, retry_delay_seconds: float = 30.0) -
 
     adapter = _build_mqtt_adapter(settings)
     registry = get_registry()
-    try:
+    # ValueError: already registered (e.g. lifespan re-entered within one process, as in tests)
+    with contextlib.suppress(ValueError):
         registry.register(adapter)
-    except ValueError:
-        pass  # already registered (e.g. lifespan re-entered within one process, as in tests)
 
     ingestor = MQTTTelemetryIngestor(adapter, get_session_factory())
 
@@ -191,10 +191,9 @@ async def _modbus_device_loop(
     adapter.subscribe("*", persister.handle_message)
 
     registry = get_registry()
-    try:
+    # ValueError: already registered (e.g. lifespan re-entered within one process, as in tests)
+    with contextlib.suppress(ValueError):
         registry.register(adapter)
-    except ValueError:
-        pass  # already registered (e.g. lifespan re-entered within one process, as in tests)
 
     try:
         connected = False

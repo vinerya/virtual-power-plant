@@ -51,12 +51,15 @@ class ScenarioSet:
                 return scenario
         return None
 
-    def get_expected_value(self, key: str) -> float:
-        """Calculate expected value for a given key across scenarios."""
+    def get_expected_value(self, key: str) -> Any:
+        """Calculate expected value for a given key across scenarios.
+
+        A float for scalar scenario data; array-valued data yields an array.
+        """
         return sum(s.probability * s.data.get(key, 0.0) for s in self.scenarios)
 
-    def get_percentile(self, key: str, percentile: float) -> float:
-        """Get percentile value for a given key."""
+    def get_percentile(self, key: str, percentile: float) -> Any:
+        """Get percentile value for a given key (float, or ndarray for array data)."""
         values = [s.data.get(key, 0.0) for s in self.scenarios]
         return np.percentile(values, percentile)
 
@@ -82,7 +85,9 @@ class ScenarioGenerator:
                 mean=0, sigma=volatility, size=len(base_prices)
             )
 
-            scenario_prices = [base * mult for base, mult in zip(base_prices, price_multipliers)]
+            scenario_prices = [
+                base * mult for base, mult in zip(base_prices, price_multipliers, strict=True)
+            ]
 
             scenario = Scenario(
                 id=f"price_scenario_{i}",
@@ -109,7 +114,8 @@ class ScenarioGenerator:
                 errors[j] = 0.7 * errors[j - 1] + 0.3 * errors[j]
 
             scenario_generation = [
-                max(0, base * (1 + error)) for base, error in zip(base_forecast, errors)
+                max(0, base * (1 + error))
+                for base, error in zip(base_forecast, errors, strict=True)
             ]
 
             scenario = Scenario(
@@ -133,7 +139,8 @@ class ScenarioGenerator:
             load_variations = np.random.normal(1.0, uncertainty, len(base_load))
 
             scenario_load = [
-                max(0, base * variation) for base, variation in zip(base_load, load_variations)
+                max(0, base * variation)
+                for base, variation in zip(base_load, load_variations, strict=True)
             ]
 
             scenario = Scenario(
@@ -349,7 +356,7 @@ class CVaRStochasticPlugin(OptimizationPlugin):
 
         # Check if required packages are available
         try:
-            import cvxpy as cp
+            import cvxpy  # noqa: F401 -- availability probe (import must succeed)
 
             self._solver_available = True
             self.logger.info("CVaR stochastic plugin initialized with CVXPY")
@@ -512,7 +519,7 @@ class StochasticOptimizationManager:
         self,
         base_data: dict[str, Any],
         num_scenarios: int = 10,
-        uncertainty_config: dict[str, float] = None,
+        uncertainty_config: dict[str, float] | None = None,
     ) -> OptimizationProblem:
         """Create a stochastic optimization problem with scenarios."""
 

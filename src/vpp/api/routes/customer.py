@@ -16,11 +16,13 @@ Operator accounts get 403 here; operators inspect customers through
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import (
-    AsyncSession,  # noqa: TC002 -- FastAPI resolves dependency annotations at runtime
+    AsyncSession,
 )
 
 from vpp.auth.security import require_role
@@ -254,11 +256,15 @@ async def unenroll(
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(_customer),
 ):
-    result = await session.execute(
-        delete(ProgramEnrollmentModel).where(
-            ProgramEnrollmentModel.user_id == user.id,
-            ProgramEnrollmentModel.program_id == program_id,
-        )
+    # DML statements return a CursorResult (which carries ``rowcount``).
+    result = cast(
+        "CursorResult[Any]",
+        await session.execute(
+            delete(ProgramEnrollmentModel).where(
+                ProgramEnrollmentModel.user_id == user.id,
+                ProgramEnrollmentModel.program_id == program_id,
+            )
+        ),
     )
     if result.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not enrolled in this program")

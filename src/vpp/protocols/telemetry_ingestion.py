@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from vpp.protocols.base import ProtocolMessage
-from vpp.protocols.mqtt import MQTTAdapter
+    from vpp.protocols.base import ProtocolMessage
+    from vpp.protocols.mqtt import MQTTAdapter
 
 logger = logging.getLogger(__name__)
 

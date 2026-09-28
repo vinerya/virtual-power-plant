@@ -126,7 +126,7 @@ class TestOptimizationFramework(unittest.TestCase):
         ]
 
         solve_times = []
-        for i, state in enumerate(states * 10):  # 30 rapid calls
+        for state in states * 10:  # 30 rapid calls
             problem = create_realtime_problem(state)
             start_time = time.time()
             result = solve_with_fallback(problem, timeout_ms=100)
@@ -433,7 +433,7 @@ class TestOptimizationFramework(unittest.TestCase):
         print("✓ Large problem (168 hours, 50 scenarios) handled")
 
         # Test 2: Repeated problem solving
-        for i in range(20):
+        for _i in range(20):
             problem = create_stochastic_problem(self.base_data, num_scenarios=10)
             result = solve_with_fallback(problem, timeout_ms=1000)
             self.assertIn(
@@ -443,7 +443,7 @@ class TestOptimizationFramework(unittest.TestCase):
 
         # Test 3: Engine reuse
         engine = create_optimization_engine()
-        for i in range(10):
+        for _i in range(10):
             problem = create_realtime_problem({"grid_frequency": 60.0, "battery_soc": 0.5})
             result = engine.solve(problem)
             self.assertIn(
@@ -501,7 +501,7 @@ class TestOptimizationFramework(unittest.TestCase):
             }
         )
 
-        for i in range(10):
+        for _i in range(10):
             problem = create_realtime_problem({"grid_frequency": 60.0})
             result = engine.solve(problem)
             # Should still work despite constraints
@@ -536,7 +536,7 @@ def run_stress_tests():
 
     # Start 5 concurrent workers
     threads = []
-    for i in range(5):
+    for _ in range(5):
         t = threading.Thread(target=worker)
         t.start()
         threads.append(t)
@@ -569,7 +569,7 @@ def run_stress_tests():
         large_problems.append(problem)
 
     solved_count = 0
-    for i, problem in enumerate(large_problems):
+    for problem in large_problems:
         result = solve_with_fallback(problem, timeout_ms=3000)
         if result.status in [OptimizationStatus.SUCCESS, OptimizationStatus.FALLBACK_USED]:
             solved_count += 1

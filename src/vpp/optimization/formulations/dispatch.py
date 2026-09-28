@@ -227,12 +227,12 @@ def build_battery_dispatch_model(
     if objective_terms:
         for i, term in enumerate(objective_terms):
             try:
-                e = term(m, params)
+                term_expr = term(m, params)
             except Exception as exc:
                 raise RuntimeError(
                     f"objective_term #{i} ({getattr(term, '__name__', term)}) failed: {exc}"
                 ) from exc
-            extra_terms.append(e)
+            extra_terms.append(term_expr)
 
     if extra_terms:
         m.cost = pyo.Objective(expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize)

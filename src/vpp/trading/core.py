@@ -67,7 +67,7 @@ class TradingEngine:
     - Strategy execution
     """
 
-    def __init__(self, config: dict[str, Any] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         """
         Initialize trading engine.
 
@@ -95,7 +95,7 @@ class TradingEngine:
         # Threading and execution
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
-        self._order_queue = queue.Queue()
+        self._order_queue: queue.Queue[Order] = queue.Queue()
 
         # Performance tracking
         self.metrics = {
@@ -107,7 +107,7 @@ class TradingEngine:
         }
 
         # Event callbacks
-        self.callbacks = {
+        self.callbacks: dict[str, list[Callable[..., Any]]] = {
             "on_order_filled": [],
             "on_trade_executed": [],
             "on_risk_breach": [],
@@ -262,7 +262,7 @@ class TradingEngine:
         self.market_data_manager.initialize(data_config)
 
         # Initialize markets
-        for market_name in self.config.get("markets", []):
+        for _market_name in self.config.get("markets", []):
             # Create market instances based on configuration
             pass
 
@@ -543,7 +543,7 @@ class PortfolioManager:
         """Get total portfolio P&L."""
         return self.portfolio.calculate_total_pnl()
 
-    def get_trades(self, market: str = None) -> list[Trade]:
+    def get_trades(self, market: str | None = None) -> list[Trade]:
         """Get trades, optionally filtered by market."""
         if market:
             return [trade for trade in self.trades if trade.market == market]
@@ -596,8 +596,8 @@ class RiskManager:
         """
         reasons: list[str] = []
         prices = dict(market_prices or {})
-        for market, position in portfolio.positions.items():
-            prices.setdefault(market, position.average_price)
+        for market, held in portfolio.positions.items():
+            prices.setdefault(market, held.average_price)
         price = reference_price or order.price or prices.get(order.market, 0.0)
         if price:
             prices[order.market] = price
@@ -807,6 +807,7 @@ class MarketDataManager:
         """Initialize market data providers."""
         provider_type = config.get("type", "simulated")
 
+        provider: MarketDataProvider
         if provider_type == "simulated":
             from .data import SimulatedDataProvider
 

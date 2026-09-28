@@ -30,8 +30,8 @@ from .base import PriceFeed, PricePoint
 try:
     from vpp.protocols.openadr import DREvent, DRSignalType
 except Exception:  # pragma: no cover  (protocols extra optional)
-    DREvent = None  # type: ignore[assignment]
-    DRSignalType = None  # type: ignore[assignment]
+    DREvent = None  # type: ignore[assignment,misc]
+    DRSignalType = None  # type: ignore[assignment,misc]
 
 
 class OpenADRPriceFeed(PriceFeed):

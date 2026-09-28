@@ -22,6 +22,7 @@ never see stale data.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import time
@@ -149,10 +150,8 @@ class FeedCache:
                 for p in points
             ],
         }
-        try:
+        with contextlib.suppress(OSError):
             path.write_text(json.dumps(payload))
-        except OSError:
-            pass
 
     def _load_persisted(self, key: str) -> tuple[float, list[PricePoint], str] | None:
         path = self._persist_path(key)
@@ -177,10 +176,8 @@ class FeedCache:
     def _delete_persisted(self, key: str) -> None:
         path = self._persist_path(key)
         if path is not None and path.exists():
-            try:
+            with contextlib.suppress(OSError):
                 path.unlink()
-            except OSError:
-                pass
 
 
 # Module-level default cache (opt-in for adapters).

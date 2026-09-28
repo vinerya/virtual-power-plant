@@ -17,12 +17,14 @@ so that perfect-foresight MPC == offline optimum (within solver tolerance).
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .mpc import MPCController, MPCDecision, MPCStep
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass

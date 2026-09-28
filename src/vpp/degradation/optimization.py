@@ -43,6 +43,7 @@ Phenomenon -> optimization-term mapping
 
 from __future__ import annotations
 
+import itertools
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
@@ -88,7 +89,7 @@ class WearCost:
     @classmethod
     def from_preset(
         cls,
-        preset: Mapping[str, Mapping[str, float]],
+        preset: Mapping[str, Mapping[str, Any]],
         capacity_kwh: float,
         replacement_cost_dollars: float,
         eol_capacity_fraction: float = 0.8,
@@ -331,7 +332,7 @@ def _interp_cycle_cost(curve: dict[float, float], dod: float) -> float:
         return float(knots[0][1])
     if dod >= knots[-1][0]:
         return float(knots[-1][1])
-    for (d0, c0), (d1, c1) in zip(knots, knots[1:]):
+    for (d0, c0), (d1, c1) in itertools.pairwise(knots):
         if d0 <= dod <= d1:
             frac = (dod - d0) / (d1 - d0)
             return float(c0 + frac * (c1 - c0))

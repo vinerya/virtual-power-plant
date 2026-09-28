@@ -37,7 +37,7 @@ from .strategies import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -143,6 +143,8 @@ def generate_synthetic_prices(
     for ts in timestamps:
         for market in markets:
             data = provider.generate(market, ts)
+            if data is None or data.last_price is None:
+                raise RuntimeError(f"simulated provider produced no price for {market} at {ts}")
             prices[market].append(round(float(data.last_price), 4))
     return timestamps, prices
 
@@ -193,7 +195,7 @@ def _sharpe(equity: Sequence[float], initial: float, interval_minutes: float) ->
 
 def run_backtest(
     strategy: TradingStrategy,
-    prices: dict[str, Sequence[float]],
+    prices: Mapping[str, Sequence[float]],
     *,
     timestamps: Sequence[datetime] | None = None,
     interval_minutes: float = 60.0,
@@ -222,9 +224,9 @@ def run_backtest(
         timestamps = [start + timedelta(minutes=interval_minutes * i) for i in range(periods)]
     elif len(timestamps) != periods:
         raise ValueError("timestamps must match the price series length")
-    for market, series in prices.items():
+    for name, series in prices.items():
         if any((not math.isfinite(p)) or p <= 0 for p in series):
-            raise ValueError(f"Prices for {market} must be positive and finite")
+            raise ValueError(f"Prices for {name} must be positive and finite")
 
     portfolio = Portfolio(initial_cash=initial_cash)
     trade_log: list[dict[str, Any]] = []
@@ -253,11 +255,13 @@ def run_backtest(
                 continue
             last = bar[market]
             if signal.get("order_type") == "market":
-                fill_price = (
+                quote = (
                     market_data[market].ask_price
                     if side == "buy"
                     else market_data[market].bid_price
                 )
+                assert quote is not None  # bid/ask are always set from the bar above
+                fill_price = quote
             else:
                 limit = float(signal.get("price") or 0.0)
                 marketable = last <= limit if side == "buy" else last >= limit

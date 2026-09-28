@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from .calendar import SeasonConfig, is_weekend_or_holiday
-from .meter import MeterTrace
+
+if TYPE_CHECKING:
+    from .meter import MeterTrace
 
 # ---------------------------------------------------------------------------
 # Bill data structures
@@ -251,7 +253,7 @@ class TieredEnergyRate:
 
     def compute(self, trace: MeterTrace, period: BillingPeriod) -> list[BillLineItem]:
         total_kwh = 0.0
-        for ts, imp in zip(trace.timestamps, trace.import_kwh):
+        for ts, imp in zip(trace.timestamps, trace.import_kwh, strict=True):
             if period.start <= ts < period.end:
                 total_kwh += imp
         items: list[BillLineItem] = []

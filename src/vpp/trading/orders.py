@@ -110,9 +110,7 @@ class Order(ABC):
 
     def is_expired(self) -> bool:
         """Check if order has expired."""
-        if self.expire_time and datetime.now() > self.expire_time:
-            return True
-        return False
+        return bool(self.expire_time and datetime.now() > self.expire_time)
 
 
 class MarketOrder(Order):
@@ -427,7 +425,7 @@ class OrderBook:
             return (best_bid + best_ask) / 2
         return None
 
-    def get_market_depth(self, levels: int = 5) -> dict[str, list[dict[str, float]]]:
+    def get_market_depth(self, levels: int = 5) -> dict[str, Any]:
         """Get market depth (top N levels)."""
         # Sort bids (highest first) and asks (lowest first)
         sorted_bids = sorted(self.bids.items(), key=lambda x: x[0], reverse=True)
@@ -479,7 +477,7 @@ class OrderBook:
 
     def match_order(self, incoming_order: Order) -> list[dict[str, Any]]:
         """Match incoming order against the book."""
-        matches = []
+        matches: list[dict[str, Any]] = []
 
         # FOK is all-or-nothing: probe depth without mutating any order state.
         if (
@@ -573,7 +571,7 @@ class OrderBook:
 
 
 def create_order(
-    order_type: str, market: str, side: str, quantity: float, price: float = None, **kwargs
+    order_type: str, market: str, side: str, quantity: float, price: float | None = None, **kwargs
 ) -> Order:
     """
     Factory function to create orders of different types.
@@ -627,7 +625,7 @@ def create_order(
 
 
 def validate_order_parameters(
-    order_type: str, market: str, side: str, quantity: float, price: float = None, **kwargs
+    order_type: str, market: str, side: str, quantity: float, price: float | None = None, **kwargs
 ) -> list[str]:
     """
     Validate order parameters.
@@ -664,9 +662,8 @@ def validate_order_parameters(
         "fok",
         "immediate_or_cancel",
         "ioc",
-    ]:
-        if price is None or price <= 0:
-            errors.append(f"{order_type} orders require a positive price")
+    ] and (price is None or price <= 0):
+        errors.append(f"{order_type} orders require a positive price")
 
     if order_type == "stop_limit":
         stop_price = kwargs.get("stop_price")

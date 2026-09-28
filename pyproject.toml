@@ -55,6 +55,8 @@ db = [
 ]
 migrations = [
     "alembic>=1.13.0",
+    # alembic/env.py rewrites postgresql+asyncpg URLs to the sync psycopg2 driver.
+    "psycopg2-binary>=2.9",
 ]
 protocols = [
     "paho-mqtt>=1.6.0",
@@ -91,8 +93,11 @@ dev = [
     "httpx>=0.26.0",
     "respx>=0.21.0",
     "factory-boy>=3.3.0",
-    "ruff>=0.2.0",
-    "mypy>=1.8.0",
+    # Linters pinned to the versions CI runs (.github/workflows/ci.yml) so local
+    # and CI results match; bump them together.
+    "ruff==0.15.8",
+    "mypy==2.3.1",
+    "types-PyYAML",
     "pre-commit>=3.6.0",
     "bandit>=1.7.0",
 ]
@@ -139,6 +144,41 @@ ignore = [
     "SIM108", # use ternary operator (readability preference)
 ]
 
+[tool.ruff.lint.flake8-type-checking]
+# FastAPI, Pydantic and SQLAlchemy evaluate annotations at *runtime*
+# (request/response validation, dependency injection, ``Mapped[...]``
+# column inference).  Moving the names those annotations reference into an
+# ``if TYPE_CHECKING:`` block turns them into NameErrors at import/request
+# time, so tell ruff which classes resolve their annotations at runtime.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlalchemy.orm.DeclarativeBase",
+    "vpp.db.base.Base",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# TC001-003 are unsafe where annotations are resolved at runtime but ruff
+# cannot see it:
+# - api/ and auth/: FastAPI inspects route and dependency signatures
+#   (``session: AsyncSession = Depends(get_db)``, ``request: Request``) via
+#   ``typing.get_type_hints`` on every app start.  Routes are registered via
+#   ``router.get(...)`` on an *instance*, which ``runtime-evaluated-decorators``
+#   cannot match.
+# - db/: SQLAlchemy resolves ``Mapped[datetime]`` on plain mixins
+#   (``TimestampMixin``) that do not inherit from ``Base``.
+# - tests/: pytest fixtures and FastAPI dependency overrides; deferring
+#   imports there buys nothing and risks fixture-resolution surprises.
+"src/vpp/api/**" = ["TC001", "TC002", "TC003"]
+"src/vpp/auth/**" = ["TC001", "TC002", "TC003"]
+"src/vpp/db/**" = ["TC001", "TC002", "TC003"]
+"tests/**" = ["TC001", "TC002", "TC003"]
+# ``pyo = pytest.importorskip("pyomo.environ")`` must run before the pyomo-
+# dependent imports so the module is skipped (not errored) without pyomo.
+"tests/test_admm_fleet.py" = ["E402"]
+"tests/test_fleet_dispatch.py" = ["E402"]
+"tests/test_multi_resource_mpc.py" = ["E402"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["vpp"]
 # The repo-root ``alembic/`` migrations directory would otherwise make ruff
@@ -147,11 +187,28 @@ known-third-party = ["alembic"]
 
 [tool.mypy]
 python_version = "3.10"
+# Understands pydantic field defaults given positionally (``Field(24, gt=0)``),
+# which plain dataclass_transform treats as required fields.
+plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# benchmarks/ is the repo-root benchmark harness, imported lazily by the
+# ``vpp benchmark`` CLI.  It is not part of the shipped package: mypy follows
+# it for types but its own findings are out of scope for ``mypy src/vpp``.
+module = ["benchmarks", "benchmarks.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# vpp.research is non-production numerical exploration code.  NumPy ufuncs and
+# reductions are typed as returning ``Any``, so ``warn_return_any`` would force
+# a cast on nearly every function; every other check still applies.
+module = ["vpp.research.*"]
+warn_return_any = false
 
 [tool.pytest.ini_options]
 minversion = "7.0"

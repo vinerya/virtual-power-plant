@@ -28,10 +28,14 @@ References
 
 from __future__ import annotations
 
+import itertools
 import math
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 # Boltzmann constant in eV/K (Arrhenius with activation energy in eV)
 _K_B_EV_PER_K = 8.617333262e-5
@@ -231,7 +235,7 @@ def _interpolate_cycle_life(curve: dict[float, float], dod: float) -> float:
         return float(knots[0][1])
     if dod >= knots[-1][0]:
         return float(knots[-1][1])
-    for (d0, n0), (d1, n1) in zip(knots, knots[1:]):
+    for (d0, n0), (d1, n1) in itertools.pairwise(knots):
         if d0 <= dod <= d1:
             frac = (dod - d0) / (d1 - d0)
             return float(n0 + frac * (n1 - n0))
@@ -269,7 +273,8 @@ class RainflowDegradation(DegradationModel):
 
     cycle_life_curve: dict[float, float]
     eol_capacity_fraction: float = 0.8
-    _rainflow_module: object = field(default=None, init=False, repr=False)
+    # The optional ``rainflow`` module (untyped third-party), bound in __post_init__.
+    _rainflow_module: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not self.cycle_life_curve:
@@ -298,7 +303,7 @@ class RainflowDegradation(DegradationModel):
         loss_amplitude = 1.0 - self.eol_capacity_fraction
         total_loss = 0.0
         # rainflow.extract_cycles yields (range, mean, count, i_start, i_end)
-        for cycle in rf.extract_cycles(list(soc_trace)):  # type: ignore[union-attr]
+        for cycle in rf.extract_cycles(list(soc_trace)):
             rng = float(cycle[0])
             count = float(cycle[2])
             # SOC range is already a fraction in [0, 1], i.e. DoD of the cycle.
@@ -326,7 +331,7 @@ class RainflowDegradation(DegradationModel):
 #   8k at 50 % DoD, 3k at 80 % DoD, 1.5k at 100 % DoD.
 # LFP is well-known for being more robust at high SOC than NMC, so we use
 # a smaller soc_stress_coefficient.
-LFP_PRESET: dict[str, dict[str, float]] = {
+LFP_PRESET: dict[str, dict[str, Any]] = {
     "throughput": {
         "cycles_to_eol": 6000.0,
         "eol_capacity_fraction": 0.8,
@@ -356,7 +361,7 @@ LFP_PRESET: dict[str, dict[str, float]] = {
 #   ~8-10 year calendar life at 25 degC / 50 % SOC.
 # - Schmalstieg 2014 reports stronger SOC-stress sensitivity than LFP and
 #   activation energy ~0.5 eV.
-NMC_PRESET: dict[str, dict[str, float]] = {
+NMC_PRESET: dict[str, dict[str, Any]] = {
     "throughput": {
         "cycles_to_eol": 3000.0,
         "eol_capacity_fraction": 0.8,

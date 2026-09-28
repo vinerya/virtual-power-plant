@@ -18,7 +18,7 @@ Non-anticipativity: p_charge[0,s], p_discharge[0,s], is_charging[0,s] are
 identical across all scenarios. Encoded via explicit equality constraints to
 the first scenario s=0 (cleaner than introducing extra "stage-1" vars).
 
-Risk measure (Rockafellar–Uryasev linearization of CVaR_alpha):
+Risk measure (Rockafellar-Uryasev linearization of CVaR_alpha):
     eta : free real
     z[s] >= cost[s] - eta,   z[s] >= 0
     CVaR_alpha = eta + (1 / (1 - alpha)) * sum_s pi[s] * z[s]
@@ -33,10 +33,12 @@ emphasizes worst-case scenarios.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pyomo.environ as pyo
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 REQUIRED_DET_KEYS = (
     "battery_capacity_kwh",
@@ -81,7 +83,7 @@ def _validate(params: dict[str, Any], scenarios: Sequence[Any]) -> None:
     Ts = {len(_scenario_prices(s)) for s in scenarios}
     if len(Ts) != 1:
         raise ValueError(f"scenarios have inconsistent horizons: {Ts}")
-    if list(Ts)[0] == 0:
+    if next(iter(Ts)) == 0:
         raise ValueError("scenario prices must be non-empty")
     smin, smax, s0 = params["soc_min"], params["soc_max"], params["soc_init"]
     if not (0 <= smin < smax <= 1):
@@ -237,7 +239,7 @@ def build_stochastic_dispatch_model(
     # Expected cost expression
     m.expected_cost = pyo.Expression(expr=sum(m.pi[s] * m.cost_s[s] for s in m.S))
 
-    # CVaR via Rockafellar–Uryasev:
+    # CVaR via Rockafellar-Uryasev:
     #   CVaR = eta + (1 / (1 - alpha)) * sum_s pi_s * z_s
     #   z_s >= cost_s - eta,  z_s >= 0
     m.eta = pyo.Var(domain=pyo.Reals)

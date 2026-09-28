@@ -140,7 +140,7 @@ async def test_simulate_bill(client: AsyncClient, auth_headers: dict):
 @pytest.mark.asyncio
 async def test_simulate_with_inline_urdb(client: AsyncClient, auth_headers: dict):
     preset = _load_preset_dict()
-    body, start = _build_synthetic_trace_request(urdb_json=preset)
+    body, _start = _build_synthetic_trace_request(urdb_json=preset)
     resp = await client.post("/api/v1/tariffs/simulate", json=body, headers=auth_headers)
     assert resp.status_code == 200, resp.text
     payload = resp.json()

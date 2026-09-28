@@ -185,7 +185,7 @@ class TestMicrogridController:
         assert ctrl.state == MicrogridState.ISLANDED
 
         # Simulate grid recovery with matching conditions
-        gfm = list(ctrl._inverters.values())[0]
+        gfm = next(iter(ctrl._inverters.values()))
         gfm.state.frequency_hz = 50.0
         gfm.state.voltage_pu = 1.0
 

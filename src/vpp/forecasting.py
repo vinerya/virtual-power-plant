@@ -3,12 +3,15 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
 from .exceptions import ForecastError
 from .resources import EnergyResource
+
+if TYPE_CHECKING:
+    from .resources import WindTurbine
 
 
 @dataclass
@@ -110,7 +113,7 @@ class SimpleForecaster(Forecaster):
             )
 
         except Exception as e:
-            raise ForecastError(f"Forecasting failed: {e!s}")
+            raise ForecastError(f"Forecasting failed: {e!s}") from e
 
 
 class WeatherBasedForecaster(Forecaster):
@@ -147,16 +150,14 @@ class WeatherBasedForecaster(Forecaster):
                             resource.rated_power * (irradiance / 1000) * (1 - 0.004 * (temp - 25))
                         )
                     elif hasattr(resource, "rotor_diameter"):  # Wind
+                        turbine = cast("WindTurbine", resource)
                         wind_speed = weather.get("wind_speed", 0)
-                        if (
-                            wind_speed < resource.cut_in_speed
-                            or wind_speed > resource.cut_out_speed
-                        ):
+                        if wind_speed < turbine.cut_in_speed or wind_speed > turbine.cut_out_speed:
                             value = 0
                         else:
                             value = min(
-                                resource.rated_power,
-                                resource.rated_power * (wind_speed / resource.rated_speed) ** 3,
+                                turbine.rated_power,
+                                turbine.rated_power * (wind_speed / turbine.rated_speed) ** 3,
                             )
                     else:
                         value = resource.rated_power * 0.5
@@ -183,7 +184,7 @@ class WeatherBasedForecaster(Forecaster):
             )
 
         except Exception as e:
-            raise ForecastError(f"Weather-based forecasting failed: {e!s}")
+            raise ForecastError(f"Weather-based forecasting failed: {e!s}") from e
 
 
 def get_forecaster(name: str, config: ForecastConfig | None = None) -> Forecaster:

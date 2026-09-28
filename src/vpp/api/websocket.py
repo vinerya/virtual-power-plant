@@ -50,7 +50,7 @@ from jose import jwt
 from pydantic import BaseModel
 
 from vpp.auth.security import decode_access_token, get_current_user
-from vpp.db.models import UserModel  # noqa: TC001 -- runtime annotation (FastAPI)
+from vpp.db.models import UserModel
 from vpp.events.bus import Event, EventBus, EventType
 from vpp.schemas.auth import TokenPayload, UserRole
 from vpp.settings import get_settings

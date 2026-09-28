@@ -179,7 +179,8 @@ class VPPConfig(BaseConfig):
             result.add_error("Timezone cannot be empty")
 
         # Validate component configurations
-        components = [
+        # Each component config exposes ``validate() -> ConfigValidationResult``.
+        components: list[tuple[str, Any]] = [
             ("optimization", self.optimization),
             ("heuristics", self.heuristics),
             ("rules", self.rules),
@@ -350,8 +351,8 @@ class VPPConfig(BaseConfig):
         self,
         name: str,
         resource_type: str,
-        parameters: dict[str, Any] = None,
-        constraints: dict[str, Any] = None,
+        parameters: dict[str, Any] | None = None,
+        constraints: dict[str, Any] | None = None,
     ) -> None:
         """Add a resource to the configuration."""
         resource = ResourceConfig(

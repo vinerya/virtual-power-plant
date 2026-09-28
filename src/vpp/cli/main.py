@@ -223,6 +223,7 @@ def benchmark_list() -> None:
 def benchmark_run(scenario_name: str, seed: int) -> None:
     """Run a benchmark scenario with all built-in methods."""
     from benchmarks.runner import (
+        BenchmarkMethod,
         BenchmarkRunner,
         NoOpMethod,
         RuleBasedPeakShaving,
@@ -235,7 +236,7 @@ def benchmark_run(scenario_name: str, seed: int) -> None:
     click.echo(f"  {scenario.description}\n")
 
     runner = BenchmarkRunner()
-    methods = [NoOpMethod(), RuleBasedPeakShaving(), SimpleV2GScheduler()]
+    methods: list[BenchmarkMethod] = [NoOpMethod(), RuleBasedPeakShaving(), SimpleV2GScheduler()]
 
     for method in methods:
         try:
@@ -255,6 +256,7 @@ def benchmark_run(scenario_name: str, seed: int) -> None:
 def benchmark_report(scenario: str | None, seeds: str) -> None:
     """Generate a full benchmark comparison report."""
     from benchmarks.runner import (
+        BenchmarkMethod,
         BenchmarkRunner,
         NoOpMethod,
         RuleBasedPeakShaving,
@@ -263,7 +265,7 @@ def benchmark_report(scenario: str | None, seeds: str) -> None:
     from benchmarks.scenarios import ScenarioRegistry
 
     seed_list = [int(s.strip()) for s in seeds.split(",")]
-    methods = [NoOpMethod(), RuleBasedPeakShaving(), SimpleV2GScheduler()]
+    methods: list[BenchmarkMethod] = [NoOpMethod(), RuleBasedPeakShaving(), SimpleV2GScheduler()]
 
     runner = BenchmarkRunner()
     scenario_names = [scenario] if scenario else ScenarioRegistry.list_all()

@@ -23,21 +23,29 @@ backtest harness) provide a fresh ``soc_init`` from telemetry on each tick.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .base import (
     OptimizationProblem,
     OptimizationStatus,
 )
+from .formulations.admm import admm_fleet_solve
 from .formulations.dispatch import build_battery_dispatch_model
+from .formulations.fleet_dispatch import (
+    FleetBattery,
+    FleetCoupling,
+    build_fleet_dispatch_model,
+)
 from .formulations.stochastic import build_stochastic_dispatch_model
 from .solvers.pyomo_plugin import (
     SimpleBatteryDispatchRules,
     _try_import_pyomo,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from datetime import datetime
 
 # Try Scenario import only for typing; not strictly required at runtime since
 # the stochastic builder accepts dicts too.
@@ -221,7 +229,7 @@ class MPCController:
         try:
             p_chg = [float(pyo.value(model.p_charge[t])) for t in range(T)]
             p_dis = [float(pyo.value(model.p_discharge[t])) for t in range(T)]
-            is_chg = [int(round(float(pyo.value(model.is_charging[t])))) for t in range(T)]
+            is_chg = [round(float(pyo.value(model.is_charging[t]))) for t in range(T)]
             soc = [float(pyo.value(model.soc[t])) for t in range(T)]
             obj = float(pyo.value(model.cost))
         except Exception:
@@ -298,6 +306,8 @@ class MPCController:
             prob = getattr(sc, "probability", None)
             if prob is None and isinstance(sc, dict):
                 prob = sc.get("probability", 1.0 / len(scenarios))
+            if prob is None:
+                raise ValueError("scenario missing probability")
             norm_scen.append({"probability": float(prob), "prices": prices})
 
         params["cvar_alpha"] = cfg.cvar_alpha
@@ -321,17 +331,14 @@ class MPCController:
         from .solvers.pyomo_plugin import PyomoPlugin
 
         status, _ = PyomoPlugin._extract_status(results)
-        if status != OptimizationStatus.SUCCESS:
-            if cfg.fallback_on_failure:
-                return self._do_fallback(
-                    mpc_step, params, t_start, reason=f"status={status.value}"
-                )
+        if status != OptimizationStatus.SUCCESS and cfg.fallback_on_failure:
+            return self._do_fallback(mpc_step, params, t_start, reason=f"status={status.value}")
 
         pyo = self._pyo
         # Stage-1 (here-and-now) — non-anticipativity ties all scenarios at t=0.
         p_chg0 = float(pyo.value(model.p_charge[0, 0]))
         p_dis0 = float(pyo.value(model.p_discharge[0, 0]))
-        is_chg0 = int(round(float(pyo.value(model.is_charging[0, 0]))))
+        is_chg0 = round(float(pyo.value(model.is_charging[0, 0])))
         obj = float(pyo.value(model.total_cost))
 
         return MPCDecision(
@@ -468,13 +475,6 @@ class MPCController:
 # Multi-resource MPC controller (Milestone 4)
 ###############################################################################
 
-from .formulations.admm import admm_fleet_solve
-from .formulations.fleet_dispatch import (
-    FleetBattery,
-    FleetCoupling,
-    build_fleet_dispatch_model,
-)
-
 
 @dataclass
 class MultiResourceMPCConfig:
@@ -603,7 +603,7 @@ class MultiResourceMPCController:
                     tolerance=cfg.admm_tolerance,
                     subproblem_time_limit_s=cfg.admm_subproblem_time_limit_s,
                 )
-                per_resource = {
+                per_resource: dict[str, dict[str, float]] = {
                     rid: {
                         "p_charge_kw": sol["p_charge"][0],
                         "p_discharge_kw": sol["p_discharge"][0],
@@ -677,11 +677,11 @@ class MultiResourceMPCController:
             return self._fallback_decision(step_input, t_start, reason=f"status={status.value}")
 
         pyo = self._pyo
-        per_resource: dict[str, dict[str, float]] = {}
+        per_resource = {}
         for b in batts:
             p_chg0 = float(pyo.value(model.p_charge[b.id, 0]))
             p_dis0 = float(pyo.value(model.p_discharge[b.id, 0]))
-            is_chg0 = int(round(float(pyo.value(model.is_charging[b.id, 0]))))
+            is_chg0 = round(float(pyo.value(model.is_charging[b.id, 0])))
             per_resource[b.id] = {
                 "p_charge_kw": p_chg0,
                 "p_discharge_kw": p_dis0,

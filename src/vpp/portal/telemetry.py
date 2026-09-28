@@ -239,8 +239,8 @@ async def latest_soc(session: AsyncSession, resource_ids: list[str]) -> dict[str
     stmt2 = select(rt.resource_id, rt.timestamp, rt.state_of_charge).join(
         sub2, and_(rt.resource_id == sub2.c.resource_id, rt.timestamp == sub2.c.ts)
     )
-    for rid, ts, soc in (await session.execute(stmt2)).all():
-        _offer(rid, ts, soc)
+    for rid, ts, rt_soc in (await session.execute(stmt2)).all():
+        _offer(rid, ts, rt_soc)
 
     return {rid: soc for rid, (_ts, soc) in newest.items()}
 
