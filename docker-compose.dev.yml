@@ -1,25 +1,33 @@
-version: "3.9"
-
-# Development overrides — run with:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Development overlay - use together with docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# - API runs with --reload against the mounted ./src (the image installs the
+#   package in editable mode from /app/src) and DEBUG logging.
+# - PostgreSQL is published on 127.0.0.1:5432 for local tools.
+# - VPP_SECRET_KEY must still be exported (the base file requires it), e.g.
+#   `export VPP_SECRET_KEY=dev-only-secret`. Never use this overlay for
+#   anything reachable from other machines.
+#
+# For console development, run `pnpm dev` in web/ instead of the vpp-web
+# container (hot reload); see web/README.md.
 
 services:
   vpp-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    command:
+      - sh
+      - -c
+      - vpp migrate && exec uvicorn vpp.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload --reload-dir /app/src
     volumes:
       - ./src:/app/src:ro
       - ./configs:/app/configs:ro
+      - ./alembic:/app/alembic:ro
     environment:
       VPP_ENV: development
       VPP_DEBUG: "true"
-      VPP_DATABASE_URL: sqlite+aiosqlite:///./vpp_dev.db
-      VPP_SECRET_KEY: dev-secret-key-not-for-production
       VPP_LOG_LEVEL: DEBUG
+      VPP_CORS_ORIGINS: '["http://localhost:3000"]'
+
+  postgres:
     ports:
-      - "8000:8000"
-    command: ["uvicorn", "vpp.api.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--factory", "--reload"]
-    depends_on: []
-    networks:
-      - vpp-network
+      - "127.0.0.1:5432:5432"

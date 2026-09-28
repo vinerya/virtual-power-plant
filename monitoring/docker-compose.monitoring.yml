@@ -1,5 +1,3 @@
-version: "3.9"
-
 # Monitoring overlay. Run from the repository root together with the main
 # stack (relative paths below resolve against the project directory, i.e.
 # the directory of the first -f file):

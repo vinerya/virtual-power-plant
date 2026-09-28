@@ -1,20 +1,65 @@
-version: "3.9"
+# Virtual Power Plant - API + PostgreSQL + web console.
+#
+#   export VPP_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+#   export POSTGRES_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(24))")
+#   docker compose up -d --build
+#
+# API:     http://localhost:8000  (OpenAPI docs at /docs)
+# Console: http://localhost:3000
+#
+# Monitoring overlay (Prometheus :9090, Grafana :3001):
+#   docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+# Development overlay (reload, debug logging):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+#
+# See docs/deployment.md for TLS termination (incl. OCPP wss://) and the
+# first-admin bootstrap, and docs/configuration.md for every VPP_* setting.
 
 services:
   vpp-api:
     build:
       context: .
       dockerfile: Dockerfile
+    # Apply database migrations (alembic upgrade head), then serve.
+    command:
+      - sh
+      - -c
+      - vpp migrate && exec uvicorn vpp.api.app:create_app --factory --host 0.0.0.0 --port 8000
     ports:
       - "${VPP_API_PORT:-8000}:8000"
     environment:
       VPP_ENV: production
       VPP_DATABASE_URL: postgresql+asyncpg://vpp:${POSTGRES_PASSWORD:-vpppass}@postgres:5432/vpp
-      VPP_SECRET_KEY: ${VPP_SECRET_KEY:-change-me}
-      VPP_LOG_LEVEL: INFO
+      VPP_SECRET_KEY: ${VPP_SECRET_KEY:?set VPP_SECRET_KEY to a long random string}
+      VPP_LOG_LEVEL: ${VPP_LOG_LEVEL:-INFO}
       VPP_METRICS_ENABLED: "true"
+      VPP_CORS_ORIGINS: '["http://localhost:${VPP_WEB_PORT:-3000}"]'
+      # Every console user's requests arrive from the vpp-web container's IP
+      # and share one rate-limit bucket; size it for the whole team.
+      VPP_RATE_LIMIT_REQUESTS_PER_MINUTE: ${VPP_RATE_LIMIT_REQUESTS_PER_MINUTE:-600}
+      # Optional: OpenEI key for GET/POST /api/v1/tariffs/import-urdb.
+      OPENEI_API_KEY: ${OPENEI_API_KEY:-}
     depends_on:
       postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+  vpp-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    ports:
+      - "${VPP_WEB_PORT:-3000}:3000"
+    environment:
+      # Server-side calls from Next.js to FastAPI (container network).
+      API_BASE_URL: http://vpp-api:8000
+      # The browser dials the WebSocket directly; this must be reachable
+      # from the user's machine (wss://.../api/v1/ws behind TLS).
+      WS_PUBLIC_URL: ${VPP_WS_PUBLIC_URL:-ws://localhost:8000/api/v1/ws}
+    depends_on:
+      vpp-api:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -26,15 +71,14 @@ services:
       POSTGRES_DB: vpp
       POSTGRES_USER: vpp
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vpppass}
-    ports:
-      - "5432:5432"
+    # Not published on the host; the dev overlay exposes it on 127.0.0.1.
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vpp"]
+      test: ["CMD-SHELL", "pg_isready -U vpp -d vpp"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
     restart: unless-stopped
     networks:
       - vpp-network

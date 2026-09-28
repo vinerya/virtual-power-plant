@@ -28,6 +28,8 @@ def run() -> None:
     print("=" * 70)
     print("  MULTI-PROTOCOL DEMO — OpenADR + OCPP + MQTT + Modbus")
     print("=" * 70)
+    print("  All adapters run in-process without real endpoints (status")
+    print("  'simulated'); nothing here talks to a VTN, charger or device.")
 
     # --- 1. Protocol Registry Setup ---
     print("\n--- 1. Protocol Registry Setup ---")

@@ -1,0 +1,24 @@
+# Build context for the API image (Dockerfile at the repo root).
+.git
+.github
+.claude
+**/__pycache__
+**/*.py[cod]
+*.egg-info
+build
+dist
+.venv
+venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+*.db
+*.sqlite
+.env
+.env.*
+!.env.example
+output
+# The web console has its own image (web/Dockerfile).
+web

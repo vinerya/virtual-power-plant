@@ -439,13 +439,14 @@ def main():
         print(f"🛡️ Risk: {risk_result['total_positions']} positions monitored")
         print(f"🚀 System: Trading engine operational")
         
-        print(f"\n🎉 VPP Trading System is fully operational and ready for production!")
-        print(f"   ✅ Sub-millisecond order execution")
-        print(f"   ✅ Multi-market arbitrage capabilities") 
-        print(f"   ✅ Advanced portfolio management")
-        print(f"   ✅ Comprehensive risk controls")
-        print(f"   ✅ Real-time market data integration")
-        print(f"   ✅ Machine learning strategy support")
+        print(f"\n🎉 Demo complete. Everything above ran against simulated markets;")
+        print(f"   no orders left this process. Components exercised:")
+        print(f"   ✅ In-memory order matching (simulated venue)")
+        print(f"   ✅ Multi-market arbitrage detection")
+        print(f"   ✅ Portfolio and P&L tracking")
+        print(f"   ✅ Pre-trade risk limit checks")
+        print(f"   ✅ Synthetic market data")
+        print(f"   ✅ Strategy framework (the ML strategy is a research placeholder)")
         
     except Exception as e:
         print(f"\n❌ Error during demonstration: {e}")

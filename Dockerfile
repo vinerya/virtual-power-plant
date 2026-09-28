@@ -1,47 +1,79 @@
 # ============================================================================
-# Virtual Power Plant Platform — Multi-stage Docker build
+# Virtual Power Plant API (FastAPI) - multi-stage build
+#
+#   docker build -t vpp-api .
+#   docker run -p 8000:8000 -e VPP_SECRET_KEY=... vpp-api
+#
+# The image ships the source checkout layout (src/, alembic/, alembic.ini)
+# and installs the package in editable mode, because `vpp migrate` locates
+# alembic.ini relative to the source tree. Run migrations with
+# `vpp migrate` (docker-compose.yml does this before starting uvicorn).
 # ============================================================================
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-# Install build dependencies
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Copy project metadata first (cache-friendly layer)
-COPY pyproject.toml setup.py ./
+# Project metadata first (cache-friendly layer), then the sources.
+COPY pyproject.toml README.md ./
 COPY src/ src/
 
-# Build wheel
-RUN pip wheel --no-deps --wheel-dir /wheels .
-
-# Install runtime dependencies
+# Wheels for the package and every runtime extra the API uses:
+#   api         FastAPI, uvicorn, JWT, httpx
+#   db          SQLAlchemy async, alembic, aiosqlite, asyncpg
+#   protocols   MQTT, Modbus, lxml, httpx (OpenADR / IEEE 2030.5 clients)
+#   solver      Pyomo + HiGHS (dispatch / MPC); falls back to rules without it
+#   degradation rainflow cycle counting for battery SOH
+#   monitoring  prometheus-client (/metrics)
+#   cli         click + rich (`vpp migrate`, `vpp serve`, ...)
+# psycopg2-binary: alembic migrations run on a *sync* driver
+# (postgresql+asyncpg URLs are rewritten to postgresql+psycopg2).
 RUN pip wheel --wheel-dir /wheels \
-    "virtual-power-plant[api,db,cli,monitoring]"
+    ".[api,db,protocols,solver,degradation,monitoring,cli]" \
+    "psycopg2-binary>=2.9"
 
 # ============================================================================
 FROM python:3.11-slim AS runtime
 
-LABEL maintainer="Moudather Chelbi <moudather.chelbi@gmail.com>"
-LABEL description="Virtual Power Plant Platform — production-ready VPP management"
+LABEL org.opencontainers.image.title="vpp-api" \
+      org.opencontainers.image.description="Open-source Virtual Power Plant platform - API" \
+      org.opencontainers.image.source="https://github.com/vinerya/virtual-power-plant" \
+      org.opencontainers.image.licenses="MIT"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Install wheels from builder stage
+# Dependencies from the builder stage.
 COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN pip install /wheels/*.whl && rm -rf /wheels
 
-# Copy config examples
+# Source layout needed at runtime (package, migrations, sample configs).
+COPY pyproject.toml README.md alembic.ini ./
+COPY src/ src/
+COPY alembic/ alembic/
 COPY configs/ configs/
-COPY .env.example .env.example
 
-# Non-root user for security
-RUN adduser --disabled-password --gecos "" vpp
+# Re-install the package itself in editable mode on top of the wheel so
+# src/vpp is what runs and alembic.ini resolves from /app.
+RUN pip install --no-deps -e .
+
+# Non-root user. /app/data is a writable place for a SQLite database
+# (e.g. VPP_DATABASE_URL=sqlite+aiosqlite:///./data/vpp.db); /app itself is
+# writable too so the default ./vpp.db works for a quick `docker run`.
+RUN adduser --disabled-password --gecos "" vpp \
+    && mkdir -p /app/data \
+    && chown vpp:vpp /app /app/data
 USER vpp
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import httpx; r = httpx.get('http://localhost:8000/health'); r.raise_for_status()" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()" || exit 1
 
-CMD ["uvicorn", "vpp.api.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--factory"]
+# Behind a reverse proxy, set FORWARDED_ALLOW_IPS to the proxy's address so
+# uvicorn trusts its X-Forwarded-For / X-Forwarded-Proto headers.
+CMD ["uvicorn", "vpp.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]

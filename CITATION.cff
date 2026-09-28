@@ -4,34 +4,42 @@ authors:
   - family-names: "Chelbi"
     given-names: "Moudather"
     email: "moudather.chelbi@gmail.com"
-    orcid: "https://orcid.org/0000-0000-0000-0000"  # Placeholder until I replace it with actual DOI when registered
-title: "Virtual Power Plant Library"
-version: 0.1.0
-doi: 10.5281/zenodo.0000000  # Placeholder until I replace it with actual DOI when registered
-date-released: 2024-01-01
+  - family-names: "Khemir"
+    given-names: "Mariem"
+title: "Virtual Power Plant Platform"
+version: 2.0.0
+date-released: 2025-02-24
 url: "https://github.com/vinerya/virtual-power-plant"
 repository-code: "https://github.com/vinerya/virtual-power-plant"
 license: MIT
 keywords:
   - virtual power plant
+  - distributed energy resources
   - energy management
-  - renewable energy
+  - demand response
+  - vehicle-to-grid
+  - OCPP
+  - OpenADR
+  - IEEE 2030.5
   - optimization
-  - python
   - smart grid
   - energy storage
-  - power systems
 abstract: |
-  A comprehensive Python library for virtual power plant management, simulation, and research.
-  The library provides tools for managing distributed energy resources, optimizing power dispatch,
-  and analyzing system performance. It includes features for both production use and research
-  applications, with support for multiple optimization strategies and extensive analysis capabilities.
+  An open-source platform for aggregating and dispatching distributed
+  energy resources. It provides a FastAPI backend with database-backed
+  resource, site and customer management, dispatch optimization (Pyomo and
+  HiGHS with rule-based fallbacks), model predictive control and
+  backtesting, a URDB-based tariff and net-metering bill engine, an OCPP 1.6-J
+  central system, an OpenADR 2.0b VEN, an IEEE 2030.5 client, a
+  demand-response orchestrator, V2G scheduling, a trading engine on a
+  simulated venue, and a Next.js operator console with a customer portal.
 references:
   - type: software
-    title: "PuLP"
-    version: "2.7.0"
-    repository-code: "https://github.com/coin-or/pulp"
+    title: "Pyomo"
+    repository-code: "https://github.com/Pyomo/pyomo"
   - type: software
-    title: "NumPy"
-    version: "1.20.0"
-    repository-code: "https://github.com/numpy/numpy"
+    title: "HiGHS"
+    repository-code: "https://github.com/ERGO-Code/HiGHS"
+  - type: software
+    title: "FastAPI"
+    repository-code: "https://github.com/fastapi/fastapi"

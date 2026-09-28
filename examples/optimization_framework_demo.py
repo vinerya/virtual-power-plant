@@ -639,7 +639,7 @@ def main():
         print("✓ Custom plugin development")
         
         print("\nThe optimization framework provides:")
-        print("- Production-ready rule-based fallbacks")
+        print("- Rule-based fallbacks when a solver plugin is unavailable or fails")
         print("- Clean interfaces for expert model integration")
         print("- Comprehensive performance monitoring")
         print("- Flexible configuration and validation")
