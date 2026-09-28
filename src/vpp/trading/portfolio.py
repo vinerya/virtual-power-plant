@@ -5,6 +5,7 @@ This module provides comprehensive portfolio tracking, position management,
 P&L calculation, and risk metrics for energy trading.
 """
 
+import math
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -102,9 +103,8 @@ class Position:
                     
                     # Set new average price for remaining long position
                     self.average_price = trade.price if remaining_quantity > 0 else 0
-                else:  # Still short, update average
-                    total_value = self.average_price * abs(self.quantity) + trade.price * trade.quantity
-                    self.average_price = total_value / abs(new_quantity)
+                else:  # Still short: partial cover realizes P&L, keeps the average
+                    self.realized_pnl += (self.average_price - trade.price) * trade.quantity
             
             self.quantity = new_quantity
             
@@ -136,6 +136,7 @@ class Position:
     def calculate_unrealized_pnl(self, current_price: float) -> float:
         """Calculate unrealized P&L at current market price."""
         if self.quantity == 0:
+            self.unrealized_pnl = 0.0
             return 0.0
         
         if self.quantity > 0:  # Long position
@@ -183,6 +184,9 @@ class Portfolio:
         # Risk metrics
         self.max_drawdown = 0.0
         self.peak_equity = initial_cash
+
+        # Fees and commissions paid (P&L on positions is tracked gross)
+        self.total_fees = 0.0
         
         # Timestamps
         self.creation_time = datetime.now()
@@ -202,7 +206,14 @@ class Portfolio:
         if trade.market not in self.positions:
             self.positions[trade.market] = Position(market=trade.market)
         
-        self.positions[trade.market].update_from_trade(trade)
+        position = self.positions[trade.market]
+        realized_before = position.realized_pnl
+        position.update_from_trade(trade)
+        # Attribute the (gross) realized P&L to the trade that closed it.
+        # Nothing ever set this before, so daily-loss limits and win-rate
+        # statistics that read Trade.realized_pnl always saw zero.
+        trade.realized_pnl = position.realized_pnl - realized_before
+        self.total_fees += trade.fees + trade.commission
         self.last_update_time = datetime.now()
     
     def update_from_trade(self, trade: Trade) -> None:
@@ -233,20 +244,36 @@ class Portfolio:
         
         return total_pnl
     
+    def calculate_realized_pnl(self) -> float:
+        """Gross realized P&L across all positions (fees excluded)."""
+        return sum(position.realized_pnl for position in self.positions.values())
+
+    def calculate_unrealized_pnl(self, market_prices: dict[str, float] | None = None) -> float:
+        """Unrealized P&L across all positions, marked at *market_prices*
+        (falling back to each position's average price)."""
+        market_prices = market_prices or {}
+        return sum(
+            position.calculate_unrealized_pnl(market_prices.get(market, position.average_price))
+            for market, position in self.positions.items()
+        )
+
     def calculate_daily_pnl(self, date: datetime = None) -> float:
-        """Calculate P&L for a specific day."""
+        """Realized P&L net of fees for trades on a given day (default today).
+
+        Counts every closing trade -- covering a short is a *buy* -- where
+        the old implementation only looked at sells (and read a
+        ``realized_pnl`` field that was never populated).
+        """
         if date is None:
             date = datetime.now().date()
+        elif isinstance(date, datetime):
+            date = date.date()
         
-        daily_trades = [trade for trade in self.trades 
-                       if trade.timestamp.date() == date]
-        
-        daily_pnl = 0.0
-        for trade in daily_trades:
-            if trade.side == "sell":
-                daily_pnl += trade.realized_pnl
-        
-        return daily_pnl
+        return sum(
+            trade.realized_pnl - trade.fees - trade.commission
+            for trade in self.trades
+            if trade.timestamp.date() == date
+        )
     
     def calculate_max_drawdown(self, market_prices: Dict[str, float] = None) -> float:
         """Calculate maximum drawdown."""
@@ -268,21 +295,42 @@ class Portfolio:
         return max_dd
     
     def get_equity(self, market_prices: Dict[str, float] = None) -> float:
-        """Get current portfolio equity."""
-        return self.cash + self.calculate_total_pnl(market_prices)
+        """Get current portfolio equity: cash plus mark-to-market position value.
+
+        Cash already reflects what was paid/received for every trade, so the
+        positions must be added at their *market value*. (This used to add
+        total P&L instead, which double-counted the purchase cost: buying
+        1 MWh at $50 with $100 cash reported $50 equity rather than $100.)
+        """
+        market_prices = market_prices or {}
+        position_value = sum(
+            position.quantity * market_prices.get(market, position.average_price)
+            for market, position in self.positions.items()
+        )
+        return self.cash + position_value
+
+    def current_drawdown(self, market_prices: dict[str, float] | None = None) -> float:
+        """Fractional drawdown of current equity from the peak observed so far."""
+        equity = self.get_equity(market_prices)
+        peak = max(self.peak_equity, equity)
+        return (peak - equity) / peak if peak > 0 else 0.0
     
-    def update_equity_curve(self, market_prices: Dict[str, float] = None) -> None:
+    def update_equity_curve(self, market_prices: dict[str, float] | None = None,
+                            timestamp: datetime | None = None,
+                            max_points: int | None = None) -> None:
         """Update equity curve with current values."""
         equity = self.get_equity(market_prices)
         total_pnl = self.calculate_total_pnl(market_prices)
         
         self.equity_curve.append({
-            "timestamp": datetime.now(),
+            "timestamp": timestamp or datetime.now(),
             "equity": equity,
             "cash": self.cash,
             "total_pnl": total_pnl,
             "positions_value": equity - self.cash
         })
+        if max_points is not None and len(self.equity_curve) > max_points:
+            self.equity_curve = self.equity_curve[-max_points:]
         
         # Update peak equity and drawdown
         if equity > self.peak_equity:
@@ -446,8 +494,13 @@ class PnLCalculator:
             return 0.0
         
         sorted_returns = sorted(returns)
-        var_index = int(len(sorted_returns) * confidence_level)
-        return abs(sorted_returns[var_index]) if var_index < len(sorted_returns) else 0.0
+        # Empirical alpha-quantile: the ceil(n*alpha)-th worst return. The
+        # old int(n*alpha) index skipped past the worst observation (with
+        # 20 returns at 5% it returned the 2nd worst).
+        var_index = max(0, math.ceil(len(sorted_returns) * confidence_level) - 1)
+        # VaR is a loss: a tail quantile that is still a gain means no loss
+        # at this confidence. (abs() used to turn a +2% gain into a 2% VaR.)
+        return max(0.0, -sorted_returns[var_index])
     
     @staticmethod
     def calculate_expected_shortfall(returns: List[float], confidence_level: float = 0.05) -> float:
@@ -456,10 +509,51 @@ class PnLCalculator:
             return 0.0
         
         sorted_returns = sorted(returns)
-        var_index = int(len(sorted_returns) * confidence_level)
-        tail_returns = sorted_returns[:var_index]
+        var_index = max(0, math.ceil(len(sorted_returns) * confidence_level) - 1)
+        tail_returns = sorted_returns[:var_index + 1]
         
-        return abs(np.mean(tail_returns)) if tail_returns else 0.0
+        return max(0.0, -float(np.mean(tail_returns))) if tail_returns else 0.0
+
+
+# One-sided standard normal quantiles for common VaR confidence levels.
+_Z_SCORES = {0.90: 1.2815515655446004, 0.95: 1.6448536269514722,
+             0.975: 1.959963984540054, 0.99: 2.3263478740408408}
+
+
+def parametric_var(exposures: dict[str, float],
+                   daily_volatility: dict[str, float],
+                   confidence: float = 0.95,
+                   horizon_days: float = 1.0,
+                   correlations: dict[str, dict[str, float]] | None = None,
+                   default_correlation: float = 0.5) -> float:
+    """Variance-covariance (delta-normal) Value at Risk in currency units.
+
+    Args:
+        exposures: signed mark-to-market notional per market (qty * price;
+            long positive, short negative).
+        daily_volatility: daily standard deviation of *returns* per market.
+        confidence: one-sided confidence level (0.90/0.95/0.975/0.99).
+        horizon_days: holding period; scaled by sqrt(time).
+        correlations: optional pairwise return correlations; pairs not
+            present use ``default_correlation``.
+
+    Returns:
+        The loss not exceeded with probability ``confidence`` (>= 0).
+    """
+    if confidence not in _Z_SCORES:
+        raise ValueError(f"Unsupported confidence {confidence}; use one of {sorted(_Z_SCORES)}")
+    markets = [m for m, e in exposures.items() if e]
+    if not markets:
+        return 0.0
+    sigma = np.array([exposures[m] * daily_volatility.get(m, 0.0) for m in markets])
+    corr = np.eye(len(markets))
+    for i, a in enumerate(markets):
+        for j, b in enumerate(markets):
+            if i != j:
+                rho = (correlations or {}).get(a, {}).get(b, default_correlation)
+                corr[i, j] = rho
+    variance = float(sigma @ corr @ sigma)
+    return _Z_SCORES[confidence] * float(np.sqrt(max(variance, 0.0))) * float(np.sqrt(horizon_days))
 
 
 class RiskMetrics:

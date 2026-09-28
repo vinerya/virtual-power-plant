@@ -314,10 +314,13 @@ class TradingRepository:
 
     @staticmethod
     async def list_trades(session: AsyncSession, *, skip: int = 0,
-                          limit: int = 50, market: str | None = None) -> list[TradeModel]:
+                          limit: int = 50, market: str | None = None,
+                          order_id: str | None = None) -> list[TradeModel]:
         stmt = select(TradeModel).offset(skip).limit(limit).order_by(TradeModel.created_at.desc())
         if market:
             stmt = stmt.where(TradeModel.market == market)
+        if order_id:
+            stmt = stmt.where(TradeModel.order_id == order_id)
         result = await session.execute(stmt)
         return list(result.scalars().all())
 

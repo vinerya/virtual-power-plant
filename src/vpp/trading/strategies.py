@@ -15,6 +15,15 @@ from .portfolio import Portfolio
 from .orders import create_order
 
 
+def _latest_timestamp(market_data: dict[str, Any]) -> datetime:
+    """Most recent ``timestamp`` among the market data snapshots, else now."""
+    stamps = [
+        getattr(data, "timestamp", None) for data in market_data.values()
+    ]
+    stamps = [t for t in stamps if isinstance(t, datetime)]
+    return max(stamps) if stamps else datetime.now()
+
+
 class TradingStrategy(ABC):
     """Base class for trading strategies."""
     
@@ -69,17 +78,19 @@ class TradingStrategy(ABC):
                 new_quantity = current_quantity - quantity
             
             if abs(new_quantity) > self.max_position_size:
-                self.logger.warning(f"Signal rejected: position size limit exceeded")
+                self.logger.debug("Signal rejected: position size limit exceeded")
                 return False
         
-        # Check daily trade limits
-        today = datetime.now().date()
+        # Check daily trade limits (on the signal's own clock, so the limit
+        # is meaningful when replaying historical data)
+        signal_time = signal.get("timestamp")
+        today = signal_time.date() if isinstance(signal_time, datetime) else datetime.now().date()
         daily_trades = sum(1 for trade in portfolio.trades 
                           if trade.timestamp.date() == today and 
                           trade.strategy == self.name)
         
         if daily_trades >= self.max_daily_trades:
-            self.logger.warning(f"Signal rejected: daily trade limit exceeded")
+            self.logger.debug("Signal rejected: daily trade limit exceeded")
             return False
         
         return True
@@ -139,8 +150,14 @@ class ArbitrageStrategy(TradingStrategy):
             if len(prices) < 2:
                 return signals
             
-            # Find arbitrage opportunities
-            market_pairs = [(m1, m2) for m1 in prices.keys() for m2 in prices.keys() if m1 != m2]
+            # Find arbitrage opportunities. Unordered pairs: iterating both
+            # (a, b) and (b, a) emitted every opportunity twice.
+            names = list(prices.keys())
+            market_pairs = [
+                (names[i], names[j])
+                for i in range(len(names)) for j in range(i + 1, len(names))
+            ]
+            signal_time = _latest_timestamp(market_data)
             
             for market1, market2 in market_pairs:
                 price1 = prices[market1]
@@ -177,7 +194,7 @@ class ArbitrageStrategy(TradingStrategy):
                         "confidence": confidence,
                         "expected_profit": profit_per_unit * quantity,
                         "arbitrage_pair": sell_market,
-                        "timestamp": datetime.now()
+                        "timestamp": signal_time
                     }
                     
                     # Generate sell signal
@@ -191,7 +208,7 @@ class ArbitrageStrategy(TradingStrategy):
                         "confidence": confidence,
                         "expected_profit": profit_per_unit * quantity,
                         "arbitrage_pair": buy_market,
-                        "timestamp": datetime.now()
+                        "timestamp": signal_time
                     }
                     
                     if self.validate_signal(buy_signal, portfolio):
@@ -205,7 +222,7 @@ class ArbitrageStrategy(TradingStrategy):
             
             self.signals_generated += len(signals)
             if signals:
-                self.last_signal_time = datetime.now()
+                self.last_signal_time = signal_time
             
             return signals
             
@@ -230,7 +247,10 @@ class MomentumStrategy(TradingStrategy):
         signals = []
         
         try:
-            current_time = datetime.now()
+            # Observation time comes from the data when available, so the
+            # lookback window works when replaying history (with
+            # datetime.now() every replayed bar looked simultaneous).
+            current_time = _latest_timestamp(market_data)
             
             # Update price history
             for market_name, data in market_data.items():
@@ -325,7 +345,10 @@ class MeanReversionStrategy(TradingStrategy):
         signals = []
         
         try:
-            current_time = datetime.now()
+            # Observation time comes from the data when available, so the
+            # lookback window works when replaying history (with
+            # datetime.now() every replayed bar looked simultaneous).
+            current_time = _latest_timestamp(market_data)
             
             # Update price history
             for market_name, data in market_data.items():
@@ -433,15 +456,14 @@ class MLTradingStrategy(TradingStrategy):
     
     def _load_model(self) -> bool:
         """Load ML model from file."""
-        try:
-            # This is a placeholder - in practice you'd load your trained model
-            # import joblib
-            # self.model = joblib.load(self.model_path)
-            self.logger.info(f"ML model loaded from {self.model_path}")
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to load ML model: {e}")
-            return False
+        # Model loading is not implemented: no model format/feature contract
+        # is defined yet. Say so instead of claiming a model was loaded --
+        # signals come from the price-ratio heuristic below.
+        self.logger.warning(
+            f"ML model loading is not implemented; ignoring {self.model_path} "
+            "and using the heuristic fallback"
+        )
+        return False
     
     def _extract_features(self, market_data: Dict[str, Any], 
                          portfolio: Portfolio) -> Dict[str, float]:
@@ -470,7 +492,7 @@ class MLTradingStrategy(TradingStrategy):
             features["portfolio_cash"] = portfolio.cash
             
             # Time-based features
-            now = datetime.now()
+            now = _latest_timestamp(market_data)
             features["hour_of_day"] = now.hour
             features["day_of_week"] = now.weekday()
             features["month"] = now.month
@@ -529,7 +551,7 @@ class MLTradingStrategy(TradingStrategy):
                 return signals
             
             # Store feature history
-            current_time = datetime.now()
+            current_time = _latest_timestamp(market_data)
             for market_name in market_data.keys():
                 if market_name not in self.feature_history:
                     self.feature_history[market_name] = []

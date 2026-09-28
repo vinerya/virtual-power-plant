@@ -36,6 +36,7 @@ class EventType(str, Enum):
     ORDER_SUBMITTED = "order_submitted"
     ORDER_FILLED = "order_filled"
     ORDER_CANCELLED = "order_cancelled"
+    ORDER_REJECTED = "order_rejected"
     TRADE_EXECUTED = "trade_executed"
     MARKET_DATA = "market_data"
 

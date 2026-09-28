@@ -268,9 +268,15 @@ class SimulatedDataProvider(MarketDataProvider):
             "bilateral": 0.11
         })
         
-        self.volatility = self.config.get("volatility", 0.1)  # 10% volatility
+        self.volatility = self.config.get("volatility", 0.1)  # daily log-return volatility
         self.trend = self.config.get("trend", 0.0)  # No trend by default
         self.seasonal_amplitude = self.config.get("seasonal_amplitude", 0.2)
+        # Mean-reversion speed (per day) of the stochastic component toward
+        # the seasonal base. 0 = pure geometric Brownian motion.
+        self.mean_reversion = self.config.get("mean_reversion", 0.0)
+        # Simulated minutes elapsed per generated point when no explicit
+        # timestamp is supplied.
+        self.time_step_minutes = self.config.get("time_step_minutes", 1.0)
         
         # Random number generator
         self.rng = np.random.RandomState(self.config.get("seed", 42))
@@ -278,6 +284,10 @@ class SimulatedDataProvider(MarketDataProvider):
         # Simulation state
         self.simulation_time = datetime.now()
         self.price_paths: Dict[str, List[float]] = {}
+        # Log-deviation of each market's price from its seasonal base, and
+        # the timestamp it was last advanced to.
+        self._log_deviation: dict[str, float] = {}
+        self._last_time: dict[str, datetime] = {}
     
     def connect(self) -> bool:
         """Connect to simulated data source."""
@@ -295,32 +305,65 @@ class SimulatedDataProvider(MarketDataProvider):
         self.is_connected = False
         self.logger.info("Disconnected from simulated data source")
     
-    def _fetch_data(self, market: str) -> Optional[MarketData]:
+    def seasonal_factor(self, timestamp: datetime) -> float:
+        """Daily shape multiplier (peaks mid-day, troughs overnight)."""
+        hour = timestamp.hour + timestamp.minute / 60.0 + timestamp.second / 3600.0
+        return 1 + self.seasonal_amplitude * np.sin(2 * np.pi * (hour - 6) / 24)
+
+    def generate(self, market: str, timestamp: datetime | None = None) -> MarketData | None:
+        """Generate, store, and return the next data point for *market*.
+
+        With ``timestamp`` the stochastic component is advanced by the real
+        elapsed time since the previous point for that market (so the
+        volatility is per-day regardless of how often this is called);
+        without it, the simulation advances by ``time_step_minutes``.
+        """
+        data = self._fetch_data(market, timestamp)
+        if data is not None:
+            self._update_data(data)
+        return data
+
+    def _fetch_data(self, market: str, timestamp: datetime | None = None) -> MarketData | None:
         """Generate simulated market data."""
         if not self.is_connected:
             return None
         
         try:
-            current_time = datetime.now()
-            
-            # Generate price using geometric Brownian motion with seasonality
+            if timestamp is None:
+                previous = self._last_time.get(market)
+                current_time = (
+                    previous + timedelta(minutes=self.time_step_minutes)
+                    if previous is not None else datetime.now()
+                )
+            else:
+                current_time = timestamp
+
             if market not in self.price_paths:
                 self.price_paths[market] = [self.base_prices.get(market, 0.10)]
             
             last_price = self.price_paths[market][-1]
+            previous_time = self._last_time.get(market)
+            if previous_time is None:
+                dt = self.time_step_minutes / (24 * 60)
+            else:
+                dt = max((current_time - previous_time).total_seconds(), 0.0) / 86400.0
+            self._last_time[market] = current_time
             
-            # Seasonal component (daily pattern)
-            hour = current_time.hour
-            seasonal_factor = 1 + self.seasonal_amplitude * np.sin(2 * np.pi * (hour - 6) / 24)
-            
-            # Random walk component
-            dt = 1.0 / (24 * 60)  # 1 minute time step
-            drift = self.trend * dt
-            diffusion = self.volatility * np.sqrt(dt) * self.rng.normal()
+            # Price = seasonal base * exp(x), where x is an Ornstein-Uhlenbeck
+            # (or, with mean_reversion=0, Brownian) log-deviation. The old
+            # code multiplied the *previous price* by the seasonal factor on
+            # every step, compounding it: 60 one-minute steps at 1.2 grew the
+            # price ~56,000x within an hour.
+            base_price = self.base_prices.get(market, 0.10)
+            x = self._log_deviation.get(market, 0.0)
+            x += (self.trend - self.mean_reversion * x) * dt
+            x += self.volatility * np.sqrt(dt) * self.rng.normal()
+            self._log_deviation[market] = x
             
             # New price
-            new_price = last_price * seasonal_factor * np.exp(drift + diffusion)
+            new_price = base_price * self.seasonal_factor(current_time) * np.exp(x)
             new_price = max(0.01, new_price)  # Ensure positive price
+            hour = current_time.hour
             
             self.price_paths[market].append(new_price)
             
