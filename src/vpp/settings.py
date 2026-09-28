@@ -36,7 +36,16 @@ class Settings(BaseSettings):
     # API
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    api_workers: int = 1
+    # Worker processes `vpp serve` starts. >1 is supported: singleton
+    # background work runs on the holder of a DB lease (see vpp.cluster);
+    # OCPP requires 1 (charge-point sockets are process-local).
+    api_workers: int = Field(1, ge=1)
+    # Leadership lease TTL; a crashed leader's work moves to another worker
+    # within about this long. Calls forwarded to a leader (trading venue,
+    # alert evaluation) wait at most cluster_call_timeout_seconds.
+    cluster_lease_ttl_seconds: float = Field(15.0, gt=0)
+    cluster_call_timeout_seconds: float = Field(10.0, gt=0)
+    cluster_poll_interval_seconds: float = Field(0.25, gt=0)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
     # Security

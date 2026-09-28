@@ -8,8 +8,9 @@ SOC / state from OCPP MeterValues and StatusNotification, and schedules /
 dispatches are pushed to their chargers as OCPP SetChargingProfile, with the
 per-vehicle delivery result reported in the response.
 
-Flexibility bids and the aggregator's dispatch counters are still kept in
-process memory (per worker, lost on restart).
+Flexibility bids (``v2g_flexibility_bids``) and the aggregator's dispatch
+counters (derived from the recorded dispatches) are persisted too, so every
+worker reports the same values and they survive restarts.
 """
 
 from __future__ import annotations
@@ -44,7 +45,11 @@ from vpp.v2g.ocpp_bridge import (
 from vpp.v2g.scheduler import V2GScheduler
 from vpp.v2g.store import (
     V2GRepository,
+    list_active_bids,
+    load_aggregator,
     load_fleet,
+    record_bid,
+    row_to_bid,
     schedule_to_dict,
     session_to_dict,
     ts_to_dt,
@@ -53,9 +58,6 @@ from vpp.v2g.store import (
 
 router = APIRouter(prefix="/api/v1/v2g", tags=["v2g"])
 
-# Bids / dispatch counters only; the fleet itself is loaded from the DB.
-_aggregator = V2GAggregator(EVFleet(fleet_id="default", name="default_fleet"), V2GScheduler())
-
 
 async def get_fleet(session: AsyncSession = Depends(get_db)) -> EVFleet:
     """The persisted fleet as an :class:`EVFleet` (fresh from the DB)."""
@@ -63,8 +65,8 @@ async def get_fleet(session: AsyncSession = Depends(get_db)) -> EVFleet:
 
 
 async def get_aggregator(fleet: EVFleet = Depends(get_fleet)) -> V2GAggregator:
-    _aggregator.fleet = fleet
-    return _aggregator
+    """A per-request aggregator over the persisted fleet (bids/counters not loaded)."""
+    return V2GAggregator(fleet, V2GScheduler())
 
 
 def _ocpp(registry: ProtocolRegistry):
@@ -581,10 +583,11 @@ async def dispatch_signal(
 @router.post("/bid")
 async def create_bid(
     body: BidRequest,
-    _user=Depends(require_role("admin", "operator")),
+    user=Depends(require_role("admin", "operator")),
     aggregator: V2GAggregator = Depends(get_aggregator),
+    session: AsyncSession = Depends(get_db),
 ):
-    """Create a flexibility bid for grid services."""
+    """Create (and persist) a flexibility bid for grid services."""
     try:
         service = GridService(body.service)
     except ValueError:
@@ -598,22 +601,25 @@ async def create_bid(
     )
     if bid is None:
         raise HTTPException(status_code=409, detail="Insufficient flexibility for bid")
+    await record_bid(session, bid, created_by=getattr(user, "id", None))
+    await session.commit()
     return bid.to_dict()
 
 
 @router.get("/bids")
 async def list_bids(
     _user=Depends(get_current_user),
-    aggregator: V2GAggregator = Depends(get_aggregator),
+    session: AsyncSession = Depends(get_db),
 ):
-    """List active flexibility bids (process-local)."""
-    return [b.to_dict() for b in aggregator.get_active_bids()]
+    """List active (not yet expired) flexibility bids."""
+    return [row_to_bid(r).to_dict() for r in await list_active_bids(session)]
 
 
 @router.get("/metrics")
 async def aggregator_metrics(
     _user=Depends(get_current_user),
-    aggregator: V2GAggregator = Depends(get_aggregator),
+    fleet: EVFleet = Depends(get_fleet),
+    session: AsyncSession = Depends(get_db),
 ):
-    """Get V2G aggregator performance metrics."""
-    return aggregator.get_metrics()
+    """Aggregator metrics; dispatch counters and active bids come from the database."""
+    return (await load_aggregator(session, fleet)).get_metrics()

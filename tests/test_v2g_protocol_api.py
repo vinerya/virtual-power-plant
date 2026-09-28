@@ -164,6 +164,48 @@ async def test_schedule_reports_why_nothing_was_pushed(client, auth_headers, reg
     assert record.kind == "schedule"
 
 
+async def test_bids_and_aggregator_counters_are_persisted(
+    client, auth_headers, registry, db_session
+):
+    """Bids and dispatch counters come from the DB: every worker sees the same."""
+    from vpp.v2g.store import list_active_bids, load_aggregator
+
+    before = (await client.get("/api/v1/v2g/metrics", headers=auth_headers)).json()
+    for _ in range(2):
+        await _create(client, auth_headers, current_soc=0.9, capacity_kwh=80, max_discharge_kw=11)
+
+    bid = await client.post(
+        "/api/v1/v2g/bid",
+        json={"service": "frequency_regulation", "duration_hours": 1.0, "price_per_kw": 0.1},
+        headers=auth_headers,
+    )
+    assert bid.status_code == 200, bid.text
+    created = bid.json()
+    assert created["bid_id"] and created["service"] == "frequency_regulation"
+    assert created["capacity_kw"] > 0 and created["ev_count"] >= 2
+
+    listed = (await client.get("/api/v1/v2g/bids", headers=auth_headers)).json()
+    assert created["bid_id"] in {b["bid_id"] for b in listed}
+    # What a different worker (or a restarted process) reads:
+    assert created["bid_id"] in {r.id for r in await list_active_bids(db_session)}
+
+    dispatch = await client.post(
+        "/api/v1/v2g/dispatch",
+        json={"target_power_kw": -10, "push_to_chargers": False},
+        headers=auth_headers,
+    )
+    assert dispatch.status_code == 200, dispatch.text
+    after = (await client.get("/api/v1/v2g/metrics", headers=auth_headers)).json()
+    assert after["total_dispatches"] == before["total_dispatches"] + 1
+    assert after["active_bids"] == before["active_bids"] + 1
+    assert 0 < after["avg_achievement_ratio"] <= 1
+    fresh = await load_aggregator(db_session)  # no shared process state involved
+    assert fresh.get_metrics()["total_dispatches"] == after["total_dispatches"]
+
+    unknown = await client.post("/api/v1/v2g/bid", json={"service": "x"}, headers=auth_headers)
+    assert unknown.status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # Protocol data API
 # ---------------------------------------------------------------------------

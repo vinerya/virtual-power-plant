@@ -17,6 +17,7 @@ from vpp import __version__
 from vpp.api.observability import install_observability, start_observability, stop_observability
 from vpp.api.websocket import manager as websocket_manager
 from vpp.api.websocket import subscribe_event_bus_to_websocket
+from vpp.cluster.lease import TaskRole
 from vpp.db.engine import close_db, get_session_factory, init_db
 from vpp.events import get_event_bus
 from vpp.settings import get_settings
@@ -264,10 +265,65 @@ async def _modbus_ingestion_loop(settings) -> None:
         raise
 
 
+class _TradingVenueRole:
+    """Leader role for the ``trading-venue`` lease: own the venue, tick it."""
+
+    def __init__(self, settings) -> None:
+        self._settings = settings
+        self.market_data = TaskRole(self._market_data, name="vpp-trading-market-data")
+
+    async def _market_data(self) -> None:
+        from vpp.trading.service import run_market_data_loop
+
+        await run_market_data_loop(self._settings.trading_market_data_interval_seconds)
+
+    async def start(self) -> None:
+        from vpp.trading.service import get_trading_service
+
+        get_trading_service().invalidate()  # rebuild books from the DB
+        if self._settings.trading_market_data_enabled:
+            await self.market_data.start()
+
+    async def stop(self) -> None:
+        await self.market_data.stop()
+
+
+class _ProtocolAdaptersRole:
+    """Leader role for the ``protocol-adapters`` lease."""
+
+    def __init__(self, settings) -> None:
+        self._settings = settings
+        self.tasks: list[asyncio.Task] = []
+
+    async def start(self) -> None:
+        from vpp.api.routes.protocols import get_registry
+        from vpp.protocols.bootstrap import start_protocol_adapters
+
+        self.tasks[:] = start_protocol_adapters(self._settings, get_registry())
+
+    async def stop(self) -> None:
+        from vpp.protocols.bootstrap import stop_protocol_adapters
+
+        tasks = list(self.tasks)
+        self.tasks.clear()
+        await stop_protocol_adapters(tasks)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application startup / shutdown lifecycle."""
+    """Application startup / shutdown lifecycle.
+
+    Singleton background work runs under a DB lease (:mod:`vpp.cluster`):
+    with several API workers only the lease holder runs it and another
+    worker takes over when the holder dies. A lone process acquires every
+    lease during startup, so it runs everything, as before.
+    """
+    from vpp.cluster import rpc as cluster_rpc
+    from vpp.cluster import topology
+    from vpp.cluster.lease import LeaderElector, leadership
+
     settings = get_settings()
+    topology.validate_topology(settings)
     await init_db(
         settings.database_url,
         echo=settings.debug,
@@ -285,100 +341,94 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await apply_stored_config(get_session_factory(), settings.config_file_path)
 
     event_bridge_sub_id = subscribe_event_bus_to_websocket(get_event_bus(), websocket_manager)
+    relay = None
+    if settings.api_workers > 1:
+        # Clients of every worker see broadcasts made in any worker.
+        from vpp.cluster.relay import WebSocketRelay
+
+        relay = WebSocketRelay(
+            websocket_manager,
+            get_session_factory(),
+            poll_s=settings.cluster_poll_interval_seconds,
+        )
+        await relay.start()
     observability = await start_observability(settings, get_event_bus())
 
-    task: asyncio.Task | None = None
+    factory = get_session_factory()
+    electors: list[LeaderElector] = []
+
+    async def elect(name: str, leader) -> None:
+        elector = LeaderElector(
+            name, factory, leader=leader, ttl_s=settings.cluster_lease_ttl_seconds
+        )
+        await elector.start()
+        electors.append(elector)
+
+    degradation = TaskRole(
+        lambda: _degradation_periodic_loop(settings.degradation_updater_interval_minutes),
+        name="vpp-degradation-updater",
+    )
     if settings.degradation_updater_enabled:
-        task = asyncio.create_task(
-            _degradation_periodic_loop(settings.degradation_updater_interval_minutes),
-            name="vpp-degradation-updater",
-        )
-        app.state.degradation_task = task
-    else:
-        app.state.degradation_task = None
+        await elect(topology.LEASE_DEGRADATION, degradation)
+    app.state.degradation_task = degradation.task
 
-    mqtt_task: asyncio.Task | None = None
+    mqtt = TaskRole(lambda: _mqtt_ingestion_loop(settings), name="vpp-mqtt-telemetry-ingestion")
     if settings.mqtt_ingestion_enabled:
-        mqtt_task = asyncio.create_task(
-            _mqtt_ingestion_loop(settings),
-            name="vpp-mqtt-telemetry-ingestion",
-        )
-        app.state.mqtt_ingestion_task = mqtt_task
-    else:
-        app.state.mqtt_ingestion_task = None
+        await elect(topology.LEASE_MQTT, mqtt)
+    app.state.mqtt_ingestion_task = mqtt.task
 
-    modbus_task: asyncio.Task | None = None
+    modbus = TaskRole(
+        lambda: _modbus_ingestion_loop(settings), name="vpp-modbus-telemetry-ingestion"
+    )
     if settings.modbus_ingestion_enabled:
-        modbus_task = asyncio.create_task(
-            _modbus_ingestion_loop(settings),
-            name="vpp-modbus-telemetry-ingestion",
-        )
-        app.state.modbus_ingestion_task = modbus_task
-    else:
-        app.state.modbus_ingestion_task = None
+        await elect(topology.LEASE_MODBUS, modbus)
+    app.state.modbus_ingestion_task = modbus.task
 
     # OCPP / OpenADR / IEEE 2030.5 -- each opt-in via VPP_<PROTOCOL>_ENABLED.
-    from vpp.api.routes.protocols import get_registry
-    from vpp.protocols.bootstrap import start_protocol_adapters, stop_protocol_adapters
+    protocols = _ProtocolAdaptersRole(settings)
+    if settings.ocpp_enabled or settings.openadr_enabled or settings.ieee2030_5_enabled:
+        await elect(topology.LEASE_PROTOCOLS, protocols)
+    app.state.protocol_tasks = protocols.tasks
 
-    protocol_tasks = start_protocol_adapters(settings, get_registry())
-    app.state.protocol_tasks = protocol_tasks
+    # The venue always has an owner (orders are forwarded to it); the
+    # market-data tick is part of its leader role when enabled.
+    trading = _TradingVenueRole(settings)
+    await elect(topology.LEASE_TRADING, trading)
+    app.state.trading_market_data_task = trading.market_data.task
 
-    # Device setpoint actuator + watchdog (VPP_CONTROL_ENABLED, default off).
+    # Device setpoint actuator + watchdog (VPP_CONTROL_ENABLED, default off;
+    # validate_topology refuses it with more than one worker).
     from vpp.control.actuator import start_control, stop_control
 
     control_task = start_control(settings)
 
-    trading_task: asyncio.Task | None = None
-    if settings.trading_market_data_enabled:
-        from vpp.trading.service import run_market_data_loop
-
-        trading_task = asyncio.create_task(
-            run_market_data_loop(settings.trading_market_data_interval_seconds),
-            name="vpp-trading-market-data",
-        )
-    app.state.trading_market_data_task = trading_task
+    # Runs calls other workers forward to the leases this process holds.
+    executor = asyncio.create_task(
+        cluster_rpc.run_executor(
+            factory,
+            lambda: [n for n, lead in leadership().items() if lead],
+            poll_s=settings.cluster_poll_interval_seconds,
+        ),
+        name="vpp-cluster-call-executor",
+    )
+    topology.log_topology(settings, leadership())
 
     try:
         yield
     finally:
         # First, while Modbus connections are still up: release active setpoints.
         await stop_control(control_task)
-        await stop_protocol_adapters(protocol_tasks)
-
-        if trading_task is not None:
-            trading_task.cancel()
+        executor.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await executor
+        for elector in reversed(electors):
             try:
-                await trading_task
-            except asyncio.CancelledError:
-                pass
+                await elector.stop()
             except Exception:
-                logger.exception("Trading market-data task raised during shutdown")
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("Degradation updater raised during shutdown")
-        if mqtt_task is not None:
-            mqtt_task.cancel()
-            try:
-                await mqtt_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("MQTT ingestion task raised during shutdown")
-        if modbus_task is not None:
-            modbus_task.cancel()
-            try:
-                await modbus_task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("Modbus ingestion task raised during shutdown")
+                logger.exception("Stopping %s raised during shutdown", elector.name)
         await stop_observability(observability)
+        if relay is not None:
+            await relay.stop()
         get_event_bus().unsubscribe(event_bridge_sub_id)
         await close_db()
 

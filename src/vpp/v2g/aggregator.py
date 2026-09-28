@@ -45,13 +45,15 @@ class FlexibilityBid:
     available_until: float = 0.0
     fleet_id: str = ""
     ev_ids: list[str] = field(default_factory=list)
+    bid_id: str = ""  # set once persisted (``v2g_flexibility_bids.id``)
 
     @property
     def total_value(self) -> float:
         return self.capacity_kw * self.price_per_kw * self.duration_hours
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {"bid_id": self.bid_id} if self.bid_id else {}
+        return out | {
             "service": self.service.value,
             "capacity_kw": round(self.capacity_kw, 1),
             "duration_hours": self.duration_hours,
@@ -128,6 +130,18 @@ class V2GAggregator:
         self._dispatch_history: list[DispatchResult] = []
         self._total_revenue: float = 0.0
         self._total_dispatches: int = 0
+
+    def restore(
+        self,
+        *,
+        active_bids: list[FlexibilityBid],
+        dispatch_history: list[DispatchResult],
+        total_dispatches: int,
+    ) -> None:
+        """Load bids / dispatch counters persisted elsewhere (see ``vpp.v2g.store``)."""
+        self._active_bids = list(active_bids)
+        self._dispatch_history = list(dispatch_history)
+        self._total_dispatches = total_dispatches
 
     # -- Flexibility assessment ----------------------------------------------
 

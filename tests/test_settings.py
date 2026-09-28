@@ -45,11 +45,8 @@ def test_removed_redis_url_is_ignored(monkeypatch):
 # Settings that are intentionally not read from src/vpp. Keep this empty
 # unless there is a documented reason; an unread VPP_* variable misleads
 # operators into thinking it does something.
-_UNREFERENCED_SETTINGS_ALLOWLIST: dict[str, str] = {
-    # Consumed by the process launcher (`vpp serve` / uvicorn workers), which
-    # is being wired separately.
-    "api_workers": "process launcher",
-}
+# Settings intentionally not referenced by name in src/ (name -> reason).
+_UNREFERENCED_SETTINGS_ALLOWLIST: dict[str, str] = {}
 
 
 def test_every_setting_is_read_somewhere():

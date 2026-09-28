@@ -20,24 +20,53 @@ def cli() -> None:
 
 
 @cli.command()
-@click.option("--host", default="0.0.0.0", help="Bind host")
-@click.option("--port", default=8000, type=int, help="Bind port")
+@click.option("--host", default=None, help="Bind host (default: VPP_API_HOST)")
+@click.option("--port", default=None, type=int, help="Bind port (default: VPP_API_PORT)")
 @click.option("--reload", is_flag=True, help="Enable auto-reload for development")
-@click.option("--workers", default=1, type=int, help="Number of worker processes")
-def serve(host: str, port: int, reload: bool, workers: int) -> None:
-    """Start the VPP API server."""
+@click.option(
+    "--workers",
+    default=None,
+    type=click.IntRange(min=1),
+    help="Number of worker processes (default: VPP_API_WORKERS)",
+)
+def serve(host: str | None, port: int | None, reload: bool, workers: int | None) -> None:
+    """Start the VPP API server.
+
+    With more than one worker, singleton background work runs on the holder
+    of a database lease and trading commands are forwarded to it; see
+    docs/architecture.md#process-model.
+    """
+    import os
+
     try:
         import uvicorn
     except ImportError:
         click.echo("uvicorn is required: pip install virtual-power-plant[api]", err=True)
         sys.exit(1)
 
+    from vpp.cluster.topology import TopologyError, validate_topology
+    from vpp.settings import get_settings
+
+    settings = get_settings()
+    effective = workers if workers is not None else settings.api_workers
+    if reload and effective > 1:
+        click.echo("--reload runs a single process; ignoring the worker count", err=True)
+        effective = 1
+    try:
+        validate_topology(settings.model_copy(update={"api_workers": effective}))
+    except TopologyError as exc:
+        click.echo(f"Refusing to start: {exc}", err=True)
+        sys.exit(2)
+    # Worker processes read the effective count (topology checks + startup log).
+    os.environ["VPP_API_WORKERS"] = str(effective)
+    get_settings.cache_clear()
+
     uvicorn.run(
         "vpp.api.app:create_app",
-        host=host,
-        port=port,
+        host=host if host is not None else settings.api_host,
+        port=port if port is not None else settings.api_port,
         reload=reload,
-        workers=workers,
+        workers=effective,
         factory=True,
     )
 

@@ -5,18 +5,28 @@ which runs a *simulated* continuous-matching venue (no orders leave the
 process). Prices are $/MWh and quantities MWh. Placing/cancelling orders,
 advancing the simulation and live strategy runs require the ``operator`` or
 ``admin`` role; everything else is readable by any authenticated user.
+
+With several API workers the venue runs only in the process holding the
+``trading-venue`` lease (:mod:`vpp.cluster`). Other workers forward venue
+operations (submit/cancel, portfolio, markets, tick, strategy runs) to it
+through the database and answer with its result; if no leader answers in
+``VPP_CLUSTER_CALL_TIMEOUT_SECONDS`` they return 503 ``leader_unavailable``
+(the order was not executed) or 504 ``leader_timeout`` (claimed, outcome
+unknown -- check ``GET /orders``).
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.auth.security import get_current_user, require_role
+from vpp.cluster.rpc import on_leader, register_handler
+from vpp.cluster.topology import LEASE_TRADING
 from vpp.db.engine import get_db
 from vpp.db.models import OrderModel, TradeModel, UserModel
 from vpp.db.repositories import TradingRepository
@@ -51,7 +61,7 @@ _BACKTEST_ASSUMPTIONS = [
 ]
 
 
-def _raise(exc: TradingError) -> None:
+def _raise(exc: TradingError) -> NoReturn:
     raise HTTPException(status_code=exc.status_code, detail=exc.to_detail()) from exc
 
 
@@ -121,6 +131,18 @@ async def submit_order(
     or ``risk_limit_breached`` (with ``detail.reasons`` and the persisted
     ``detail.order_id``) when a risk limit would be breached.
     """
+    username = _username(user)
+    return await on_leader(
+        LEASE_TRADING,
+        "submit_order",
+        {"body": body.model_dump(mode="json"), "username": username},
+        lambda: _submit_order_local(session, body, username),
+    )
+
+
+async def _submit_order_local(
+    session: AsyncSession, body: OrderCreate, username: str | None
+) -> OrderSubmitResponse:
     svc = get_trading_service()
     try:
         result = await svc.place_order(
@@ -135,7 +157,7 @@ async def submit_order(
             visible_quantity=body.visible_quantity,
             time_in_force=body.time_in_force,
             metadata=body.metadata,
-            submitted_by=_username(user),
+            submitted_by=username,
         )
     except TradingError as exc:
         _raise(exc)
@@ -174,11 +196,21 @@ async def get_order(
     return _order_response(order)
 
 
-async def _cancel(order_id: str, session: AsyncSession, user: UserModel) -> OrderResponse:
+async def _cancel(order_id: str, session: AsyncSession, user: UserModel) -> Any:
+    username = _username(user)
+    return await on_leader(
+        LEASE_TRADING,
+        "cancel_order",
+        {"order_id": order_id, "username": username},
+        lambda: _cancel_local(session, order_id, username),
+    )
+
+
+async def _cancel_local(
+    session: AsyncSession, order_id: str, username: str | None
+) -> OrderResponse:
     try:
-        row = await get_trading_service().cancel_order(
-            session, order_id, cancelled_by=_username(user)
-        )
+        row = await get_trading_service().cancel_order(session, order_id, cancelled_by=username)
     except TradingError as exc:
         _raise(exc)
     return _order_response(row)
@@ -231,6 +263,10 @@ async def get_portfolio(
     _user: UserModel = Depends(get_current_user),
 ):
     """Positions, realized/unrealized P&L, exposure and risk metrics."""
+    return await on_leader(LEASE_TRADING, "portfolio", {}, lambda: _portfolio_local(session))
+
+
+async def _portfolio_local(session: AsyncSession) -> dict[str, Any]:
     svc = get_trading_service()
     await svc.ensure_ready(session)
     return svc.portfolio_snapshot()
@@ -243,6 +279,12 @@ async def list_markets(
     _user: UserModel = Depends(get_current_user),
 ):
     """Tradable (simulated) markets with their latest prices."""
+    return await on_leader(
+        LEASE_TRADING, "markets", {"depth": depth}, lambda: _markets_local(session, depth)
+    )
+
+
+async def _markets_local(session: AsyncSession, depth: int) -> list[dict[str, Any]]:
     svc = get_trading_service()
     await svc.ensure_ready(session)
     return svc.markets(depth_levels=depth)
@@ -255,7 +297,7 @@ async def advance_markets(
 ):
     """Advance the simulated venue one step (also done periodically in the
     background): new prices, resting-order matching, ``market_data`` events."""
-    return await get_trading_service().tick(session)
+    return await on_leader(LEASE_TRADING, "tick", {}, lambda: get_trading_service().tick(session))
 
 
 # ---------------------------------------------------------------------------
@@ -315,13 +357,67 @@ async def run_strategy(
     each signal is submitted as an order through the same validation and
     pre-trade risk checks as ``POST /orders``.
     """
+    username = _username(user)
+    return await on_leader(
+        LEASE_TRADING,
+        "run_strategy",
+        {"name": name, "body": body.model_dump(mode="json"), "username": username},
+        lambda: _run_strategy_local(session, name, body, username),
+    )
+
+
+async def _run_strategy_local(
+    session: AsyncSession, name: str, body: StrategyRunRequest, username: str | None
+) -> dict[str, Any]:
     try:
         return await get_trading_service().run_strategy(
             session,
             name,
             params=body.params,
             dry_run=body.dry_run,
-            submitted_by=_username(user),
+            submitted_by=username,
         )
     except TradingError as exc:
         _raise(exc)
+
+
+# ---------------------------------------------------------------------------
+# Forwarded venue operations (run on the trading-venue lease holder)
+# ---------------------------------------------------------------------------
+
+
+async def _h_submit_order(payload: dict[str, Any], session: AsyncSession) -> Any:
+    body = OrderCreate.model_validate(payload["body"])
+    return await _submit_order_local(session, body, payload.get("username"))
+
+
+async def _h_cancel_order(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _cancel_local(session, payload["order_id"], payload.get("username"))
+
+
+async def _h_portfolio(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _portfolio_local(session)
+
+
+async def _h_markets(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _markets_local(session, int(payload.get("depth", 0)))
+
+
+async def _h_tick(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await get_trading_service().tick(session)
+
+
+async def _h_run_strategy(payload: dict[str, Any], session: AsyncSession) -> Any:
+    body = StrategyRunRequest.model_validate(payload["body"])
+    return await _run_strategy_local(session, payload["name"], body, payload.get("username"))
+
+
+for _method, _handler in (
+    ("submit_order", _h_submit_order),
+    ("cancel_order", _h_cancel_order),
+    ("portfolio", _h_portfolio),
+    ("markets", _h_markets),
+    ("tick", _h_tick),
+    ("run_strategy", _h_run_strategy),
+):
+    register_handler(LEASE_TRADING, _method, _handler)

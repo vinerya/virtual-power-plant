@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
 
     from vpp.alert_service import AlertService
+    from vpp.cluster.lease import LeaderElector
     from vpp.events.bus import EventBus
     from vpp.settings import Settings
 
@@ -72,13 +73,18 @@ class ObservabilityHandle:
     bus: EventBus
     metrics_subscription: str | None = None
     alert_service: AlertService | None = None
+    alert_elector: LeaderElector | None = None
 
 
 async def start_observability(settings: Settings, bus: EventBus) -> ObservabilityHandle:
-    """Subscribe metrics to the bus and start the alert evaluator."""
-    from vpp.alert_service import AlertService, set_alert_service
-    from vpp.alerts import WebhookAlertChannel
-    from vpp.api.websocket import manager as websocket_manager
+    """Subscribe metrics to the bus and start alert evaluation.
+
+    Alert evaluation runs in the process holding the ``alert-evaluator``
+    lease; other workers forward their telemetry to it (see
+    :class:`vpp.alert_service.AlertForwarder`).
+    """
+    from vpp.alert_service import ALERTS_LEASE, AlertForwarder
+    from vpp.cluster.lease import CallbackRole, LeaderElector
     from vpp.db.engine import get_session_factory
 
     handle = ObservabilityHandle(bus=bus)
@@ -86,32 +92,63 @@ async def start_observability(settings: Settings, bus: EventBus) -> Observabilit
         handle.metrics_subscription = vpp_metrics.subscribe_event_bus(bus)
 
     if settings.alerts_enabled:
-        service = AlertService(get_session_factory(), broadcaster=websocket_manager)
-        if settings.alert_webhook_url:
-            service.manager.add_channel(
-                WebhookAlertChannel(
-                    settings.alert_webhook_url,
-                    secret=settings.alert_webhook_secret,
-                    timeout_s=settings.alert_webhook_timeout_seconds,
-                    max_retries=settings.alert_webhook_max_retries,
-                )
-            )
-        try:
-            await service.start(bus, seed_defaults=settings.alerts_seed_default_rules)
-        except Exception:
-            logger.exception("Alert service failed to start; alerts will not be evaluated")
-        else:
-            handle.alert_service = service
-            set_alert_service(service)
+
+        async def lead() -> None:
+            handle.alert_service = await _start_alert_service(settings, bus)
+
+        async def step_down() -> None:
+            await _stop_alert_service(handle)
+
+        handle.alert_elector = LeaderElector(
+            ALERTS_LEASE,
+            get_session_factory(),
+            leader=CallbackRole(lead, step_down),
+            follower=AlertForwarder(bus),
+            ttl_s=settings.cluster_lease_ttl_seconds,
+        )
+        await handle.alert_elector.start()
     return handle
 
 
-async def stop_observability(handle: ObservabilityHandle) -> None:
+async def _start_alert_service(settings: Settings, bus: EventBus) -> AlertService | None:
+    from vpp.alert_service import AlertService, set_alert_service
+    from vpp.alerts import WebhookAlertChannel
+    from vpp.api.websocket import manager as websocket_manager
+    from vpp.db.engine import get_session_factory
+
+    service = AlertService(get_session_factory(), broadcaster=websocket_manager)
+    if settings.alert_webhook_url:
+        service.manager.add_channel(
+            WebhookAlertChannel(
+                settings.alert_webhook_url,
+                secret=settings.alert_webhook_secret,
+                timeout_s=settings.alert_webhook_timeout_seconds,
+                max_retries=settings.alert_webhook_max_retries,
+            )
+        )
+    try:
+        await service.start(bus, seed_defaults=settings.alerts_seed_default_rules)
+    except Exception:
+        logger.exception("Alert service failed to start; alerts will not be evaluated")
+        return None
+    set_alert_service(service)
+    return service
+
+
+async def _stop_alert_service(handle: ObservabilityHandle) -> None:
     from vpp.alert_service import get_alert_service, set_alert_service
 
+    service, handle.alert_service = handle.alert_service, None
+    if service is None:
+        return
+    await service.stop()
+    if get_alert_service() is service:
+        set_alert_service(None)
+
+
+async def stop_observability(handle: ObservabilityHandle) -> None:
     if handle.metrics_subscription is not None:
         handle.bus.unsubscribe(handle.metrics_subscription)
-    if handle.alert_service is not None:
-        await handle.alert_service.stop()
-        if get_alert_service() is handle.alert_service:
-            set_alert_service(None)
+    if handle.alert_elector is not None:
+        await handle.alert_elector.stop()
+    await _stop_alert_service(handle)

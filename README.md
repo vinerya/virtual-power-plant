@@ -105,7 +105,7 @@ Maturity labels used below:
                         | HTTP + Bearer JWT (server side)   \
                         v                                     v
 +------------------------------------------------------------------------------+
-| FastAPI API (single process)                                                 |
+| FastAPI API (1..N worker processes)                                          |
 |  auth (JWT aud / API keys, RBAC) · rate limit · request ids · /metrics       |
 |                                                                              |
 |  resources · sites · customers/portal · tariffs · alerts · config · V2G      |

@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from vpp.alert_service import (
     AlertRepository,
     as_utc,
-    get_alert_service,
+    request_rule_reload,
     serialize_alert,
     snooze_until_from,
     utcnow,
@@ -62,9 +62,7 @@ def _rule_read(row: AlertRuleModel) -> AlertRuleRead:
 
 
 async def _reload_rules() -> None:
-    svc = get_alert_service()
-    if svc is not None:
-        await svc.reload_rules()
+    await request_rule_reload()
 
 
 # ---------------------------------------------------------------------------
