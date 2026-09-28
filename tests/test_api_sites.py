@@ -15,7 +15,7 @@ from _portal_helpers import (
     user_headers,
 )
 
-from vpp.db.models import BatteryStateModel, ResourceModel
+from vpp.db.models import AlertModel, BatteryStateModel, ResourceModel
 from vpp.portal import sites as sites_service
 
 if TYPE_CHECKING:
@@ -119,6 +119,63 @@ async def test_health_reflects_offline_resources(client: AsyncClient, auth_heade
     assert two["health"] == "red"
 
 
+async def test_active_alerts_count_persisted_alerts(
+    client: AsyncClient, auth_headers: dict, db_session
+):
+    """The app wires the AlertService's store into the site summary."""
+    a = await create_resource(client, auth_headers)
+    b = await create_resource(client, auth_headers, resource_type="solar")
+    outsider = await create_resource(client, auth_headers)
+    site = await create_site(client, auth_headers, resource_ids=[a, b])
+    assert site["active_alerts"] == 0
+
+    now = datetime.now(timezone.utc)
+
+    def alert(source: str, status: str, snoozed_until=None) -> AlertModel:
+        return AlertModel(
+            rule_name="t",
+            title="t",
+            source=source,
+            source_kind="resource",
+            status=status,
+            snoozed_until=snoozed_until,
+            fired_at=now,
+            last_fired_at=now,
+        )
+
+    db_session.add_all(
+        [
+            alert(a, "active"),
+            alert(a, "acknowledged"),
+            alert(b, "snoozed", now - timedelta(minutes=5)),  # expired -> counts
+            alert(b, "snoozed", now + timedelta(hours=1)),  # muted -> not counted
+            alert(b, "resolved"),
+            alert(outsider, "active"),  # not a member of the site
+        ]
+    )
+    await db_session.commit()
+
+    got = (await client.get(f"/api/v1/sites/{site['id']}", headers=auth_headers)).json()
+    assert got["active_alerts"] == 3
+    assert got["health"] == "red"  # >= 3 active alerts
+    listed = (await client.get("/api/v1/sites", headers=auth_headers)).json()
+    assert next(s for s in listed if s["id"] == site["id"])["active_alerts"] == 3
+
+    # Resolving via the API drops the count.
+    open_ids = [
+        r["id"]
+        for r in (
+            await client.get(f"/api/v1/alerts?source={a}&status=open", headers=auth_headers)
+        ).json()
+    ]
+    for alert_id in open_ids:
+        resp = await client.post(f"/api/v1/alerts/{alert_id}/resolve", headers=auth_headers)
+        assert resp.status_code == 200
+    got = (await client.get(f"/api/v1/sites/{site['id']}", headers=auth_headers)).json()
+    assert got["active_alerts"] == 1
+    assert got["health"] == "yellow"
+
+
 async def test_alert_count_provider_feeds_site(client: AsyncClient, auth_headers: dict):
     rid = await create_resource(client, auth_headers)
     site = await create_site(client, auth_headers, resource_ids=[rid])
@@ -126,11 +183,11 @@ async def test_alert_count_provider_feeds_site(client: AsyncClient, auth_headers
     async def provider(_session, ids):
         return {i: 2 for i in ids if i == rid}
 
-    sites_service.register_alert_count_provider(provider)
+    previous = sites_service.register_alert_count_provider(provider)
     try:
         got = (await client.get(f"/api/v1/sites/{site['id']}", headers=auth_headers)).json()
     finally:
-        sites_service.register_alert_count_provider(None)
+        sites_service.register_alert_count_provider(previous)
     assert got["active_alerts"] == 2
     assert got["health"] == "yellow"
 
