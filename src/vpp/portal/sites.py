@@ -19,15 +19,21 @@ AlertCountProvider = Callable[[AsyncSession, Sequence[str]], Awaitable[dict[str,
 _alert_count_provider: AlertCountProvider | None = None
 
 
-def register_alert_count_provider(provider: AlertCountProvider | None) -> None:
+def register_alert_count_provider(
+    provider: AlertCountProvider | None,
+) -> AlertCountProvider | None:
     """Plug in the alert store: ``provider(session, source_ids) -> {source_id: n_active}``.
 
     Sites report ``active_alerts`` as the sum over their resource ids (and
-    the site id itself). Until an alert store registers a provider this is
-    reported as 0 -- there is no alert persistence to count from.
+    the site id itself). The API registers
+    :meth:`vpp.alert_service.AlertRepository.count_open_by_source` at app
+    creation; without a provider the count is 0. Returns the previously
+    registered provider so callers (tests) can restore it.
     """
     global _alert_count_provider
+    previous = _alert_count_provider
     _alert_count_provider = provider
+    return previous
 
 
 def resource_capacity_kwh(r: ResourceModel) -> float | None:

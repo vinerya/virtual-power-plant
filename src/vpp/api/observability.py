@@ -3,7 +3,8 @@
 Kept out of :mod:`vpp.api.app` so the factory only needs two calls:
 
 * :func:`install_observability` from ``create_app`` -- logging config,
-  request-id + Prometheus middleware, ``/metrics`` and alerts routes.
+  request-id + Prometheus middleware, ``/metrics`` and alerts routes, and
+  the sites' alert-count provider.
 * :func:`start_observability` / :func:`stop_observability` from the
   lifespan -- EventBus subscriptions and the alert evaluator task.
 """
@@ -58,6 +59,12 @@ def install_observability(app: FastAPI, settings: Settings) -> None:
     app.add_middleware(RequestIdMiddleware, access_log=settings.access_log_enabled)
 
     app.include_router(alerts_routes.router)
+
+    # Sites report ``active_alerts`` from the persisted alert store.
+    from vpp.alert_service import AlertRepository
+    from vpp.portal.sites import register_alert_count_provider
+
+    register_alert_count_provider(AlertRepository.count_open_by_source)
 
 
 @dataclass

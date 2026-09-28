@@ -62,3 +62,57 @@ async def test_admin_can_issue_lower_role_api_key(client: AsyncClient, auth_head
     )
     assert resp.status_code == 201
     assert resp.json()["role"] == "viewer"
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/auth/token -- credential transport
+# ---------------------------------------------------------------------------
+
+_CREDS = {"username": "testadmin", "password": "adminpassword123"}
+
+
+@pytest.mark.asyncio
+async def test_token_form_body(client: AsyncClient, admin_user):
+    resp = await client.post("/api/v1/auth/token", data={**_CREDS, "grant_type": "password"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["access_token"]
+    assert "Deprecation" not in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_token_json_body(client: AsyncClient, admin_user):
+    resp = await client.post("/api/v1/auth/token", json=_CREDS)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["token_type"] == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_token_query_params_deprecated(client: AsyncClient, admin_user):
+    resp = await client.post("/api/v1/auth/token", params=_CREDS)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["Deprecation"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_token_rejects_bad_requests(client: AsyncClient, admin_user):
+    bad_pw = await client.post("/api/v1/auth/token", data={**_CREDS, "password": "nope"})
+    assert bad_pw.status_code == 401
+    bad_json = await client.post("/api/v1/auth/token", json={**_CREDS, "password": "nope"})
+    assert bad_json.status_code == 401
+    missing = await client.post("/api/v1/auth/token", data={"username": "testadmin"})
+    assert missing.status_code == 422
+    grant = await client.post(
+        "/api/v1/auth/token", data={**_CREDS, "grant_type": "client_credentials"}
+    )
+    assert grant.status_code == 400
+    wrong_type = await client.post(
+        "/api/v1/auth/token", content=b"x", headers={"content-type": "text/plain"}
+    )
+    assert wrong_type.status_code == 415
+    nothing = await client.post("/api/v1/auth/token")
+    assert nothing.status_code == 422
+
+
+def test_token_openapi_documents_form_and_json(app):
+    body = app.openapi()["paths"]["/api/v1/auth/token"]["post"]["requestBody"]["content"]
+    assert set(body) == {"application/x-www-form-urlencoded", "application/json"}

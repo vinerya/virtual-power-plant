@@ -40,7 +40,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from vpp.alerts import Alert, AlertManager, AlertRule, AlertSeverity, RuleType
 from vpp.db.models import AlertModel, AlertRuleModel, ResourceModel
@@ -48,6 +48,8 @@ from vpp.events.bus import Event, EventBus, EventType
 from vpp.metrics import normalise_soc, record_alert_fired
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = logging.getLogger(__name__)
@@ -246,6 +248,41 @@ class AlertRepository:
             AlertModel.status.in_(OPEN_STATUSES),
         )
         return list((await session.execute(stmt)).scalars().all())
+
+    @staticmethod
+    async def count_open_by_source(
+        session: AsyncSession,
+        sources: Sequence[str],
+        now: datetime | None = None,
+    ) -> dict[str, int]:
+        """Number of alerts needing attention per ``source`` id.
+
+        Counts ``active`` and ``acknowledged`` alerts plus snoozed ones whose
+        snooze has expired (they read as ``active``). Resolved alerts and
+        alerts snoozed into the future are not counted. Sources with no such
+        alert are omitted. Registered as the sites' alert-count provider
+        (``vpp.portal.sites.register_alert_count_provider``).
+        """
+        ids = [str(s) for s in sources]
+        if not ids:
+            return {}
+        now = now or utcnow()
+        # NULL-safe "not snoozed into the future" (effective_status semantics).
+        not_snoozed_now = or_(
+            AlertModel.status != "snoozed",
+            AlertModel.snoozed_until.is_(None),
+            AlertModel.snoozed_until <= now,
+        )
+        stmt = (
+            select(AlertModel.source, func.count(AlertModel.id))
+            .where(
+                AlertModel.source.in_(ids),
+                AlertModel.status != "resolved",
+                not_snoozed_now,
+            )
+            .group_by(AlertModel.source)
+        )
+        return {src: int(n) for src, n in (await session.execute(stmt)).all()}
 
     # -- lifecycle ---------------------------------------------------------
 

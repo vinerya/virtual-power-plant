@@ -10,7 +10,8 @@ export function SubtypePanel({ r }: { r: ResourceResponse }) {
       return <BatteryPanel r={r} />;
     case "solar":
       return <SolarPanel r={r} />;
-    case "wind":
+    case "wind_turbine":
+    case "wind": // legacy alias
       return <WindPanel r={r} />;
     default:
       return <DefaultPanel r={r} />;
@@ -24,9 +25,10 @@ function num(v: unknown): number | null {
 function BatteryPanel({ r }: { r: ResourceResponse }) {
   const soc = num(r.state_of_charge);
   const cap = num(r.capacity_kwh);
-  const cycles = num(r.cycle_count);
-  const chargeLimit = num(r.charge_limit_kw);
-  const dischargeLimit = num(r.discharge_limit_kw);
+  const cycles = num(r.equivalent_full_cycles);
+  // Unset limits mean "rated power" on the backend.
+  const chargeLimit = num(r.max_charge_kw) ?? num(r.rated_power);
+  const dischargeLimit = num(r.max_discharge_kw) ?? num(r.rated_power);
   return (
     <Card>
       <CardHeader>
@@ -39,7 +41,10 @@ function BatteryPanel({ r }: { r: ResourceResponse }) {
         <SocGauge value={soc ?? 0} known={soc != null} />
         <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
           <KV label="Capacity" value={cap != null ? `${cap.toFixed(1)} kWh` : "—"} />
-          <KV label="Cycle count" value={cycles != null ? `${cycles}` : "—"} />
+          <KV
+            label="Equivalent full cycles"
+            value={cycles != null ? cycles.toFixed(1) : "—"}
+          />
           <KV
             label="Charge limit"
             value={chargeLimit != null ? formatPower(chargeLimit) : "—"}
@@ -131,8 +136,8 @@ function SolarPanel({ r }: { r: ResourceResponse }) {
 
 function WindPanel({ r }: { r: ResourceResponse }) {
   const ws = num(r.wind_speed_ms);
-  const cin = num(r.cut_in_speed);
-  const cout = num(r.cut_out_speed);
+  const cin = num(r.cut_in_speed_ms);
+  const cout = num(r.cut_out_speed_ms);
   return (
     <Card>
       <CardHeader>

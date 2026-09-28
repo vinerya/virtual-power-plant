@@ -16,8 +16,9 @@ stored verbatim so operator comments survive a round-trip. Until the first
 ``PUT``, ``GET`` serves the in-process defaults (``version`` = 0,
 ``updated_at`` = null).
 
-Applying a document replaces the ``VPPConfig`` on the API's shared
-``VirtualPowerPlant`` instance (see :mod:`vpp.api.deps`). Settings that are
+Applying a document replaces the live ``VPPConfig`` held in
+:mod:`vpp.api.deps`; on startup :func:`apply_stored_config` (called from the
+API lifespan) re-applies the newest stored document. Settings that are
 read from the environment at process start (``VPP_*`` variables: database,
 auth, rate limiting, ingestion toggles) are *not* part of this document and
 are reported read-only alongside it.
@@ -26,18 +27,20 @@ are reported read-only alongside it.
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime  # noqa: TC003 -- pydantic needs it at runtime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002 -- FastAPI resolves dependency annotations at runtime
 )
 
-from vpp.api.deps import get_vpp
+from vpp.api.deps import get_live_config, set_live_config
 from vpp.auth.security import get_current_user, require_role
 from vpp.config import VPPConfig
 from vpp.config.schema import validate_config_mapping, vpp_config_json_schema
@@ -45,6 +48,11 @@ from vpp.db.engine import get_db
 from vpp.db.models import ConfigDocumentModel, UserModel
 from vpp.schemas.auth import UserRole
 from vpp.settings import get_settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/config", tags=["Configuration"])
 
@@ -91,7 +99,7 @@ def _sha256(text: str) -> str:
 
 
 def _default_yaml() -> str:
-    return yaml.safe_dump(get_vpp().config.to_dict(), sort_keys=False)
+    return yaml.safe_dump(get_live_config().to_dict(), sort_keys=False)
 
 
 async def _latest(session: AsyncSession) -> ConfigDocumentModel | None:
@@ -165,6 +173,42 @@ def validate_config_document(
     return config, [], list(result.warnings)
 
 
+async def apply_stored_config(session_factory: async_sessionmaker[AsyncSession]) -> int | None:
+    """Apply the newest stored config document on boot; return its version.
+
+    Never raises: an empty or missing ``config_documents`` table (fresh
+    database, migrations not yet run) keeps the built-in defaults, and a
+    stored document that no longer validates (e.g. after a schema change)
+    is logged and skipped rather than blocking startup.
+    """
+    try:
+        async with session_factory() as session:
+            row = await _latest(session)
+    except SQLAlchemyError:
+        logger.warning(
+            "Could not read config_documents; serving default configuration", exc_info=True
+        )
+        return None
+    if row is None:
+        return None
+    try:
+        data = yaml.safe_load(row.yaml)
+    except yaml.YAMLError:
+        logger.error("Stored config version %s is not valid YAML; using defaults", row.version)
+        return None
+    config, errors, _warnings = validate_config_document(data)
+    if config is None:
+        logger.error(
+            "Stored config version %s failed validation (%s); using defaults",
+            row.version,
+            "; ".join(f"{e['path']}: {e['message']}" for e in errors),
+        )
+        return None
+    set_live_config(config)
+    logger.info("Applied stored configuration version %s", row.version)
+    return row.version
+
+
 @router.get("", response_model=ConfigDocumentResponse)
 @router.get("/", response_model=ConfigDocumentResponse, include_in_schema=False)
 async def get_config(
@@ -224,7 +268,7 @@ async def apply_config(
 
     new_hash = _sha256(body.yaml)
     if live is not None and live.hash == new_hash:
-        get_vpp().config = config
+        set_live_config(config)
         return _response(live, warnings=warnings)
 
     next_version = (
@@ -236,7 +280,7 @@ async def apply_config(
     session.add(row)
     await session.flush()
     await session.refresh(row)
-    get_vpp().config = config
+    set_live_config(config)
     return _response(row, warnings=warnings)
 
 

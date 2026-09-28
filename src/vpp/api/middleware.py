@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -155,3 +155,45 @@ class PrometheusMiddleware:
                 status_code,
                 time.perf_counter() - start,
             )
+
+
+class TrailingSlashMiddleware:
+    """Serve ``/x`` and ``/x/`` from the same route without a redirect.
+
+    Starlette's router answers a path that only matches with the trailing
+    slash toggled with a ``307`` redirect. Browsers re-send the request
+    (fine), but API clients that do not follow redirects -- or that drop the
+    ``Authorization`` header on the hop, or sit behind a proxy that rewrites
+    the ``Location`` host -- break on it. This middleware resolves the
+    toggled path *internally* instead: when no route matches the request
+    path but one matches it with the trailing slash added/removed, the scope
+    is rewritten before routing. A path that matches as-is (even only with a
+    different method, i.e. a 405) is never touched, so explicit routes win.
+    """
+
+    def __init__(self, app: ASGIApp, *, router: Any) -> None:
+        self.app = app
+        self.router = router
+
+    def _matches(self, scope: Scope) -> bool:
+        from starlette.routing import Match
+
+        for route in self.router.routes:
+            match, _ = route.matches(scope)
+            if match is not Match.NONE:
+                return True
+        return False
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            path: str = scope["path"]
+            if path != "/" and not self._matches(scope):
+                alt = path[:-1] if path.endswith("/") else path + "/"
+                alt_scope = dict(scope)
+                alt_scope["path"] = alt
+                raw = scope.get("raw_path")
+                if isinstance(raw, bytes):
+                    alt_scope["raw_path"] = raw[:-1] if raw.endswith(b"/") else raw + b"/"
+                if self._matches(alt_scope):
+                    scope = alt_scope
+        await self.app(scope, receive, send)

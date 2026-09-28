@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: TC002 -- runtime annotation
 
 from vpp.auth.security import (
     create_access_token,
@@ -16,7 +18,7 @@ from vpp.auth.security import (
     verify_password,
 )
 from vpp.db.engine import get_db
-from vpp.db.models import UserModel
+from vpp.db.models import UserModel  # noqa: TC001 -- runtime annotation
 from vpp.db.repositories import UserRepository
 from vpp.schemas.auth import (
     APIKeyCreate,
@@ -30,12 +32,105 @@ from vpp.schemas.auth import (
 )
 from vpp.settings import get_settings
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 
-@router.post("/token", response_model=Token)
-async def login(username: str, password: str, session: AsyncSession = Depends(get_db)):
-    """Authenticate and receive a JWT access token."""
+_TOKEN_REQUEST_BODY = {
+    "required": True,
+    "content": {
+        "application/x-www-form-urlencoded": {
+            "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                    "grant_type": {"type": "string", "enum": ["password"]},
+                    "username": {"type": "string"},
+                    "password": {"type": "string", "format": "password"},
+                },
+            }
+        },
+        "application/json": {
+            "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                    "username": {"type": "string"},
+                    "password": {"type": "string", "format": "password"},
+                },
+            }
+        },
+    },
+}
+
+
+def _bad_request(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+
+async def _read_credentials(request: Request) -> tuple[str, str, bool]:
+    """Return ``(username, password, deprecated_query)`` from the request.
+
+    Accepts the OAuth2 password-grant form body (RFC 6749 section 4.3) or a JSON
+    body. Credentials in the query string are still accepted when the body
+    is empty, for older clients, but are deprecated: query strings end up in
+    proxy/server access logs and browser history.
+    """
+    ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if ctype in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        form = await request.form()
+        grant_type = form.get("grant_type")
+        if grant_type not in (None, "", "password"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="unsupported_grant_type",
+            )
+        username, password = form.get("username"), form.get("password")
+    elif ctype == "application/json" or ctype.endswith("+json"):
+        try:
+            data = await request.json()
+        except ValueError as exc:
+            raise _bad_request("Body is not valid JSON") from exc
+        if not isinstance(data, dict):
+            raise _bad_request("Body must be a JSON object")
+        username, password = data.get("username"), data.get("password")
+    elif not await request.body():
+        username = request.query_params.get("username")
+        password = request.query_params.get("password")
+        if isinstance(username, str) and isinstance(password, str):
+            return username, password, True
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Send credentials as application/x-www-form-urlencoded or application/json",
+        )
+    if not isinstance(username, str) or not isinstance(password, str) or not username:
+        raise _bad_request("username and password are required")
+    return username, password, False
+
+
+@router.post("/token", response_model=Token, openapi_extra={"requestBody": _TOKEN_REQUEST_BODY})
+async def login(request: Request, response: Response, session: AsyncSession = Depends(get_db)):
+    """Authenticate and receive a JWT access token.
+
+    Send ``username`` and ``password`` as an OAuth2 password-grant form
+    (``application/x-www-form-urlencoded``, optional ``grant_type=password``)
+    or as a JSON object. **Deprecated:** passing them as query parameters
+    still works (the response then carries a ``Deprecation`` header) but
+    leaks the password into access logs; it will be removed in a future
+    release.
+    """
+    username, password, deprecated = await _read_credentials(request)
+    if deprecated:
+        logger.warning(
+            "POST /api/v1/auth/token with credentials in the query string is deprecated; "
+            "send a form or JSON body instead"
+        )
+        response.headers["Deprecation"] = "true"
+        response.headers["Warning"] = (
+            '299 - "Credentials in the query string are deprecated; use a form or JSON body"'
+        )
     user = await UserRepository.get_by_username(session, username)
     if user is None or not user.is_active or not verify_password(password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")

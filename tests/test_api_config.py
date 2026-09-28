@@ -10,7 +10,7 @@ import pytest_asyncio
 import yaml
 from _portal_helpers import isolated_client, user_headers
 
-from vpp.api.deps import get_vpp, reset_vpp
+from vpp.api.deps import get_live_config, reset_live_config
 from vpp.config import VPPConfig, vpp_config
 from vpp.config import base as config_base
 from vpp.config.schema import VPPConfigDocument, vpp_config_json_schema
@@ -28,9 +28,9 @@ async def client(app):
 
 @pytest.fixture(autouse=True)
 def _fresh_vpp():
-    reset_vpp()
+    reset_live_config()
     yield
-    reset_vpp()
+    reset_live_config()
 
 
 def _doc(**overrides) -> str:
@@ -128,8 +128,8 @@ async def test_apply_config_round_trip(client: AsyncClient, auth_headers: dict):
         applied["updated_by"]
         == (await client.get("/api/v1/auth/me", headers=auth_headers)).json()["id"]
     )
-    assert get_vpp().config.name == "Austin VPP"
-    assert get_vpp().config.optimization.time_horizon == 48
+    assert get_live_config().name == "Austin VPP"
+    assert get_live_config().optimization.time_horizon == 48
 
     live = (await client.get("/api/v1/config", headers=auth_headers)).json()
     assert live["yaml"] == text and live["hash"] == applied["hash"]

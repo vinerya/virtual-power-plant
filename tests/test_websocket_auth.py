@@ -9,15 +9,19 @@ through the shared async ``client`` fixture.
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+from jose import jwt
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from vpp.api import websocket as ws_module
 from vpp.auth.security import create_access_token
+from vpp.settings import get_settings
 
 
 class _User:
@@ -177,3 +181,74 @@ def test_customer_token_is_rejected(monkeypatch):
         tc.websocket_connect(f"/api/v1/ws?token={token}") as ws,
     ):
         ws.receive_text()
+
+
+# ---------------------------------------------------------------------------
+# Credential expiry closes open sockets (code 4001)
+# ---------------------------------------------------------------------------
+
+
+def _short_lived_access_token(seconds: int) -> str:
+    settings = get_settings()
+    return jwt.encode(
+        {
+            "sub": "u-1",
+            "username": "alice",
+            "role": "operator",
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=seconds),
+        },
+        settings.secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+
+
+def _assert_closed_on_expiry(tc: TestClient, url: str, **kwargs) -> None:
+    baseline = ws_module.manager.active_count
+    start = time.monotonic()
+    with tc.websocket_connect(url, **kwargs) as ws:
+        assert json.loads(ws.receive_text()) == {"ack": "subscribed:alerts"}
+        ws.send_text(json.dumps({"action": "ping"}))
+        assert "pong" in json.loads(ws.receive_text())  # usable before expiry
+        with pytest.raises(WebSocketDisconnect) as exc:
+            ws.receive_text()
+    assert exc.value.code == ws_module.WS_TOKEN_EXPIRED
+    assert exc.value.reason == "Token expired"
+    assert time.monotonic() - start < 10
+    assert ws_module.manager.active_count == baseline
+
+
+def test_socket_closed_when_access_token_expires(ws_app):
+    token = _short_lived_access_token(2)
+    with TestClient(ws_app) as tc:
+        _assert_closed_on_expiry(tc, f"/api/v1/ws?token={token}&channels=alerts")
+
+
+def test_ws_token_socket_closed_at_session_expiry(ws_app):
+    session_exp = datetime.now(timezone.utc) + timedelta(seconds=2)
+    token, ttl = ws_module.create_ws_token(_User("u-1"), session_exp)
+    assert ttl <= 2  # never outlives the session it was minted from
+    with TestClient(ws_app) as tc:
+        _assert_closed_on_expiry(tc, "/api/v1/ws?channels=alerts", subprotocols=["bearer", token])
+
+
+def test_ws_token_socket_outlives_handshake_ttl(ws_app, monkeypatch):
+    """The short ws-token ``exp`` only gates the handshake, not the socket."""
+    monkeypatch.setattr(get_settings(), "ws_token_expire_seconds", 1)
+    session_exp = datetime.now(timezone.utc) + timedelta(hours=1)
+    token, ttl = ws_module.create_ws_token(_User("u-1"), session_exp)
+    assert ttl == 1
+    payload = ws_module.decode_access_token(token)
+    assert ws_module.socket_expires_at(payload) == int(session_exp.timestamp())
+    with TestClient(ws_app) as tc, tc.websocket_connect(f"/api/v1/ws?token={token}") as ws:
+        time.sleep(2.2)  # past the token's own exp
+        ws.send_text(json.dumps({"action": "ping"}))
+        assert "pong" in json.loads(ws.receive_text())
+
+
+@pytest.mark.asyncio
+async def test_ws_token_carries_session_expiry(client: AsyncClient, auth_headers):
+    session = ws_module.decode_access_token(auth_headers["Authorization"].split()[1])
+    body = (await client.post("/api/v1/ws/token", headers=auth_headers)).json()
+    payload = ws_module.decode_access_token(body["token"])
+    assert payload.sexp == session.exp
+    assert payload.exp <= session.exp

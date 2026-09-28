@@ -20,14 +20,16 @@ export async function POST(request: Request) {
 
   const { username, password } = parsed.data;
 
-  // The FastAPI route accepts username/password as query params.
-  const params = new URLSearchParams({ username, password });
+  // OAuth2 password grant as a form body -- never put credentials in the
+  // query string (it ends up in proxy / server access logs).
+  const form = new URLSearchParams({ grant_type: "password", username, password });
 
   try {
-    const token = await serverFetch<Token>(
-      `/api/v1/auth/token?${params.toString()}`,
-      { method: "POST" },
-    );
+    const token = await serverFetch<Token>("/api/v1/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    });
     const res = NextResponse.json({ ok: true });
     res.cookies.set(AUTH_COOKIE_NAME, token.access_token, {
       httpOnly: true,

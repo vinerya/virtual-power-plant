@@ -275,6 +275,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         use_alembic=settings.use_alembic,
     )
 
+    # Re-apply the newest stored config document (PUT /api/v1/config); never
+    # blocks startup -- an empty/missing table keeps the defaults.
+    from vpp.api.routes.config import apply_stored_config
+
+    await apply_stored_config(get_session_factory())
+
     event_bridge_sub_id = subscribe_event_bus_to_websocket(get_event_bus(), websocket_manager)
     observability = await start_observability(settings, get_event_bus())
 
@@ -393,6 +399,10 @@ def create_app(
     )
 
     # -- Middleware ----------------------------------------------------------
+    # Innermost: serve ``/x`` and ``/x/`` alike instead of 307-redirecting.
+    from vpp.api.middleware import TrailingSlashMiddleware
+
+    app.add_middleware(TrailingSlashMiddleware, router=app.router)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime  # noqa: TC003 -- pydantic resolves annotations at runtime
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -79,6 +79,9 @@ class TokenPayload(BaseModel):
     # Token type. None for regular access tokens; "ws" for the short-lived
     # WebSocket handshake tokens, which the HTTP API must refuse.
     typ: str | None = None
+    # WebSocket tokens only: expiry (epoch seconds) of the session credential
+    # the token was minted from. An open socket is closed at this time.
+    sexp: int | None = None
 
 
 class APIKeyCreate(BaseModel):
