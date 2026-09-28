@@ -77,6 +77,10 @@ class ResourceRepository:
             if hasattr(obj, key) and value is not None:
                 setattr(obj, key, value)
         await session.flush()
+        # ``updated_at`` has a server-side onupdate, so the flush expires it;
+        # reload now rather than lazy-loading later outside the async context
+        # (which raises MissingGreenlet, e.g. when serialising the response).
+        await session.refresh(obj)
         return obj
 
     @staticmethod
