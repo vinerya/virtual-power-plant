@@ -3,6 +3,7 @@
 from vpp.protocols.base import (
     ProtocolAdapter,
     ProtocolMessage,
+    ProtocolMode,
     ProtocolRegistry,
     ProtocolStatus,
 )
@@ -10,6 +11,7 @@ from vpp.protocols.base import (
 __all__ = [
     "ProtocolAdapter",
     "ProtocolMessage",
+    "ProtocolMode",
     "ProtocolRegistry",
     "ProtocolStatus",
 ]

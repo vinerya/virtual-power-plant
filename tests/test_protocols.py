@@ -152,9 +152,13 @@ class TestOpenADR:
         adapter = OpenADRAdapter()
         adapter.configure(role="ven", poll_interval_s=0)
         await adapter.connect()
-        assert adapter.is_connected
-        await adapter.disconnect()
+        # No VTN configured -> honest SIMULATED status, never CONNECTED
+        assert adapter.status == ProtocolStatus.SIMULATED
         assert not adapter.is_connected
+        assert adapter.is_operational
+        await adapter.disconnect()
+        assert adapter.status == ProtocolStatus.DISCONNECTED
+        assert not adapter.is_operational
 
     @pytest.mark.asyncio
     async def test_event_handling(self):
@@ -203,9 +207,12 @@ class TestOCPP:
     async def test_lifecycle(self):
         adapter = OCPPAdapter()
         await adapter.connect()
-        assert adapter.is_connected
-        await adapter.disconnect()
+        # No Central System configured -> SIMULATED, never CONNECTED
+        assert adapter.status == ProtocolStatus.SIMULATED
         assert not adapter.is_connected
+        assert adapter.is_operational
+        await adapter.disconnect()
+        assert not adapter.is_operational
 
     @pytest.mark.asyncio
     async def test_charge_point_management(self):

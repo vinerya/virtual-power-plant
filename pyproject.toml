@@ -60,6 +60,7 @@ protocols = [
     "paho-mqtt>=1.6.0",
     "pymodbus>=3.6.0",
     "lxml>=5.0.0",
+    "httpx>=0.26.0",  # OpenADR 2.0b VEN + IEEE 2030.5 HTTPS clients
 ]
 research = [
     "matplotlib>=3.8.0",

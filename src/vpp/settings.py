@@ -92,6 +92,46 @@ class Settings(BaseSettings):
     # under a "modbus" key, not here -- see protocols/modbus_ingestion.py.
     modbus_ingestion_enabled: bool = False
 
+    # OCPP 1.6-J Central System (EV chargers). Disabled by default: when
+    # enabled, charge points connect to ws(s)://<api>/ocpp/{charge_point_id}
+    # (subprotocol "ocpp1.6"); terminate TLS at the reverse proxy.
+    ocpp_enabled: bool = False
+    ocpp_heartbeat_interval_s: int = 300
+    ocpp_call_timeout_s: float = 30.0
+    ocpp_auto_accept_boot: bool = True
+    ocpp_allowed_charge_points: list[str] = Field(default_factory=list)  # empty = any id
+    ocpp_basic_auth_password: str | None = None  # OCPP Security Profile 1
+    ocpp_authorized_id_tags: list[str] | None = None  # None = accept every idTag
+    ocpp_remote_id_tag: str = "VPP"
+
+    # OpenADR 2.0b VEN (demand response). Disabled by default; dials out
+    # to the utility's VTN over HTTPS (simple-HTTP pull model).
+    openadr_enabled: bool = False
+    openadr_vtn_url: str | None = None  # e.g. https://vtn.example.com/OpenADR2/Simple/2.0b
+    openadr_ven_name: str = "vpp-ven"
+    openadr_ven_id: str | None = None  # normally assigned by the VTN at registration
+    openadr_poll_interval_s: float | None = None  # None = VTN-requested frequency
+    openadr_auto_opt_in: bool = True
+    openadr_timeout_s: float = 10.0
+    openadr_verify_tls: bool = True
+    openadr_ca_path: str | None = None
+    openadr_cert_path: str | None = None
+    openadr_key_path: str | None = None
+
+    # IEEE 2030.5 (SEP 2.0) DER client. Disabled by default; requires the
+    # device's client certificate (mutual TLS) in production.
+    ieee2030_5_enabled: bool = False
+    ieee2030_5_server_url: str | None = None  # e.g. https://utility.example.com:8443
+    ieee2030_5_dcap_path: str = "/dcap"
+    ieee2030_5_lfdi: str | None = None  # default: derived from the client cert
+    ieee2030_5_poll_interval_s: float | None = None  # None = server pollRate
+    ieee2030_5_timeout_s: float = 10.0
+    ieee2030_5_verify_tls: bool = True
+    ieee2030_5_ca_path: str | None = None
+    ieee2030_5_cert_path: str | None = None
+    ieee2030_5_key_path: str | None = None
+    ieee2030_5_tls_ciphers: str | None = None  # e.g. ECDHE-ECDSA-AES128-CCM8
+
     # VPP Config
     config_path: Optional[str] = None
     default_timezone: str = "UTC"

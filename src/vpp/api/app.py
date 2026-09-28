@@ -308,9 +308,17 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.modbus_ingestion_task = None
 
+    # OCPP / OpenADR / IEEE 2030.5 -- each opt-in via VPP_<PROTOCOL>_ENABLED.
+    from vpp.api.routes.protocols import get_registry
+    from vpp.protocols.bootstrap import start_protocol_adapters, stop_protocol_adapters
+
+    protocol_tasks = start_protocol_adapters(settings, get_registry())
+    app.state.protocol_tasks = protocol_tasks
+
     try:
         yield
     finally:
+        await stop_protocol_adapters(protocol_tasks)
         if task is not None:
             task.cancel()
             try:
@@ -396,7 +404,7 @@ def create_app(
     # -- Routes -------------------------------------------------------------
     from .routes import (
         health, resources, optimization, trading, auth, config, protocols, v2g,
-        tariffs, degradation,
+        tariffs, degradation, ocpp,
     )
 
     app.include_router(health.router)
@@ -409,6 +417,7 @@ def create_app(
     app.include_router(v2g.router)
     app.include_router(tariffs.router)
     app.include_router(degradation.router)
+    app.include_router(ocpp.router)  # OCPP 1.6-J websocket: /ocpp/{charge_point_id}
 
     # -- WebSocket ----------------------------------------------------------
     from .websocket import websocket_endpoint

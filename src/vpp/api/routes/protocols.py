@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from vpp.auth.security import get_current_user, require_role
-from vpp.db.engine import get_db
-from vpp.protocols.base import ProtocolRegistry, ProtocolStatus
+from vpp.protocols.base import ProtocolMode, ProtocolRegistry
 
 router = APIRouter(prefix="/api/v1/protocols", tags=["protocols"])
 
@@ -33,6 +31,10 @@ class ProtocolInfo(BaseModel):
     name: str
     version: str
     status: str
+    # "live" = talks to a real endpoint; "simulated" = in-memory only, no
+    # external traffic (status is then "simulated", never "connected").
+    mode: str = "live"
+    simulated: bool = False
     messages_sent: int = 0
     messages_received: int = 0
     errors: int = 0
@@ -62,6 +64,8 @@ async def list_protocols(
             name=a.name,
             version=a.version,
             status=a.status.value,
+            mode=a.mode.value,
+            simulated=a.mode == ProtocolMode.SIMULATED,
             messages_sent=a.metrics.messages_sent,
             messages_received=a.metrics.messages_received,
             errors=a.metrics.errors,
@@ -83,8 +87,12 @@ async def connect_protocol(
     if adapter is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Protocol '{name}' not found")
 
-    if adapter.is_connected:
-        return ConnectResponse(name=name, status=adapter.status.value, message="Already connected")
+    if adapter.is_operational:
+        return ConnectResponse(
+            name=name,
+            status=adapter.status.value,
+            message="Already running (simulated)" if adapter.is_simulated else "Already connected",
+        )
 
     if body and body.config:
         adapter.configure(**body.config)
@@ -95,8 +103,14 @@ async def connect_protocol(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Connection failed: {exc}",
-        )
+        ) from exc
 
+    if adapter.is_simulated:
+        return ConnectResponse(
+            name=name,
+            status=adapter.status.value,
+            message="Running in simulated mode: no real endpoint configured",
+        )
     return ConnectResponse(name=name, status=adapter.status.value, message="Connected")
 
 
@@ -131,6 +145,7 @@ async def protocol_metrics(
         "name": adapter.name,
         "version": adapter.version,
         "status": adapter.status.value,
+        "mode": adapter.mode.value,
         "messages_sent": m.messages_sent,
         "messages_received": m.messages_received,
         "errors": m.errors,

@@ -11,9 +11,10 @@ import asyncio
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,31 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 class ProtocolStatus(str, Enum):
+    """Lifecycle status of a protocol adapter.
+
+    ``CONNECTED`` means the adapter holds a *real* link to an external
+    endpoint (broker, device, VTN, utility server) or, for server-side
+    adapters, is actually accepting connections from real peers.
+
+    ``SIMULATED`` means the adapter is running without any configured real
+    endpoint: its in-memory state machine works (handy for demos, tests and
+    offline development) but nothing leaves the process. Adapters must never
+    report ``CONNECTED`` in that situation.
+    """
+
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
+    SIMULATED = "simulated"
     ERROR = "error"
     RECONNECTING = "reconnecting"
+
+
+class ProtocolMode(str, Enum):
+    """Whether an adapter talks to a real endpoint or simulates one."""
+
+    LIVE = "live"
+    SIMULATED = "simulated"
 
 
 @dataclass
@@ -99,7 +120,37 @@ class ProtocolAdapter(ABC):
 
     @property
     def is_connected(self) -> bool:
+        """True only when linked to a real external endpoint."""
         return self._status == ProtocolStatus.CONNECTED
+
+    @property
+    def is_simulated(self) -> bool:
+        """True when running in simulated mode (no real endpoint)."""
+        return self._status == ProtocolStatus.SIMULATED
+
+    @property
+    def is_operational(self) -> bool:
+        """True when the adapter accepts operations (live *or* simulated)."""
+        return self._status in (ProtocolStatus.CONNECTED, ProtocolStatus.SIMULATED)
+
+    @property
+    def mode(self) -> ProtocolMode:
+        """Live vs simulated mode.
+
+        Subclasses that can run against a real endpoint override this to
+        reflect their configuration; the default derives it from status.
+        """
+        return ProtocolMode.SIMULATED if self.is_simulated else ProtocolMode.LIVE
+
+    def _enter_simulated_mode(self, reason: str) -> None:
+        """Mark the adapter as operational-but-simulated and log why."""
+        self._status = ProtocolStatus.SIMULATED
+        self._metrics.connected_since = time.time()
+        logger.warning(
+            "%s adapter running in SIMULATED mode (%s); no traffic leaves this process",
+            self.name,
+            reason,
+        )
 
     # -- Configuration -------------------------------------------------------
 
