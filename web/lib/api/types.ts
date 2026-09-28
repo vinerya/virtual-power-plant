@@ -115,9 +115,21 @@ export interface ExplainerResponse {
 }
 
 export interface BillLineItem {
-  kind: "fixed" | "energy" | "demand" | "min_bill" | "credit" | string;
+  kind:
+    | "fixed"
+    | "energy"
+    | "tier"
+    | "demand"
+    | "minimum"
+    | "adder"
+    | "tax"
+    | "credit"
+    | string;
   name: string;
   amount: number;
+  quantity?: number | null;
+  unit?: string | null;
+  rate?: number | null;
 }
 
 export interface Bill {
