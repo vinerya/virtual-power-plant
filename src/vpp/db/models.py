@@ -560,3 +560,83 @@ class DREventResponseModel(TimestampMixin, Base):
     )
     reason: Mapped[str] = mapped_column(Text, default="")
     details_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class V2GFlexibilityBidModel(TimestampMixin, Base):
+    """A V2G flexibility bid (``POST /api/v1/v2g/bid``), shared by every API worker.
+
+    A bid is *active* while ``available_until`` is in the future.
+    """
+
+    __tablename__ = "v2g_flexibility_bids"
+
+    service: Mapped[str] = mapped_column(String(32), index=True)
+    capacity_kw: Mapped[float] = mapped_column(Float)
+    duration_hours: Mapped[float] = mapped_column(Float)
+    price_per_kw: Mapped[float] = mapped_column(Float)
+    available_from: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    available_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    fleet_id: Mapped[str] = mapped_column(String(64), default="")
+    ev_ids_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Multi-process coordination (vpp.cluster)
+# ---------------------------------------------------------------------------
+
+
+class ClusterLeaseModel(Base):
+    """A named leadership lease: at most one API process holds each ``name``.
+
+    Acquired/renewed atomically with ``UPDATE ... WHERE holder = :me OR
+    expires_at < :now`` (see :mod:`vpp.cluster.lease`); times are UTC from
+    the holders' clocks.
+    """
+
+    __tablename__ = "cluster_leases"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    holder: Mapped[str] = mapped_column(String(128))
+    acquired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ClusterCallModel(Base):
+    """A call forwarded to the process holding lease ``target`` (see :mod:`vpp.cluster.rpc`).
+
+    ``status``: pending -> running -> done | failed; a pending call the caller
+    gave up on becomes ``cancelled``, one nobody claimed before
+    ``deadline_at`` becomes ``expired``.
+    """
+
+    __tablename__ = "cluster_calls"
+    __table_args__ = (Index("ix_cluster_calls_target_status", "target", "status"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    target: Mapped[str] = mapped_column(String(64))
+    method: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caller: Mapped[str] = mapped_column(String(128))
+    executor: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ClusterEventModel(Base):
+    """A WebSocket broadcast relayed to the other API workers (see :mod:`vpp.cluster.relay`).
+
+    Short-lived: rows older than a few minutes are purged.
+    """
+
+    __tablename__ = "cluster_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    origin: Mapped[str] = mapped_column(String(128))
+    channel: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

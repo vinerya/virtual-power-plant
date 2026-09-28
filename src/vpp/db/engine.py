@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -45,6 +48,10 @@ async def init_db(
     (backwards compatible with pre-M4 dev workflows).  Set
     ``use_alembic=True`` (or ``VPP_USE_ALEMBIC=1`` in the environment) to
     run ``alembic upgrade head`` against the configured database instead.
+
+    Several API workers start at once: on PostgreSQL the bootstrap runs under
+    an advisory lock so they do not race each other's ``CREATE TABLE`` /
+    migrations; on SQLite a lost ``create_all`` race is retried.
     """
     global _engine, _session_factory
 
@@ -52,10 +59,37 @@ async def init_db(
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
     if use_alembic:
-        await _run_alembic_upgrade(database_url)
+        async with _schema_lock(_engine):
+            await _run_alembic_upgrade(database_url)
     else:
-        async with _engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
+        for attempt in range(3):
+            try:
+                async with _schema_lock(_engine), _engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                break
+            except OperationalError:
+                # SQLite: another process created a table between our check
+                # and our CREATE; checkfirst skips it on the next attempt.
+                if attempt == 2 or _engine.dialect.name != "sqlite":
+                    raise
+
+
+# Arbitrary constant: pg_advisory_lock key for schema bootstrap.
+_SCHEMA_LOCK_KEY = 0x565050_0001
+
+
+@asynccontextmanager
+async def _schema_lock(engine: AsyncEngine) -> AsyncIterator[None]:
+    """Hold a cluster-wide lock on PostgreSQL; no-op elsewhere."""
+    if engine.dialect.name != "postgresql":
+        yield
+        return
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": _SCHEMA_LOCK_KEY})
+        try:
+            yield
+        finally:
+            await conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _SCHEMA_LOCK_KEY})
 
 
 def run_alembic_upgrade(database_url: str, revision: str = "head") -> None:

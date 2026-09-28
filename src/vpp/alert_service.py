@@ -29,6 +29,13 @@ Design notes
 * Evaluation runs off the publisher's path: the EventBus callback only
   enqueues; a single worker task does DB work.  When the queue is full new
   telemetry is dropped for alerting (logged) rather than stalling ingestion.
+* With several API workers only the holder of the ``alert-evaluator`` lease
+  runs an :class:`AlertService` (one place for rule state and
+  de-duplication). Every other worker runs an :class:`AlertForwarder`, which
+  hands its local telemetry events to the leader through ``cluster_calls``
+  (fire-and-forget; dropped if no leader claims them within
+  :data:`FORWARD_DEADLINE_S`). Rule changes made on any worker are
+  forwarded as a ``reload_rules`` call.
 """
 
 from __future__ import annotations
@@ -610,3 +617,112 @@ def snooze_until_from(until: datetime | None, duration_ms: int | None, now: date
             else until.astimezone(timezone.utc)
         )
     return now + timedelta(milliseconds=duration_ms or 0)
+
+
+# ---------------------------------------------------------------------------
+# Multi-worker: forward telemetry to the alert-evaluator lease holder
+# ---------------------------------------------------------------------------
+
+ALERTS_LEASE = "alert-evaluator"
+FORWARD_DEADLINE_S = 60.0
+FORWARD_MAX_IN_FLIGHT = 200
+
+
+def _has_numeric(data: dict[str, Any]) -> bool:
+    return any(_numeric(v) is not None for v in data.values())
+
+
+class AlertForwarder:
+    """Follower role: submit local ``RESOURCE_UPDATED`` telemetry to the leader."""
+
+    def __init__(self, bus: EventBus) -> None:
+        self._bus = bus
+        self._subscription_id: str | None = None
+        self._in_flight: set[asyncio.Task] = set()
+        self.forwarded = 0
+        self.dropped_events = 0
+
+    async def start(self) -> None:
+        self._subscription_id = self._bus.subscribe(
+            self._on_event, event_types={EventType.RESOURCE_UPDATED}
+        )
+
+    async def stop(self) -> None:
+        if self._subscription_id is not None:
+            self._bus.unsubscribe(self._subscription_id)
+            self._subscription_id = None
+        for task in list(self._in_flight):
+            task.cancel()
+        await asyncio.gather(*self._in_flight, return_exceptions=True)
+        self._in_flight.clear()
+
+    async def _on_event(self, event: Event) -> None:
+        data = event.data or {}
+        if not (data.get("resource_id") or data.get("id")) or not _has_numeric(data):
+            return
+        if len(self._in_flight) >= FORWARD_MAX_IN_FLIGHT:
+            self.dropped_events += 1
+            logger.warning("Alert forwarding backlog full; dropped telemetry event")
+            return
+        task = asyncio.create_task(self._forward(event))
+        self._in_flight.add(task)
+        task.add_done_callback(self._in_flight.discard)
+
+    async def _forward(self, event: Event) -> None:
+        from vpp.cluster.rpc import submit
+
+        try:
+            await submit(
+                ALERTS_LEASE,
+                "evaluate",
+                {"data": event.data, "source": event.source, "event_id": event.event_id},
+                timeout_s=FORWARD_DEADLINE_S,
+            )
+            self.forwarded += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self.dropped_events += 1
+            logger.exception("Could not forward telemetry to the alert evaluator")
+
+
+async def _handle_evaluate(payload: dict[str, Any], session: AsyncSession) -> None:
+    svc = get_alert_service()
+    if svc is None:
+        return
+    event = Event(
+        event_type=EventType.RESOURCE_UPDATED,
+        data=dict(payload.get("data") or {}),
+        source=str(payload.get("source") or ""),
+    )
+    if payload.get("event_id"):
+        event.event_id = str(payload["event_id"])
+    await svc._on_event(event)
+
+
+async def _handle_reload_rules(payload: dict[str, Any], session: AsyncSession) -> None:
+    svc = get_alert_service()
+    if svc is not None:
+        await svc.reload_rules()
+
+
+async def request_rule_reload() -> None:
+    """Make the running evaluator pick up rule changes, wherever it runs."""
+    from vpp.cluster.lease import is_local
+    from vpp.cluster.rpc import submit
+
+    svc = get_alert_service()
+    if svc is not None:
+        await svc.reload_rules()
+    elif not is_local(ALERTS_LEASE):
+        await submit(ALERTS_LEASE, "reload_rules", {}, timeout_s=FORWARD_DEADLINE_S)
+
+
+def _register_cluster_handlers() -> None:
+    from vpp.cluster.rpc import register_handler
+
+    register_handler(ALERTS_LEASE, "evaluate", _handle_evaluate)
+    register_handler(ALERTS_LEASE, "reload_rules", _handle_reload_rules)
+
+
+_register_cluster_handlers()

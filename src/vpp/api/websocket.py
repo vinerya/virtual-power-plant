@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -64,6 +65,9 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: dict[WebSocket, set[str]] = {}
         self._lock = asyncio.Lock()
+        # Set by vpp.cluster.relay with several API workers: also hands each
+        # broadcast to the other workers' clients.
+        self.relay: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None
 
     async def connect(self, ws: WebSocket, subprotocol: str | None = None) -> None:
         if subprotocol is not None:
@@ -88,7 +92,13 @@ class ConnectionManager:
                 self._connections[ws].discard(channel)
 
     async def broadcast(self, channel: str, data: dict[str, Any]) -> None:
-        """Send a message to all subscribers of *channel*."""
+        """Send a message to all subscribers of *channel* (in every worker, when relayed)."""
+        await self.broadcast_local(channel, data)
+        if self.relay is not None:
+            await self.relay(channel, data)
+
+    async def broadcast_local(self, channel: str, data: dict[str, Any]) -> None:
+        """Send a message to this process's subscribers of *channel*."""
         message = json.dumps(
             {
                 "channel": channel,

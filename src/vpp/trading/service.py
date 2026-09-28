@@ -12,8 +12,12 @@ Honesty notes
   ``"source": "simulated"``.
 * State is per process. The in-memory portfolio is rebuilt from the
   persisted ``trades`` table (and resting orders from ``orders``) on first
-  use, so it survives restarts, but multiple API workers would each run
-  their own independent simulated venue.
+  use, so it survives restarts. With several API workers only the holder of
+  the ``trading-venue`` lease runs the venue; the API routes forward venue
+  operations from other workers to it (see :mod:`vpp.api.routes.trading`).
+  A worker that takes the lease over rebuilds the books from the database
+  (:meth:`TradingService.invalidate`); simulated prices restart from the
+  configured base prices.
 """
 
 from __future__ import annotations
@@ -318,6 +322,14 @@ class TradingService:
         self.engine.portfolio_manager.trades = []
         self.exchange.open_orders.clear()
         self._order_strategy.clear()
+        self._hydrated = False
+
+    def invalidate(self) -> None:
+        """Forget in-memory books/portfolio; the next use rebuilds them from the DB.
+
+        Called when this process (re)gains the ``trading-venue`` lease: while
+        another process ran the venue, orders and fills changed underneath.
+        """
         self._hydrated = False
 
     async def ensure_ready(self, session: AsyncSession) -> None:

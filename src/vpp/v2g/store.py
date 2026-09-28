@@ -4,7 +4,9 @@ The ``v2g_vehicles`` table is the source of truth for the fleet; the
 in-memory :class:`~vpp.v2g.models.EVFleet` / :class:`EVBattery` objects the
 scheduler and aggregator work on are built from it per request
 (:func:`load_fleet`), so the fleet survives restarts and is shared by every
-API worker process.
+API worker process. Flexibility bids (``v2g_flexibility_bids``) and the
+aggregator's dispatch counters (derived from ``v2g_schedules``) are
+persisted the same way (:func:`load_aggregator`).
 """
 
 from __future__ import annotations
@@ -14,9 +16,15 @@ import math
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from vpp.db.models import V2GChargingSessionModel, V2GScheduleModel, V2GVehicleModel
+from vpp.db.models import (
+    V2GChargingSessionModel,
+    V2GFlexibilityBidModel,
+    V2GScheduleModel,
+    V2GVehicleModel,
+)
+from vpp.v2g.aggregator import DispatchResult, FlexibilityBid, GridService, V2GAggregator
 from vpp.v2g.models import EVBattery, EVConnectionState, EVFleet
 
 if TYPE_CHECKING:
@@ -214,6 +222,106 @@ class V2GRepository:
         return list((await session.execute(stmt)).scalars().all())
 
 
+# -- Flexibility bids + aggregator counters ----------------------------------
+
+
+def row_to_bid(row: V2GFlexibilityBidModel) -> FlexibilityBid:
+    return FlexibilityBid(
+        service=GridService(row.service),
+        capacity_kw=row.capacity_kw,
+        duration_hours=row.duration_hours,
+        price_per_kw=row.price_per_kw,
+        available_from=dt_to_ts(row.available_from) or 0.0,
+        available_until=dt_to_ts(row.available_until) or 0.0,
+        fleet_id=row.fleet_id or "",
+        ev_ids=list(loads(row.ev_ids_json, []) or []),
+        bid_id=row.id,
+    )
+
+
+async def record_bid(
+    session: AsyncSession, bid: FlexibilityBid, *, created_by: str | None = None
+) -> V2GFlexibilityBidModel:
+    """Persist *bid* (and set its ``bid_id``)."""
+    row = V2GFlexibilityBidModel(
+        service=bid.service.value,
+        capacity_kw=bid.capacity_kw,
+        duration_hours=bid.duration_hours,
+        price_per_kw=bid.price_per_kw,
+        available_from=ts_to_dt(bid.available_from),
+        available_until=ts_to_dt(bid.available_until),
+        fleet_id=bid.fleet_id,
+        ev_ids_json=json.dumps(bid.ev_ids),
+        created_by=created_by,
+    )
+    session.add(row)
+    await session.flush()
+    bid.bid_id = row.id
+    return row
+
+
+async def list_active_bids(
+    session: AsyncSession, now: datetime | None = None
+) -> list[V2GFlexibilityBidModel]:
+    """Bids whose ``available_until`` is still in the future, oldest first."""
+    now = now or datetime.now(timezone.utc)
+    stmt = (
+        select(V2GFlexibilityBidModel)
+        .where(V2GFlexibilityBidModel.available_until > now)
+        .order_by(V2GFlexibilityBidModel.available_from.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def dispatch_history(session: AsyncSession) -> tuple[int, list[DispatchResult]]:
+    """``(API dispatch count, results of the dispatches that reached at least one EV)``.
+
+    Rebuilt from the ``kind="dispatch"`` rows of ``v2g_schedules`` (written
+    by ``POST /api/v1/v2g/dispatch``), so every worker reports the same
+    counters and they survive restarts.
+    """
+    total = int(
+        (
+            await session.execute(
+                select(func.count())
+                .select_from(V2GScheduleModel)
+                .where(V2GScheduleModel.kind == "dispatch")
+            )
+        ).scalar_one()
+    )
+    results: list[DispatchResult] = []
+    raw_rows = (
+        await session.execute(
+            select(V2GScheduleModel.result_json).where(V2GScheduleModel.kind == "dispatch")
+        )
+    ).scalars()
+    for raw in raw_rows:
+        data = loads(raw, {}) or {}
+        if not data.get("ev_count"):
+            continue
+        results.append(
+            DispatchResult(
+                target_power_kw=float(data.get("target_power_kw", 0.0)),
+                achieved_power_kw=float(data.get("achieved_power_kw", 0.0)),
+                ev_allocations=dict(data.get("ev_allocations") or {}),
+                shortfall_kw=float(data.get("shortfall_kw", 0.0)),
+            )
+        )
+    return total, results
+
+
+async def load_aggregator(session: AsyncSession, fleet: EVFleet | None = None) -> V2GAggregator:
+    """An aggregator over the persisted fleet with its persisted bids and counters."""
+    aggregator = V2GAggregator(fleet if fleet is not None else await load_fleet(session))
+    total, history = await dispatch_history(session)
+    aggregator.restore(
+        active_bids=[row_to_bid(r) for r in await list_active_bids(session)],
+        dispatch_history=history,
+        total_dispatches=total,
+    )
+    return aggregator
+
+
 async def load_fleet(session: AsyncSession, ev_ids: list[str] | None = None) -> EVFleet:
     """Build an :class:`EVFleet` from the database (optionally a subset)."""
     fleet = EVFleet(fleet_id="default", name="default_fleet")
@@ -260,8 +368,13 @@ def schedule_to_dict(row: V2GScheduleModel) -> dict[str, Any]:
 __all__ = [
     "EV_ASSET_PREFIX",
     "V2GRepository",
+    "dispatch_history",
     "dt_to_ts",
+    "list_active_bids",
+    "load_aggregator",
     "load_fleet",
+    "record_bid",
+    "row_to_bid",
     "row_to_ev",
     "schedule_to_dict",
     "session_to_dict",
