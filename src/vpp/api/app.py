@@ -305,9 +305,27 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.modbus_ingestion_task = None
 
+    trading_task: asyncio.Task | None = None
+    if settings.trading_market_data_enabled:
+        from vpp.trading.service import run_market_data_loop
+
+        trading_task = asyncio.create_task(
+            run_market_data_loop(settings.trading_market_data_interval_seconds),
+            name="vpp-trading-market-data",
+        )
+    app.state.trading_market_data_task = trading_task
+
     try:
         yield
     finally:
+        if trading_task is not None:
+            trading_task.cancel()
+            try:
+                await trading_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Trading market-data task raised during shutdown")
         if task is not None:
             task.cancel()
             try:

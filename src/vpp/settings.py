@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     # under a "modbus" key, not here -- see protocols/modbus_ingestion.py.
     modbus_ingestion_enabled: bool = False
 
+    # Simulated trading venue: periodically advance simulated prices, match
+    # resting orders, and publish `market_data` events. Everything it emits
+    # is labelled source="simulated"; no orders leave the process.
+    trading_market_data_enabled: bool = True
+    trading_market_data_interval_seconds: float = 5.0
+
     # VPP Config
     config_path: Optional[str] = None
     default_timezone: str = "UTC"

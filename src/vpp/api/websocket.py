@@ -91,6 +91,7 @@ _EVENT_CHANNEL_MAP: dict[EventType, str] = {
     EventType.ORDER_SUBMITTED: "market_data",
     EventType.ORDER_FILLED: "market_data",
     EventType.ORDER_CANCELLED: "market_data",
+    EventType.ORDER_REJECTED: "market_data",
     EventType.TRADE_EXECUTED: "market_data",
     EventType.MARKET_DATA: "market_data",
 }
