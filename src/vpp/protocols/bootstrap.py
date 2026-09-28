@@ -133,16 +133,60 @@ def start_protocol_adapters(settings: Any, registry: ProtocolRegistry) -> list[a
         ("ieee2030_5_enabled", build_ieee2030_5_adapter),
     )
     tasks: list[asyncio.Task] = []
+    orchestrator = None
+    if getattr(settings, "openadr_enabled", False) or getattr(
+        settings, "ieee2030_5_enabled", False
+    ):
+        from vpp.dr.orchestrator import DROrchestrator, set_dr_orchestrator
+        from vpp.dr.translate import DRPolicy
+
+        orchestrator = DROrchestrator(DRPolicy.from_settings(settings), registry)
+        set_dr_orchestrator(orchestrator)
+
     for flag, builder in builders:
         if not getattr(settings, flag, False):
             continue
         adapter = builder(settings)
+        attach_integrations(adapter, orchestrator)
         tasks.append(
             asyncio.create_task(
                 supervise_adapter(adapter, registry), name=f"vpp-protocol-{adapter.name}"
             )
         )
+    if orchestrator is not None:
+        tasks.append(
+            asyncio.create_task(_run_orchestrator(orchestrator), name="vpp-dr-orchestrator")
+        )
     return tasks
+
+
+def attach_integrations(adapter: ProtocolAdapter, orchestrator: Any = None) -> None:
+    """Wire an adapter into the V2G fleet / DR orchestrator.
+
+    * OCPP: :class:`~vpp.v2g.ocpp_bridge.OCPPVehicleBridge` keeps the
+      persisted V2G vehicles in sync with StartTransaction / MeterValues /
+      StatusNotification.
+    * OpenADR: the orchestrator decides (and records) each event's opt-in/out.
+    """
+    from vpp.protocols.ocpp import OCPPAdapter
+    from vpp.protocols.openadr import OpenADRAdapter
+
+    if isinstance(adapter, OCPPAdapter):
+        from vpp.v2g.ocpp_bridge import OCPPVehicleBridge
+
+        OCPPVehicleBridge(adapter).attach()
+    elif isinstance(adapter, OpenADRAdapter) and orchestrator is not None:
+        orchestrator.attach_openadr(adapter)
+
+
+async def _run_orchestrator(orchestrator: Any) -> None:
+    from vpp.dr.orchestrator import get_dr_orchestrator, set_dr_orchestrator
+
+    try:
+        await orchestrator.run_forever()
+    finally:
+        if get_dr_orchestrator() is orchestrator:
+            set_dr_orchestrator(None)
 
 
 async def stop_protocol_adapters(tasks: list[asyncio.Task]) -> None:

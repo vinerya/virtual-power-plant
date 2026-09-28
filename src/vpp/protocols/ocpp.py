@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import contextlib
 import hmac
 import logging
 import time
@@ -179,6 +180,8 @@ class ChargePoint:
     connected: bool = False  # live WebSocket session open
     connector_status: dict[int, ChargePointStatus] = field(default_factory=dict)
     energy_import_kwh: float | None = None
+    # Latest MeterValues readings per connector (power_kw, soc, energy_import_kwh, at)
+    connector_meter: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -216,6 +219,11 @@ _STATUS_PRIORITY = (
 )
 
 _MAX_CHARGE_POINT_ID_LENGTH = 64
+
+# push_charging_profile() outcomes besides the charger's own status strings.
+PROFILE_SIMULATED = "simulated"
+PROFILE_NOT_CONNECTED = "not_connected"
+PROFILE_ERROR = "error"
 
 
 def _require(payload: dict[str, Any], *keys: str) -> None:
@@ -566,19 +574,27 @@ class OCPPAdapter(ProtocolAdapter):
         logger.info("[simulated] Remote start on %s (tx=%s)", cp_id, cp.active_transaction_id)
         return True
 
-    async def remote_stop(self, cp_id: str) -> bool:
-        """Send RemoteStopTransaction to a charge point."""
+    async def remote_stop(self, cp_id: str, transaction_id: int | None = None) -> bool:
+        """Send RemoteStopTransaction to a charge point.
+
+        *transaction_id* selects the transaction on multi-connector chargers;
+        by default the charge point's most recent transaction is stopped.
+        """
         cp = self._charge_points.get(cp_id)
         if cp is None:
             return False
-        if cp.active_transaction_id is None:
+        if transaction_id is None and cp.active_transaction_id is None:
             logger.warning("No active transaction on %s", cp_id)
             return False
 
         route = self._route(cp_id)
         if route == "live":
             try:
-                tx_id = int(cp.active_transaction_id)
+                tx_id = (
+                    int(transaction_id)
+                    if transaction_id is not None
+                    else int(str(cp.active_transaction_id))
+                )
             except ValueError:
                 logger.warning(
                     "Transaction id %r on %s is not an OCPP id", cp.active_transaction_id, cp_id
@@ -605,10 +621,28 @@ class OCPPAdapter(ProtocolAdapter):
         connector_id: int | None = None,
     ) -> bool:
         """Apply a charging profile to a charge point (SetChargingProfile)."""
+        outcome = await self.push_charging_profile(cp_id, profile, connector_id)
+        return outcome in ("Accepted", PROFILE_SIMULATED)
+
+    async def push_charging_profile(
+        self,
+        cp_id: str,
+        profile: ChargingProfile | dict[str, Any],
+        connector_id: int | None = None,
+    ) -> str:
+        """SetChargingProfile, reporting *what happened* rather than a bool.
+
+        Returns the charger's answer (``"Accepted"``, ``"Rejected"``,
+        ``"NotSupported"``), :data:`PROFILE_SIMULATED` when the adapter is
+        in simulated mode (applied to the in-memory registry only),
+        :data:`PROFILE_NOT_CONNECTED` when the charge point has no live
+        session / is unknown, or :data:`PROFILE_ERROR` when the call timed
+        out or failed.
+        """
         cp = self._charge_points.get(cp_id)
         route = self._route(cp_id)
         if cp is None and route != "live":
-            return False
+            return PROFILE_NOT_CONNECTED
 
         if isinstance(profile, dict):
             periods = [ChargingSchedulePeriod(**p) for p in profile.get("schedule", [])]
@@ -636,10 +670,13 @@ class OCPPAdapter(ProtocolAdapter):
                 {"connectorId": connector_id, "csChargingProfiles": profile.to_dict()},
             )
             if status != "Accepted":
-                return False
+                return status or PROFILE_ERROR
+            outcome = "Accepted"
         elif route != "sim":
             logger.warning("Charge point %s is not connected", cp_id)
-            return False
+            return PROFILE_NOT_CONNECTED
+        else:
+            outcome = PROFILE_SIMULATED
 
         if cp is not None:
             cp.active_profile = profile
@@ -651,7 +688,7 @@ class OCPPAdapter(ProtocolAdapter):
             source="ocpp",
         )
         await self._dispatch(msg)
-        return True
+        return outcome
 
     async def clear_charging_profile(
         self,
@@ -692,6 +729,35 @@ class OCPPAdapter(ProtocolAdapter):
         profile = schedule_to_charging_profile(slots, profile_id=profile_id)
         return await self.set_charging_profile(cp_id, profile, connector_id)
 
+    async def push_v2g_schedule(
+        self,
+        cp_id: str,
+        slots: Iterable[Any],
+        *,
+        profile_id: int = 200,
+        stack_level: int = 0,
+        connector_id: int | None = None,
+        transaction_id: int | None = None,
+    ) -> str:
+        """Like :meth:`apply_v2g_schedule` but returns the detailed outcome.
+
+        With a known *transaction_id* the schedule is sent as a ``TxProfile``
+        bound to that transaction; without one it is sent as a
+        ``TxDefaultProfile`` on the connector (OCPP 1.6 only accepts
+        ``TxProfile`` while a transaction is running), which the charger
+        applies to the next transaction.
+        """
+        purpose = (
+            ChargingProfilePurpose.TX_PROFILE
+            if transaction_id is not None
+            else ChargingProfilePurpose.TX_DEFAULT
+        )
+        profile = schedule_to_charging_profile(
+            slots, profile_id=profile_id, stack_level=stack_level, purpose=purpose
+        )
+        profile.transaction_id = transaction_id
+        return await self.push_charging_profile(cp_id, profile, connector_id)
+
     async def set_v2g_discharge_profile(
         self,
         cp_id: str,
@@ -723,6 +789,11 @@ class OCPPAdapter(ProtocolAdapter):
         return await self.set_charging_profile(cp_id, profile)
 
     # -- Fleet-level queries -------------------------------------------------
+
+    def list_transactions(self) -> list[dict[str, Any]]:
+        """Open transactions reported by live charge points (StartTransaction seen,
+        StopTransaction not yet)."""
+        return [{"transaction_id": tx_id, **tx} for tx_id, tx in self._transactions.items()]
 
     def total_charging_power(self) -> float:
         """Sum of all active charging power in kW."""
@@ -812,6 +883,15 @@ class OCPPAdapter(ProtocolAdapter):
                 "vendor_error_code": payload.get("vendorErrorCode"),
             }
         await self._update_cp_status(cp, self._aggregate_status(cp, connector_id, status))
+        await self._publish(
+            f"ocpp/connector/{cp_id}",
+            {
+                "charge_point_id": cp_id,
+                "connector_id": connector_id,
+                "status": status.value,
+                "error_code": payload.get("errorCode"),
+            },
+        )
         return {}
 
     @staticmethod
@@ -854,7 +934,10 @@ class OCPPAdapter(ProtocolAdapter):
                 "event": "started",
                 "transaction_id": tx_id,
                 "connector_id": connector_id,
+                "id_tag": str(payload["idTag"]),
                 "id_tag_status": id_status,
+                "meter_start_wh": meter_start,
+                "timestamp": payload["timestamp"],
             },
         )
         return {"transactionId": tx_id, "idTagInfo": {"status": id_status}}
@@ -878,8 +961,11 @@ class OCPPAdapter(ProtocolAdapter):
                 "charge_point_id": cp_id,
                 "event": "stopped",
                 "transaction_id": tx_id,
+                "connector_id": tx["connector_id"] if tx is not None else None,
                 "reason": payload.get("reason", "Local"),
                 "energy_kwh": energy_kwh,
+                "meter_stop_wh": meter_stop,
+                "timestamp": payload["timestamp"],
             },
         )
         response: dict[str, Any] = {}
@@ -899,6 +985,9 @@ class OCPPAdapter(ProtocolAdapter):
             cp.current_soc = readings["soc"]
         if "energy_import_kwh" in readings:
             cp.energy_import_kwh = readings["energy_import_kwh"]
+        connector_id = payload.get("connectorId")
+        if readings and isinstance(connector_id, int) and not isinstance(connector_id, bool):
+            cp.connector_meter.setdefault(connector_id, {}).update(readings, at=time.time())
         data = {
             "charge_point_id": cp_id,
             "connector_id": payload.get("connectorId"),
@@ -937,10 +1026,18 @@ class OCPPAdapter(ProtocolAdapter):
     async def _publish(self, topic: str, payload: dict[str, Any]) -> None:
         msg = ProtocolMessage(topic=topic, payload=payload, source="ocpp")
         await self._dispatch(msg)
-        try:
-            self._message_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            self._metrics.errors += 1
+        self._enqueue(msg)
+
+    def _enqueue(self, msg: ProtocolMessage) -> None:
+        """Buffer *msg* for :meth:`receive`, dropping the oldest when full.
+
+        Nothing is required to drain this queue (subscribers get every
+        message via ``_dispatch``), so a full buffer is not an error.
+        """
+        if self._message_queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._message_queue.get_nowait()
+        self._message_queue.put_nowait(msg)
 
     async def _publish_resource_update(self, cp: ChargePoint, readings: dict[str, Any]) -> None:
         from vpp.events import Event, EventType, get_event_bus
@@ -982,10 +1079,7 @@ class OCPPAdapter(ProtocolAdapter):
             source="ocpp",
         )
         await self._dispatch(msg)
-        try:
-            self._message_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            self._metrics.errors += 1
+        self._enqueue(msg)
 
 
 _POWER_UNITS = {"W": 0.001, "kW": 1.0}

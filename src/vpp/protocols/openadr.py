@@ -393,6 +393,24 @@ class OpenADRAdapter(ProtocolAdapter):
     def get_response(self, event_id: str) -> DRResponse | None:
         return self._responses.get(event_id)
 
+    async def set_opt(self, event_id: str, opt_type: str) -> bool:
+        """Change the VEN's opt state for a known event (operator override).
+
+        VTN-originated events are answered over the wire (``oadrCreatedEvent``)
+        when the VEN is live; returns True in that case. Otherwise the new
+        opt state is recorded locally only and False is returned.
+        """
+        if opt_type not in ("optIn", "optOut"):
+            raise ValueError("opt_type must be 'optIn' or 'optOut'")
+        event = self._events.get(event_id)
+        if event is None:
+            raise KeyError(event_id)
+        if self.is_connected and event.metadata.get("source") == "vtn":
+            await self.send_opt(event_id, opt_type)
+            return True
+        self._responses[event_id] = DRResponse(event_id=event_id, opt_type=opt_type)
+        return False
+
     def list_events(self) -> list[DREvent]:
         return list(self._events.values())
 

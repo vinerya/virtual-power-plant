@@ -311,6 +311,138 @@ async def finish_run(
 
 
 # ---------------------------------------------------------------------------
+# Reusable single-interval dispatch (used by the DR orchestrator)
+# ---------------------------------------------------------------------------
+
+_SHORTFALL_TOL_KW = 1e-3
+
+
+async def execute_dispatch(
+    session: AsyncSession,
+    assets: list[FleetAsset],
+    target_power_kw: float,
+    *,
+    interval_minutes: int = 15,
+    constraints: dict[str, dict[str, Any]] | None = None,
+    problem_type: str = "dispatch",
+    extra_inputs: dict[str, Any] | None = None,
+    timeout_ms: int = 5000,
+    force_fallback: bool = False,
+) -> dict[str, Any]:
+    """Split *target_power_kw* (export-positive) across *assets* and record the run.
+
+    The same allocation (Pyomo/HiGHS LP with rule-based fallback via
+    :func:`vpp.optimization.planning.allocate_power`) and the same run
+    bookkeeping (``optimization_runs`` row + ``OPTIMIZATION_*`` events) as
+    ``POST /api/v1/optimization/dispatch``, callable in-process. Per-resource
+    power and energy limits are hard bounds of the allocation, so the result
+    never exceeds a resource's limits; an unreachable target is reported as
+    ``status="shortfall"``. Never raises for solver errors: a failed solve
+    is recorded and returned with ``status="failed"``.
+    """
+    import time
+
+    from starlette.concurrency import run_in_threadpool
+
+    from vpp.optimization.planning import allocate_power
+
+    dt_hours = max(1, int(interval_minutes)) / 60.0
+    inputs = {
+        "target_power_kw": target_power_kw,
+        "interval_minutes": interval_minutes,
+        "resource_ids": [a.id for a in assets],
+        "resource_constraints": constraints or {},
+        "resources": [a.summary() for a in assets],
+        **(extra_inputs or {}),
+    }
+    run = await start_run(session, problem_type, inputs)
+    t0 = time.perf_counter()
+    try:
+        result = await run_in_threadpool(
+            lambda: allocate_power(
+                assets,
+                target_power_kw,
+                dt_hours=dt_hours,
+                constraints=constraints,
+                timeout_ms=timeout_ms,
+                force_fallback=force_fallback,
+            )
+        )
+    except Exception as exc:
+        solve_ms = (time.perf_counter() - t0) * 1000
+        message = f"{type(exc).__name__}: {exc}"
+        await finish_run(
+            session,
+            run.id,
+            problem_type=problem_type,
+            status="failed",
+            solve_time_ms=solve_ms,
+            metadata={"error": message},
+        )
+        return {
+            "run_id": run.id,
+            "status": "failed",
+            "success": False,
+            "method": "none",
+            "fallback_used": False,
+            "allocations": {},
+            "bounds": {},
+            "delivered_kw": 0.0,
+            "shortfall_kw": float(target_power_kw),
+            "message": message,
+            "solve_time_ms": solve_ms,
+        }
+    solve_ms = (time.perf_counter() - t0) * 1000
+
+    shortfall = float(result["shortfall_kw"])
+    solved = result["status"] in ("success", "fallback_used")
+    success = solved and abs(shortfall) <= _SHORTFALL_TOL_KW
+    if not solved:
+        run_status = "failed"
+    elif not success:
+        run_status = "shortfall"
+    else:
+        run_status = result["status"]
+    message = result.get("message") or ""
+    if solved and not success:
+        message = (
+            f"target not reachable with the available resources; "
+            f"delivered {result['delivered_kw']:.3f} kW, shortfall {shortfall:.3f} kW"
+        )
+    await finish_run(
+        session,
+        run.id,
+        problem_type=problem_type,
+        status=run_status,
+        objective_value=result["objective_value"],
+        solve_time_ms=solve_ms,
+        solver=result["method"],
+        fallback_used=result["fallback_used"],
+        solution={
+            "allocations": result["allocations"],
+            "delivered_kw": result["delivered_kw"],
+            "shortfall_kw": shortfall,
+            "bounds": result["bounds"],
+            "method": result["method"],
+        },
+        metadata={"message": message, "total_cost": result["objective_value"]},
+    )
+    return {
+        "run_id": run.id,
+        "status": run_status,
+        "success": success,
+        "method": result["method"],
+        "fallback_used": bool(result["fallback_used"]),
+        "allocations": dict(result["allocations"]),
+        "bounds": result["bounds"],
+        "delivered_kw": float(result["delivered_kw"]),
+        "shortfall_kw": shortfall,
+        "message": message,
+        "solve_time_ms": solve_ms,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Serialization
 # ---------------------------------------------------------------------------
 
@@ -368,6 +500,7 @@ def run_to_dict(row: OptimizationRunModel, *, include_details: bool = True) -> d
 
 __all__ = [
     "FAILED_STATUSES",
+    "execute_dispatch",
     "finish_run",
     "load_fleet_assets",
     "publish_optimization_event",

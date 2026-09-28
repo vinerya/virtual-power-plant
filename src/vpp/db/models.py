@@ -441,3 +441,122 @@ class ConfigDocumentModel(TimestampMixin, Base):
     updated_by: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+
+
+# ---------------------------------------------------------------------------
+# V2G fleet + grid-protocol integration (migration 0007_v2g_protocols)
+# ---------------------------------------------------------------------------
+
+
+class V2GVehicleModel(TimestampMixin, Base):
+    """A fleet EV (the V2G API's source of truth; ``id`` is the ``ev_id``).
+
+    ``charge_point_id``/``connector_id`` bind the vehicle to an OCPP
+    connector: explicitly via the API (``binding_source="manual"``), or
+    automatically when a StartTransaction carries the vehicle's ``id_tag``
+    (``binding_source="id_tag"``; released again when the connector goes
+    back to ``Available``). One vehicle per connector.
+    """
+
+    __tablename__ = "v2g_vehicles"
+    __table_args__ = (
+        UniqueConstraint("charge_point_id", "connector_id", name="uq_v2g_vehicles_connector"),
+    )
+
+    name: Mapped[str] = mapped_column(String(255), default="")
+    capacity_kwh: Mapped[float] = mapped_column(Float)
+    current_soc: Mapped[float] = mapped_column(Float)  # 0-1
+    min_soc: Mapped[float] = mapped_column(Float)
+    target_soc: Mapped[float] = mapped_column(Float)
+    max_charge_kw: Mapped[float] = mapped_column(Float)
+    max_discharge_kw: Mapped[float] = mapped_column(Float)
+    charge_efficiency: Mapped[float] = mapped_column(Float, default=0.92)
+    discharge_efficiency: Mapped[float] = mapped_column(Float, default=0.92)
+    degradation_cost_per_kwh: Mapped[float] = mapped_column(Float, default=0.02)
+    v2g_capable: Mapped[bool] = mapped_column(Boolean, default=True)
+    connection_state: Mapped[str] = mapped_column(String(32), default="disconnected")
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    departure_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    vehicle_make: Mapped[str] = mapped_column(String(128), default="")
+    vehicle_model: Mapped[str] = mapped_column(String(128), default="")
+    owner_id: Mapped[str] = mapped_column(String(64), default="")
+    # OCPP binding
+    id_tag: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    charge_point_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    connector_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    binding_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    active_transaction_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    charger_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Live state (from OCPP MeterValues when bound, else the API)
+    current_power_kw: Mapped[float] = mapped_column(Float, default=0.0)  # + charge / - discharge
+    soc_source: Mapped[str] = mapped_column(String(16), default="api")
+    soc_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class V2GChargingSessionModel(TimestampMixin, Base):
+    """One OCPP transaction (Start/StopTransaction), linked to a vehicle when known."""
+
+    __tablename__ = "v2g_charging_sessions"
+
+    vehicle_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("v2g_vehicles.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    charge_point_id: Mapped[str] = mapped_column(String(64), index=True)
+    connector_id: Mapped[int] = mapped_column(Integer)
+    transaction_id: Mapped[int] = mapped_column(Integer, index=True)
+    id_tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active | completed
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    stopped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    meter_start_wh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    meter_stop_wh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    energy_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class V2GScheduleModel(TimestampMixin, Base):
+    """Audit record of a V2G schedule/dispatch and its per-charger delivery results."""
+
+    __tablename__ = "v2g_schedules"
+
+    kind: Mapped[str] = mapped_column(String(16), index=True)  # schedule | dispatch | dr
+    method: Mapped[str] = mapped_column(String(32), default="")
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    vehicle_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_cost: Mapped[float] = mapped_column(Float, default=0.0)
+    total_revenue: Mapped[float] = mapped_column(Float, default=0.0)
+    parameters_json: Mapped[str] = mapped_column(Text, default="{}")
+    result_json: Mapped[str] = mapped_column(Text, default="{}")
+    deliveries_json: Mapped[str] = mapped_column(Text, default="[]")
+
+
+class DREventResponseModel(TimestampMixin, Base):
+    """What the DR orchestrator did about a grid signal (append-only audit log).
+
+    One row per decision: an OpenADR event received/opted, an IEEE 2030.5
+    control observed, a dispatch run for an event window, or a release.
+    """
+
+    __tablename__ = "dr_event_responses"
+    __table_args__ = (Index("ix_dr_event_responses_source", "protocol", "source_id"),)
+
+    protocol: Mapped[str] = mapped_column(String(32))  # openadr | ieee2030_5
+    source_id: Mapped[str] = mapped_column(String(255))  # event id / control mRID(s)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    action: Mapped[str] = mapped_column(String(32), index=True)
+    opt_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    signal_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    signal_level: Mapped[float | None] = mapped_column(Float, nullable=True)
+    target_kw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    delivered_kw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    window_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    window_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("optimization_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    reason: Mapped[str] = mapped_column(Text, default="")
+    details_json: Mapped[str] = mapped_column(Text, default="{}")
