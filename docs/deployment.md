@@ -113,7 +113,12 @@ uvicorn vpp.api.app:create_app --factory --host 127.0.0.1 --port 8000
   `VPP_USE_ALEMBIC=false` the API creates missing tables on startup (no
   schema upgrades). Set `VPP_USE_ALEMBIC=true` to run migrations at startup
   instead.
-- Run **one** uvicorn worker (see [architecture](architecture.md#process-model)).
+- Several workers are supported: `VPP_API_WORKERS=4 vpp serve` (or pass
+  `--workers` to uvicorn *and* set `VPP_API_WORKERS` to the same number, so
+  the WebSocket relay starts and the startup checks see it). Use PostgreSQL,
+  keep host clocks NTP-synchronised, and note that OCPP requires a single
+  worker and the rate limit applies per worker; see
+  [architecture](architecture.md#process-model).
 
 Web console:
 

@@ -15,6 +15,9 @@ changes** before upgrading.
 
 ### Breaking changes
 
+- **`VPP_API_WORKERS` is honoured** (it was ignored). `VPP_OCPP_ENABLED`
+  with more than one worker is refused at startup: OCPP charge-point
+  sessions live in one process.
 - **API keys are limited to their own role.** A key now acts with the lesser
   of its `role` and its owner's current role. Integrations that relied on a
   lower-role key minted by an admin having admin rights must be given a key
@@ -233,12 +236,33 @@ changes** before upgrading.
 - Monaco is self-hosted; ESLint config; Playwright end-to-end tests in CI.
 - `web/Dockerfile` (standalone output) and a `vpp-web` compose service.
 
+**Multi-worker deployments**
+- `VPP_API_WORKERS` is read: `vpp serve` starts that many workers
+  (`--workers` overrides) and each logs the effective topology at startup.
+- DB-backed leadership leases (`cluster_leases`): the market-data tick,
+  degradation updater, alert evaluation, MQTT/Modbus ingestion and protocol
+  adapters + DR orchestrator run once per deployment, on the lease holder;
+  another worker takes over when it dies.
+- Trading venue calls (orders, cancel, portfolio, markets, tick, strategy
+  runs) received by a non-holder are forwarded through `cluster_calls` and
+  answered with the holder's result, or `503 leader_unavailable` /
+  `504 leader_timeout`. Follower telemetry is forwarded to the alert
+  evaluator.
+- WebSocket broadcasts are relayed between workers (`cluster_events`).
+- Settings `VPP_CLUSTER_LEASE_TTL_SECONDS`,
+  `VPP_CLUSTER_CALL_TIMEOUT_SECONDS`, `VPP_CLUSTER_POLL_INTERVAL_SECONDS`.
+
 **Docs**
 - `docs/`: architecture, configuration reference (every `VPP_*` setting),
   deployment, protocols/V2G/DR, API guide, tariffs, security.
 
 ### Changed
 
+- V2G flexibility bids (`v2g_flexibility_bids`) and the aggregator's
+  dispatch counters are persisted instead of kept per process; bids carry a
+  `bid_id`.
+- Schema bootstrap at startup (`create_all` or `VPP_USE_ALEMBIC`) runs
+  under a PostgreSQL advisory lock, so several workers can start at once.
 - The API lifespan applies the stored config document after `init_db()`.
 - `configure_logging` is called by `create_app`, is idempotent and stamps
   stdlib records too.

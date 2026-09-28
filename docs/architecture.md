@@ -1,10 +1,11 @@
 # Architecture
 
-The platform is a single FastAPI process (`vpp.api.app:create_app`) backed by
-a SQL database, with a Next.js operator console in front of it and
-optional connections to grid peers and devices. Everything that must
-survive a restart is in the database; a few things are deliberately
-per-process (see [Process model](#process-model)).
+The platform is a FastAPI application (`vpp.api.app:create_app`, one or
+more worker processes) backed by a SQL database, with a Next.js operator
+console in front of it and optional connections to grid peers and devices.
+Everything that must survive a restart is in the database; singleton work
+runs on one worker at a time and a few things stay per-process (see
+[Process model](#process-model)).
 
 ## Components
 
@@ -22,7 +23,7 @@ per-process (see [Process model](#process-model)).
                      | HTTP (Bearer JWT, server side)   \
                      v                                    v
 +-----------------------------------------------------------------------------+
-| FastAPI API (one process)                                                   |
+| FastAPI API (1..N worker processes, see Process model)                      |
 |  middleware: request id + access log, Prometheus, rate limit, CORS, slash   |
 |  auth: JWT (aud operator|customer) / API keys, RBAC                          |
 |                                                                             |
@@ -75,6 +76,7 @@ per-process (see [Process model](#process-model)).
 | `protocols/` | adapters (OCPP 1.6-J, OpenADR 2.0b, IEEE 2030.5, MQTT, Modbus), OCPP-J framing, bootstrap/supervision, telemetry ingestion |
 | `v2g/` | EV and fleet models, scheduler, aggregator, persistent store, OCPP bridge |
 | `dr/` | DR translation rules and orchestrator |
+| `cluster/` | multi-worker coordination: DB leases for singleton work, calls forwarded to lease holders, WebSocket relay, startup topology checks |
 | `portal/` | sites aggregation, customer access scoping, customer billing, telemetry history |
 | `grid/` | grid-forming inverter and microgrid models (simulation) |
 | `research/` | forecasting, anomaly detection, experiment runner (not used by the API) |
@@ -139,17 +141,58 @@ re-applied. Environment settings (`VPP_*`) are separate and documented in
 
 ## Process model
 
-Run the API as **one** process. The following are per-process:
+The API can run as several worker processes (`VPP_API_WORKERS`, used by
+`vpp serve`) against one database; PostgreSQL is recommended for more than
+one. Coordination goes through the database (`vpp.cluster`):
 
-- WebSocket connections and subscriptions,
-- the rate limiter's buckets,
-- the simulated trading venue's in-memory books (persisted state is rebuilt
-  from the database),
-- protocol adapters, including live OCPP charge-point connections,
-- the EventBus.
+- **Leases** (`cluster_leases`). Work that must happen once per deployment
+  runs only in the process holding its lease: `trading-venue` (simulated
+  venue + market-data tick), `degradation-updater`, `alert-evaluator`,
+  `mqtt-ingestion`, `modbus-ingestion`, `protocol-adapters` (OCPP /
+  OpenADR / IEEE 2030.5 and the DR orchestrator). Acquire/renew is one
+  atomic `UPDATE ... WHERE holder = :me OR expires_at < :now`. Followers
+  stay idle and take over once the lease expires
+  (`VPP_CLUSTER_LEASE_TTL_SECONDS`), or immediately when the holder was a
+  process on the same host that no longer exists. A lone process acquires
+  every lease during startup, so a single worker behaves exactly as before.
+- **Forwarded calls** (`cluster_calls`). Trading requests that touch the
+  venue (submit/cancel orders, portfolio, markets, tick, strategy runs) are
+  written to the table by the worker that received them and executed by
+  the `trading-venue` holder, which writes the result back. If no holder
+  claims a call within `VPP_CLUSTER_CALL_TIMEOUT_SECONDS` it is cancelled
+  (never executed) and the client gets `503 leader_unavailable`; a claimed
+  call that does not finish in time gives `504 leader_timeout` with the
+  call id. Telemetry events that arrive on a follower (e.g.
+  `POST /resources/{id}/telemetry`) are forwarded the same way, without
+  waiting, to the `alert-evaluator` holder; so are alert-rule reloads.
+  A worker that takes over the venue rebuilds its books and portfolio from
+  `orders`/`trades`; simulated prices restart from the base prices.
+- **WebSocket relay** (`cluster_events`, only with `VPP_API_WORKERS > 1`).
+  Every broadcast is also written to the table and re-sent by the other
+  workers to their own clients, so a browser sees market data, fills and
+  alerts whichever worker its socket landed on (about one
+  `VPP_CLUSTER_POLL_INTERVAL_SECONDS` later).
 
-Scale up (bigger machine) rather than out; horizontal scaling would need a
-shared event bus and connection routing that the platform does not provide.
+Still per process:
+
+- the rate limiter's buckets (a client can make up to workers x
+  `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE`), and any login throttling state;
+- the EventBus itself (only WebSocket broadcasts are relayed);
+- **OCPP**: charge-point sockets and the Central System's state live in one
+  process, so `VPP_OCPP_ENABLED=true` with `VPP_API_WORKERS > 1` is refused
+  at startup (`vpp serve` and the app lifespan). A DB command outbox would
+  cover remote start/stop but not the connector/transaction reads, V2G
+  schedule pushes and DR setpoints that also depend on that state, and it
+  would still need sticky routing for the sockets. Run OCPP on a
+  single-worker deployment.
+- OpenADR / IEEE 2030.5 views (`/api/v1/protocols/openadr/*`,
+  `/ieee2030_5/*`, `/api/v1/dr/status`) read the adapters' in-memory state
+  and are only complete on the `protocol-adapters` holder; other workers
+  answer 404 "not running". The DR decisions themselves are persisted
+  (`/api/v1/dr/responses`) and readable everywhere.
+
+Each worker logs the effective topology at startup (`API topology: ...`)
+and warns about the per-process limits above.
 
 ## Web console (`web/`)
 
@@ -174,7 +217,9 @@ Tables: `users`, `api_keys`, `resources`, `battery_states`,
 `dr_programs`, `program_enrollments`, `meter_readings`,
 `optimization_runs`, `orders`, `trades`, `tariffs`, `alert_rules`,
 `alerts`, `config_documents`, `event_log`, `v2g_vehicles`,
-`v2g_charging_sessions`, `v2g_schedules`, `dr_event_responses`.
+`v2g_charging_sessions`, `v2g_schedules`, `v2g_flexibility_bids`,
+`dr_event_responses`, and the multi-worker coordination tables
+`cluster_leases`, `cluster_calls`, `cluster_events`.
 
 Migrations live in `alembic/versions/` (0001-0007).
 `tests/test_alembic_drift.py` upgrades a fresh database to head and fails if
