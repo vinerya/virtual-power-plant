@@ -17,6 +17,7 @@ from vpp.settings import get_settings
 from vpp.db.engine import init_db, close_db, get_session_factory
 from vpp.events import get_event_bus
 from vpp.api.websocket import manager as websocket_manager, subscribe_event_bus_to_websocket
+from vpp.api.observability import install_observability, start_observability, stop_observability
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +273,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     event_bridge_sub_id = subscribe_event_bus_to_websocket(get_event_bus(), websocket_manager)
+    observability = await start_observability(settings, get_event_bus())
 
     task: Optional[asyncio.Task] = None
     if settings.degradation_updater_enabled:
@@ -332,6 +334,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pass
             except Exception:
                 logger.exception("Modbus ingestion task raised during shutdown")
+        await stop_observability(observability)
         get_event_bus().unsubscribe(event_bridge_sub_id)
         await close_db()
 
@@ -384,6 +387,10 @@ def create_app(
                 else settings.rate_limit_requests_per_minute
             ),
         )
+
+    # Request-id, access log, Prometheus middleware (outermost), plus the
+    # /metrics and /api/v1/alerts routes.
+    install_observability(app, settings)
 
     # -- Routes -------------------------------------------------------------
     from .routes import (

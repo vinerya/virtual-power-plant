@@ -286,11 +286,18 @@ The FastAPI server auto-generates interactive docs at `/docs` (Swagger UI) and `
 | **Trading** | `POST/GET /orders`, `GET /portfolio`, `GET /trades`, `GET /markets` |
 | **Protocols** | `GET /protocols`, `POST /protocols/{name}/connect` |
 | **V2G** | `POST /v2g/vehicles`, `GET /v2g/fleet`, `POST /v2g/schedule` |
-| **Metrics** | `GET /metrics` (Prometheus format) |
+| **Alerts** | `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/ack\|snooze\|resolve`, `GET/POST /api/v1/alerts/rules`, `GET/PATCH/DELETE /api/v1/alerts/rules/{id}` |
+| **Metrics** | `GET /metrics` (Prometheus format; unauthenticated unless `VPP_METRICS_BEARER_TOKEN` is set) |
 
 ### WebSocket Channels
 
 Connect to `/ws` and subscribe to: `resource_updates`, `optimization_events`, `market_data`, `alerts`
+
+### Observability & Alerting
+
+- Every HTTP response carries an `X-Request-ID` (a sane incoming one is reused); it is bound into the structured-log context, so all log lines for a request share it. Set `VPP_LOG_JSON=true` for JSON logs (default in production).
+- `/metrics` exposes request count/latency per route template, per-resource power/SOC gauges and telemetry freshness (from `RESOURCE_UPDATED` events), optimization and trading counters, and alerts fired. See `src/vpp/metrics.py` for the event data keys it reads and the helper hooks.
+- Alert rules are stored in the database and evaluated against live telemetry; fired alerts are persisted, de-duplicated per rule and resource, pushed on the `alerts` WebSocket channel and optionally POSTed to `VPP_ALERT_WEBHOOK_URL` (retried with backoff, HMAC-signed with `VPP_ALERT_WEBHOOK_SECRET`). Three default rules (SOC low, over-temperature, SOH degraded) are seeded when no rule exists (`VPP_ALERTS_SEED_DEFAULT_RULES=false` to disable).
 
 ---
 
@@ -300,7 +307,8 @@ Connect to `/ws` and subscribe to: `resource_updates`, `optimization_events`, `m
 # Full stack: API + PostgreSQL + Redis
 docker-compose up -d
 
-# With monitoring: + Prometheus + Grafana
+# With monitoring: + Prometheus (:9090) + Grafana (:3001, dashboards
+# "VPP Overview", "VPP Trading", "VPP Fleet" auto-provisioned)
 docker-compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
 
 # Development mode with live reload

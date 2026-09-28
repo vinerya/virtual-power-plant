@@ -1,0 +1,14 @@
+# Loads every dashboard JSON mounted at /var/lib/grafana/dashboards/vpp
+# (monitoring/grafana/dashboards in the repo) into a "VPP" folder.
+apiVersion: 1
+
+providers:
+  - name: vpp
+    folder: VPP
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards/vpp
+      foldersFromFilesStructure: false

@@ -53,6 +53,24 @@ class Settings(BaseSettings):
     # Monitoring
     metrics_enabled: bool = True
     metrics_prefix: str = "vpp"
+    # When set, GET /metrics requires "Authorization: Bearer <token>".
+    metrics_bearer_token: str | None = None
+    # Structured logging: JSON lines (None -> JSON only when env=production)
+    # and one "vpp.access" line per HTTP request.
+    log_json: bool | None = None
+    access_log_enabled: bool = True
+
+    # Alerting: evaluate persisted alert rules against RESOURCE_UPDATED
+    # telemetry.  Default rules (SOC low, over-temperature, SOH degraded) are
+    # inserted on startup only if the alert_rules table is empty.
+    alerts_enabled: bool = True
+    alerts_seed_default_rules: bool = True
+    # Optional outbound webhook for fired alerts; signed with HMAC-SHA256
+    # (X-VPP-Signature) when a secret is set.
+    alert_webhook_url: str | None = None
+    alert_webhook_secret: str | None = None
+    alert_webhook_timeout_seconds: float = 5.0
+    alert_webhook_max_retries: int = 3
 
     # Migrations / database init
     use_alembic: bool = False  # VPP_USE_ALEMBIC=1 -> run alembic upgrade head instead of create_all

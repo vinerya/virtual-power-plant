@@ -12,6 +12,8 @@ from typing import Any
 
 import structlog
 
+_VPP_HANDLER_ATTR = "_vpp_structlog_handler"
+
 
 def configure_logging(
     level: str = "INFO",
@@ -53,26 +55,40 @@ def configure_logging(
         cache_logger_on_first_use=True,
     )
 
+    # ``foreign_pre_chain`` runs the shared processors (notably
+    # ``merge_contextvars``) on records emitted through plain stdlib
+    # ``logging`` too, so ``request_id`` bound by
+    # :class:`vpp.api.middleware.RequestIdMiddleware` shows up on every line,
+    # not only on lines logged through structlog.
     formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             renderer,
         ],
     )
 
-    # Root handler (stderr)
+    # Root handler (stderr).  Only handlers previously installed by this
+    # function are replaced, so calling it repeatedly (e.g. once per
+    # ``create_app()``) is idempotent and handlers installed by others --
+    # pytest's log capture, an embedding application -- are left alone.
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
-    root.handlers.clear()
+    for handler in list(root.handlers):
+        if getattr(handler, _VPP_HANDLER_ATTR, False):
+            root.removeHandler(handler)
+            handler.close()
 
     stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)
+    setattr(stream_handler, _VPP_HANDLER_ATTR, True)
     root.addHandler(stream_handler)
 
     # Optional file handler
     if log_file:
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
+        setattr(file_handler, _VPP_HANDLER_ATTR, True)
         root.addHandler(file_handler)
 
     # Quiet noisy libraries
