@@ -6,6 +6,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 const MonacoEditor = dynamic(
   async () => {
     const mod = await import("@monaco-editor/react");
+    // Serve Monaco from our own origin (copied to public/monaco by
+    // scripts/copy-monaco.mjs) rather than the default jsDelivr CDN.
+    mod.loader.config({ paths: { vs: "/monaco/vs" } });
     return mod.default;
   },
   {

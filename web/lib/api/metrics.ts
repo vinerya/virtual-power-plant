@@ -10,8 +10,10 @@ export async function getResourceMetrics(
       `/api/v1/resources/${encodeURIComponent(id)}/metrics?window=${window}`,
     );
   } catch (e) {
-    // Backend may not implement the metrics endpoint yet; the asset page
-    // falls back to a client-side ring buffer.
-    return null;
+    // A 404 means this backend has no stored history for the resource; the
+    // asset page then builds a client-side ring buffer from live polls.
+    // Anything else is a real failure and is surfaced to the caller.
+    if ((e as { status?: number })?.status === 404) return null;
+    throw e;
   }
 }

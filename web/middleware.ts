@@ -6,6 +6,8 @@ const PUBLIC_PATHS = [
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/me",
+  // Returns its own 401 JSON; must not be redirected to the HTML login page.
+  "/api/auth/ws-token",
 ];
 
 // Operator routes are everything else under /(operator); customer routes
@@ -39,7 +41,9 @@ export function middleware(request: NextRequest) {
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/")) ||
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
-    pathname.startsWith("/static")
+    pathname.startsWith("/static") ||
+    // Self-hosted Monaco editor assets (public/monaco, not sensitive).
+    pathname.startsWith("/monaco/")
   ) {
     return NextResponse.next();
   }

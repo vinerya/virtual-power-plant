@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { withMockFallback } from "./mocks";
 import type { Alert, AlertSeverity } from "./types";
 
 export interface ListAlertsParams {
@@ -18,16 +19,11 @@ export async function listAlerts(
   if (params.status && params.status !== "all") q.set("status", params.status);
   if (params.limit != null) q.set("limit", String(params.limit));
   const qs = q.toString();
-  try {
-    return await api.get<Alert[]>(`/api/v1/alerts${qs ? `?${qs}` : ""}`);
-  } catch (e) {
-    // Backend may not have implemented alerts yet — return demo data so the
-    // page renders. Documented in README.
-    if ((e as { status?: number })?.status === 404) {
-      return demoAlerts();
-    }
-    throw e;
-  }
+  // Demo alerts are only used in mock mode (NEXT_PUBLIC_USE_MOCKS=1).
+  return withMockFallback(
+    () => api.get<Alert[]>(`/api/v1/alerts${qs ? `?${qs}` : ""}`),
+    demoAlerts,
+  );
 }
 
 export function ackAlert(id: string): Promise<Alert> {
@@ -48,11 +44,24 @@ export function snoozeAlert(
   );
 }
 
-export async function bulkAckAlerts(ids: string[]): Promise<void> {
-  await Promise.all(ids.map((id) => ackAlert(id).catch(() => null)));
+export class BulkAckError extends Error {
+  constructor(
+    public readonly failed: string[],
+    public readonly total: number,
+  ) {
+    super(`Failed to acknowledge ${failed.length} of ${total} alerts`);
+    this.name = "BulkAckError";
+  }
 }
 
-// Used as a fallback when the backend does not implement /alerts yet.
+/** Acknowledge several alerts; rejects with BulkAckError if any failed. */
+export async function bulkAckAlerts(ids: string[]): Promise<void> {
+  const results = await Promise.allSettled(ids.map((id) => ackAlert(id)));
+  const failed = ids.filter((_, i) => results[i].status === "rejected");
+  if (failed.length > 0) throw new BulkAckError(failed, ids.length);
+}
+
+// Demo data for mock mode only (see ./mocks.ts).
 function demoAlerts(): Alert[] {
   const now = Date.now();
   const mk = (

@@ -3,30 +3,47 @@
 /**
  * Mounts the singleton WebSocket client at the operator-shell level.
  *
- * - `resource_updates`  → invalidate ["resources"] and ["resource", id]
+ * - `resource_updates`    → invalidate ["resources"] and ["resource", id]
  * - `optimization_events` → invalidate ["dispatches"]
- * - `alerts` → toast via sonner
+ * - `alerts`              → invalidate ["alerts"] + toast via sonner
+ *
+ * Broadcasts bridged from the backend EventBus carry a BusEvent in
+ * `msg.data` (`{event_type, data, source, severity, ...}`); other
+ * broadcasters may send a flat object. Both are handled.
  */
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { getWsClient } from "@/lib/ws/client";
+import { Badge } from "@/components/ui/badge";
+import { asBusEvent, getWsClient, type WsStatus } from "@/lib/ws/client";
+
+const CHANNELS = ["resource_updates", "optimization_events", "alerts"];
+
+function humanize(s: string): string {
+  const t = s.replace(/[_.]+/g, " ").trim();
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
 
 export function LiveUpdates() {
   const qc = useQueryClient();
 
   useEffect(() => {
     const client = getWsClient();
-    client.start({
-      channels: ["resource_updates", "optimization_events", "alerts"],
-    });
+    client.start({ channels: CHANNELS });
     const off = client.on((msg) => {
+      const ev = asBusEvent(msg.data);
+      const flat = (ev ? ev.data : (msg.data ?? {})) as Record<string, unknown>;
+
       switch (msg.channel) {
         case "resource_updates": {
           qc.invalidateQueries({ queryKey: ["resources"] });
-          const data = msg.data as { id?: string; resource_id?: string } | null;
-          const id = data?.id || data?.resource_id;
+          qc.invalidateQueries({ queryKey: ["sites"] });
+          const id = str(flat.resource_id) ?? str(flat.id);
           if (id) qc.invalidateQueries({ queryKey: ["resource", id] });
           break;
         }
@@ -34,14 +51,14 @@ export function LiveUpdates() {
           qc.invalidateQueries({ queryKey: ["dispatches"] });
           break;
         case "alerts": {
-          const data = msg.data as
-            | { severity?: string; title?: string; message?: string }
-            | null;
-          const title = data?.title || "Alert";
-          const desc = data?.message || "";
-          if (data?.severity === "critical" || data?.severity === "error") {
+          qc.invalidateQueries({ queryKey: ["alerts"] });
+          const severity = str(flat.severity) ?? ev?.severity;
+          const title =
+            str(flat.title) ?? (ev ? humanize(ev.event_type) : "Alert");
+          const desc = str(flat.message) ?? str(ev?.source) ?? "";
+          if (severity === "critical" || severity === "error") {
             toast.error(title, { description: desc });
-          } else if (data?.severity === "warning") {
+          } else if (severity === "warning") {
             toast.warning(title, { description: desc });
           } else {
             toast(title, { description: desc });
@@ -54,11 +71,40 @@ export function LiveUpdates() {
     });
     return () => {
       off();
-      // Keep the singleton alive across route changes — only stop on unmount
-      // of the operator shell, which is the page lifetime in practice.
       client.stop();
     };
   }, [qc]);
 
   return null;
+}
+
+const STATUS_LABEL: Record<WsStatus, string> = {
+  idle: "live: off",
+  connecting: "live: connecting…",
+  open: "live",
+  reconnecting: "live: reconnecting…",
+  unauthorized: "live: signed out",
+  disabled: "live: demo mode",
+};
+
+/** Small badge showing the real-time connection state. */
+export function LiveStatusBadge() {
+  const [status, setStatus] = useState<WsStatus>("idle");
+  useEffect(() => getWsClient().onStatus(setStatus), []);
+  const variant =
+    status === "open"
+      ? "success"
+      : status === "unauthorized"
+        ? "destructive"
+        : "outline";
+  return (
+    <Badge
+      variant={variant}
+      aria-live="polite"
+      title="Real-time event stream (WebSocket)"
+      data-testid="live-status"
+    >
+      {STATUS_LABEL[status]}
+    </Badge>
+  );
 }

@@ -43,7 +43,7 @@ test.beforeEach(async ({ context }) => {
     },
   ]);
 
-  await context.route("**/api/proxy/api/v1/health", (r) =>
+  await context.route("**/api/proxy/health", (r) =>
     r.fulfill({ status: 200, body: JSON.stringify({ status: "ok" }) }),
   );
   await context.route(/\/api\/proxy\/api\/v1\/sites$/, (route) =>

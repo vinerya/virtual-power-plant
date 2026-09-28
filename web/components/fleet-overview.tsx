@@ -22,7 +22,7 @@ export function FleetOverview() {
     refetchInterval: 5_000,
   });
 
-  const resources = query.data ?? [];
+  const resources = useMemo(() => query.data ?? [], [query.data]);
 
   const stats = useMemo(() => {
     const total = resources.length;

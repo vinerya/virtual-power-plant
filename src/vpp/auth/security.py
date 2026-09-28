@@ -115,6 +115,13 @@ async def get_current_principal(
     # Try JWT first
     if bearer is not None:
         payload = decode_access_token(bearer.credentials)
+        if payload.typ is not None:
+            # e.g. short-lived WebSocket tokens — not valid for the HTTP API.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token type not accepted for this endpoint",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         user = await UserRepository.get_by_id(session, payload.sub)
         if user is None or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")

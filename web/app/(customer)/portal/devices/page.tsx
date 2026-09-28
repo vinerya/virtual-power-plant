@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { getMyDevices } from "@/lib/api/customer";
 import type { CustomerDevice } from "@/lib/api/types";
 import { formatPercent, formatPower } from "@/lib/utils";
+import { ErrorState } from "@/components/ui/error-state";
 
 export default function CustomerDevicesPage() {
   const q = useQuery({
@@ -32,7 +33,15 @@ export default function CustomerDevicesPage() {
           ))}
         </div>
       ) : q.isError ? (
-        <p className="text-sm text-destructive">Failed to load devices.</p>
+        <ErrorState
+          title="Failed to load devices."
+          error={q.error}
+          onRetry={() => q.refetch()}
+        />
+      ) : (q.data ?? []).length === 0 ? (
+        <p className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+          No devices are linked to your account yet.
+        </p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {(q.data ?? []).map((d) => (

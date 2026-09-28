@@ -447,8 +447,10 @@ def create_app(
     app.include_router(customers.router)
 
     # -- WebSocket ----------------------------------------------------------
-    from .websocket import websocket_endpoint
+    from .websocket import router as websocket_router, websocket_endpoint
 
-    app.add_api_websocket_route("/ws", websocket_endpoint)
+    app.include_router(websocket_router)  # POST /api/v1/ws/token
+    app.add_api_websocket_route("/api/v1/ws", websocket_endpoint)
+    app.add_api_websocket_route("/ws", websocket_endpoint)  # legacy alias
 
     return app

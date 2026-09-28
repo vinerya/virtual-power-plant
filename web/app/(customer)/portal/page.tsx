@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SavingsCard } from "@/components/customer/savings-card";
 import { EnergyFlow } from "@/components/customer/energy-flow";
 import { getMe, getMyBill } from "@/lib/api/customer";
+import { ErrorState } from "@/components/ui/error-state";
 
 export default function PortalHomePage() {
   const me = useQuery({ queryKey: ["customer", "me"], queryFn: getMe });
@@ -26,7 +27,14 @@ export default function PortalHomePage() {
 
   if (!me.data || !bill.data) {
     return (
-      <p className="text-sm text-destructive">Failed to load your portal.</p>
+      <ErrorState
+        title="Failed to load your portal."
+        error={me.error ?? bill.error}
+        onRetry={() => {
+          void me.refetch();
+          void bill.refetch();
+        }}
+      />
     );
   }
 

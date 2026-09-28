@@ -76,13 +76,13 @@ test.beforeEach(async ({ context }) => {
   await context.route("**/api/proxy/health", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ status: "ok" }) }),
   );
-  await context.route("**/api/proxy/api/v1/resources/", (route) =>
+  await context.route(/\/api\/proxy\/api\/v1\/resources\/?(\?.*)?$/, (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([]) }),
   );
   await context.route("**/api/proxy/api/v1/optimization/history**", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(RUNS) }),
   );
-  await context.route("**/api/proxy/api/v1/optimization/explain/run-1", (route) =>
+  await context.route("**/api/proxy/api/v1/dispatches/run-1/explain", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(EXPLAIN) }),
   );
 });
@@ -111,7 +111,7 @@ test("opens dispatch sheet, navigates to Counterfactual, sees comparison chart a
 
 test("shows empty state when explainer 404s", async ({ page, context }) => {
   await context.route(
-    "**/api/proxy/api/v1/optimization/explain/run-1",
+    "**/api/proxy/api/v1/dispatches/run-1/explain",
     (route) =>
       route.fulfill({
         status: 404,
