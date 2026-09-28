@@ -138,6 +138,7 @@ def server():
         mock.get("/edev").mock(return_value=sep(end_devices()))
         mock.get("/edev/1/fsa").mock(return_value=sep(FSA))
         mock.get("/derp").mock(return_value=sep(DERP))
+        mock.post("/rsps/1/rsp", name="responses").mock(return_value=httpx.Response(201))
         mock.get("/derp/0/dderc").mock(return_value=sep(DDERC))
         mock.get("/derp/1/derc").mock(
             return_value=sep(
@@ -405,3 +406,114 @@ def test_control_activity_rules():
     assert not DERControl(
         start_time=now - 10, duration_seconds=60, event_status=EventStatusCode.SUPERSEDED
     ).is_active_at(now)
+
+
+# ---------------------------------------------------------------------------
+# Response resources (received / started / completed / cancelled)
+# ---------------------------------------------------------------------------
+
+
+def _posted(server) -> list[tuple[str, int]]:
+    from lxml import etree
+
+    out = []
+    for call in server.routes["responses"].calls:
+        assert call.request.headers["content-type"] == "application/sep+xml"
+        doc = etree.fromstring(call.request.content)
+        assert doc.tag == "{urn:ieee:std:2030.5:ns}DERControlResponse"
+        values = {etree.QName(child).localname: child.text for child in doc}
+        assert list(values) == ["createdDateTime", "endDeviceLFDI", "status", "subject"]
+        assert values["endDeviceLFDI"] == LFDI
+        out.append((values["subject"], int(values["status"])))
+    return out
+
+
+def _server_time(server, offset_s: int) -> None:
+    now = int(time.time())
+    server.get("/tm").mock(
+        return_value=sep(
+            f'<Time {NS} href="/tm"><currentTime>{now + offset_s}</currentTime>'
+            "<quality>7</quality><tzOffset>0</tzOffset></Time>"
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_responses_posted_for_received_started_cancelled(server):
+    adapter = _adapter()
+    await adapter.connect()
+    try:
+        posted = _posted(server)
+        assert sorted(posted) == sorted(
+            [
+                ("C-CURTAIL", 1),
+                ("C-CURTAIL", 2),
+                ("C-TARGET", 1),
+                ("C-TARGET", 2),
+                ("C-FUTURE", 1),  # received, not started yet
+                ("C-CANCELLED", 1),
+                ("C-CANCELLED", 6),
+            ]
+        )
+        # Each status is posted exactly once across polls.
+        await adapter.discover()
+        assert len(_posted(server)) == len(posted)
+        assert adapter.metrics.errors == 0
+    finally:
+        await adapter.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_completed_response_after_interval_even_if_server_drops_control(server):
+    adapter = _adapter()
+    await adapter.connect()
+    try:
+        # C-TARGET (1800 s) is over; C-CURTAIL (3600 s) still running.
+        _server_time(server, 2400)
+        server.get("/derp/0/derc").mock(return_value=sep(derc_list("/derp/0/derc", [])))
+        await adapter.discover()
+        new = _posted(server)[7:]
+        assert new == [("C-TARGET", 3)]
+        _server_time(server, 4000)
+        await adapter.discover()
+        assert _posted(server)[-1] == ("C-CURTAIL", 3)
+    finally:
+        await adapter.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_failed_response_post_is_retried_next_poll(server):
+    server.routes["responses"].mock(side_effect=[httpx.Response(500)] + [httpx.Response(201)] * 20)
+    adapter = _adapter()
+    await adapter.connect()
+    try:
+        assert adapter.metrics.errors == 1
+        first = len(adapter.responses_sent)
+        await adapter.discover()
+        assert len(adapter.responses_sent) == first + 1  # the failed one, retried
+        assert len({(r["control_id"], r["status"]) for r in adapter.responses_sent}) == 7
+    finally:
+        await adapter.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_no_responses_in_simulated_mode_or_when_not_required():
+    adapter = IEEE2030_5Adapter()
+    adapter.configure(poll_interval_s=0)
+    await adapter.connect()
+    control = DERControl(control_id="c", reply_to="/rsp", response_required=3)
+    assert await adapter.post_response(control, 1) is False  # no server
+    assert adapter.responses_sent == []
+
+
+@pytest.mark.asyncio
+async def test_full_buffer_drops_oldest_instead_of_counting_errors():
+    adapter = IEEE2030_5Adapter()
+    adapter.configure(poll_interval_s=0)
+    await adapter.connect()
+    adapter.register_program(DERProgram(program_id="p"))
+    for i in range(510):
+        await adapter.apply_control("p", DERControl(control_id=f"c{i}"))
+    assert adapter.metrics.errors == 0
+    first = await adapter.receive()
+    assert first is not None and first.payload["control_id"] == "c10"
