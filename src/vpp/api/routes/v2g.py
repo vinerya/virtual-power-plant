@@ -13,7 +13,9 @@ from vpp.v2g.aggregator import V2GAggregator, DispatchSignal, GridService
 
 router = APIRouter(prefix="/api/v1/v2g", tags=["v2g"])
 
-# Module-level fleet + aggregator (wired in app.py lifespan)
+# Process-wide fleet + aggregator, created at import time (not in the app
+# lifespan).  State is in-memory only: it is not persisted and is lost on
+# restart, and it is not shared between multiple API worker processes.
 _fleet = EVFleet()
 _scheduler = V2GScheduler()
 _aggregator = V2GAggregator(_fleet, _scheduler)

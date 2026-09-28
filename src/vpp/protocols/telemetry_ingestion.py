@@ -4,7 +4,7 @@ Bridges :class:`~vpp.protocols.mqtt.MQTTAdapter` messages on
 ``vpp/{site_id}/{resource_type}/{resource_id}/{metric}`` topics into
 ``battery_states`` rows. Before this module existed, nothing in production
 ever wrote to that table: the degradation updater's DB-backed telemetry
-fetch (``_placeholder_fetch_telemetry`` in ``vpp.api.app``) already read
+fetch (``_fetch_recent_soc_window`` in ``vpp.api.app``) already read
 from it correctly, but the table stayed empty forever, so the periodic SOH
 updater never had a real window to work with.
 """

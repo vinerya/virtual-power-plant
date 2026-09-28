@@ -104,3 +104,35 @@ async def test_disable_via_settings(monkeypatch, preserve_db_globals):
         assert fastapi_app.state.degradation_task is None
 
     assert called is False
+
+
+@pytest.mark.asyncio
+async def test_fetch_recent_soc_window_reads_battery_states(db_session, app):
+    """The degradation loop's telemetry source reads real ``battery_states`` rows."""
+    from datetime import datetime
+
+    from vpp.db.repositories import BatteryStateRepository, ResourceRepository
+
+    battery = await ResourceRepository.create(
+        db_session,
+        name=f"soc-window-{datetime.now().timestamp()}",
+        resource_type="battery",
+        rated_power=10.0,
+    )
+    await db_session.commit()
+
+    # Fewer than two samples -> no window.
+    assert await app_module._fetch_recent_soc_window(battery.id) is None
+
+    await BatteryStateRepository.record(db_session, battery.id, soc=80.0)
+    await db_session.commit()
+    assert await app_module._fetch_recent_soc_window(battery.id) is None
+
+    await BatteryStateRepository.record(db_session, battery.id, soc=0.6)
+    await db_session.commit()
+    window = await app_module._fetch_recent_soc_window(battery.id)
+    assert window is not None
+    assert window.battery_id == battery.id
+    # Percent-scale SOC values are normalised to fractions.
+    assert all(0.0 <= s <= 1.0 for s in window.soc_trace)
+    assert len(window.soc_trace) == 2

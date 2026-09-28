@@ -21,7 +21,7 @@ from vpp.api.websocket import manager as websocket_manager, subscribe_event_bus_
 logger = logging.getLogger(__name__)
 
 
-async def _placeholder_fetch_telemetry(battery_id: str):
+async def _fetch_recent_soc_window(battery_id: str):
     """Assemble a SOC window from the two most recent ``battery_states`` rows.
 
     Returns ``None`` for batteries with fewer than two recorded samples
@@ -64,7 +64,7 @@ async def _degradation_periodic_loop(interval_minutes: int) -> None:
     """Long-running task that refreshes battery SOH on a fixed cadence.
 
     Iterates over all currently-registered battery resources every
-    ``interval_minutes`` minutes, asks ``_placeholder_fetch_telemetry`` for
+    ``interval_minutes`` minutes, asks ``_fetch_recent_soc_window`` for
     a SOC window, and pushes the result through ``DegradationUpdater``.
     Exceptions on a single battery are logged and do not break the loop.
     """
@@ -88,7 +88,7 @@ async def _degradation_periodic_loop(interval_minutes: int) -> None:
                 )
             for bid in rows:
                 try:
-                    window = await _placeholder_fetch_telemetry(bid)
+                    window = await _fetch_recent_soc_window(bid)
                     if window is not None:
                         await updater.apply_window(window)
                 except Exception:
