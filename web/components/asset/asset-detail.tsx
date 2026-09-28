@@ -123,10 +123,19 @@ export function AssetDetail({ id }: { id: string }) {
           ) : (
             <LineSeriesChart data={series} unit={chartUnit} />
           )}
-          {!metricsQuery.data && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Live client-side buffer (backend metrics endpoint not available).
+          {metricsQuery.isError ? (
+            <p role="status" className="mt-2 text-xs text-destructive">
+              Could not load stored metrics history; showing a live
+              client-side buffer instead.
             </p>
+          ) : (
+            !metricsQuery.isLoading &&
+            !metricsQuery.data && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                No stored history for this resource; showing a live
+                client-side buffer.
+              </p>
+            )
           )}
         </CardContent>
       </Card>

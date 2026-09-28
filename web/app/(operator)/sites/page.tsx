@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { SiteList } from "@/components/sites/site-list";
 import { listSites } from "@/lib/api/sites";
 import { formatPower } from "@/lib/utils";
+import { ErrorState } from "@/components/ui/error-state";
 
 // MapLibre is heavy (~500KB). Lazy-load with SSR off.
 const SiteMap = dynamic(
@@ -78,7 +79,12 @@ export default function SitesPage() {
             <Skeleton className="h-full w-full" />
           </div>
         ) : q.isError ? (
-          <p className="p-6 text-sm text-destructive">Failed to load sites.</p>
+          <ErrorState
+            className="m-6 h-fit"
+            title="Failed to load sites."
+            error={q.error}
+            onRetry={() => q.refetch()}
+          />
         ) : (
           <>
             <SiteList

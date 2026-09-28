@@ -33,7 +33,17 @@ async function proxy(
     init.body = await request.text();
   }
 
-  const upstream = await fetch(target, init);
+  let upstream: Response;
+  try {
+    upstream = await fetch(target, init);
+  } catch {
+    // Backend down / DNS failure / connection refused. Return a JSON 502
+    // so the UI can render a meaningful error instead of a Next.js 500 page.
+    return NextResponse.json(
+      { detail: "API server unreachable" },
+      { status: 502 },
+    );
+  }
   const body = await upstream.text();
   const res = new NextResponse(body, {
     status: upstream.status,

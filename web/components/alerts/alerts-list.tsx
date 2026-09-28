@@ -23,6 +23,7 @@ import type { Alert, AlertSeverity } from "@/lib/api/types";
 import { cn } from "@/lib/utils";
 import { SeveritySparkline } from "./severity-sparkline";
 import { AlertRow } from "./alert-row";
+import { ErrorState } from "@/components/ui/error-state";
 
 const FILTERS: { key: AlertSeverity | "all"; label: string }[] = [
   { key: "all", label: "All" },
@@ -125,7 +126,10 @@ export function AlertsList() {
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ["alerts"] });
     },
-    onError: () => toast.error("Bulk ack failed"),
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Bulk ack failed");
+      qc.invalidateQueries({ queryKey: ["alerts"] });
+    },
   });
 
   // ---------- Selection helpers ----------
@@ -219,9 +223,12 @@ export function AlertsList() {
               ))}
             </div>
           ) : q.isError ? (
-            <p className="px-3 py-6 text-sm text-destructive">
-              Failed to load alerts.
-            </p>
+            <ErrorState
+              className="mx-3 my-3"
+              title="Failed to load alerts."
+              error={q.error}
+              onRetry={() => q.refetch()}
+            />
           ) : visible.length === 0 ? (
             <EmptyState />
           ) : (

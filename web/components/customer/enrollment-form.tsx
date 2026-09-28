@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { listPrograms, postEnrollment } from "@/lib/api/customer";
 import type { DRProgram } from "@/lib/api/types";
+import { ErrorState } from "@/components/ui/error-state";
 
 const Schema = z.object({
   program_ids: z.array(z.string()).min(1, "Pick at least one program"),
@@ -81,9 +82,11 @@ export function EnrollmentForm() {
       {programs.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : programs.isError || !programs.data ? (
-        <p className="rounded-md border border-dashed p-4 text-sm text-destructive">
-          Failed to load programs.
-        </p>
+        <ErrorState
+          title="Failed to load programs."
+          error={programs.error}
+          onRetry={() => programs.refetch()}
+        />
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           {programs.data.map((p) => (

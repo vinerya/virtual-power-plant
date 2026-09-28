@@ -1,24 +1,26 @@
 import { api } from "./client";
 import { listResources } from "./resources";
 import { listAlerts } from "./alerts";
+import { USE_MOCKS } from "./mocks";
 import type { ResourceResponse, Site } from "./types";
 
 /**
  * Sites feed.
  *
- * Tries `/api/v1/sites` first. If the backend hasn't shipped that endpoint
- * yet (404), we synthesize sites from the resources list:
+ * Reads `/api/v1/sites`. Errors propagate to the UI.
+ *
+ * Mock mode only (NEXT_PUBLIC_USE_MOCKS=1): if that request fails we
+ * synthesize sites from the resources list:
  *   1. Group resources by `metadata.site_id` if present.
  *   2. Use `metadata.location.{lat,lon}` when available.
  *   3. Fall back to a deterministic synthetic grid covering the
- *      continental US for resources without coordinates. This is purely
- *      for demo and is documented in the README.
+ *      continental US for resources without coordinates (demo only).
  */
 export async function listSites(): Promise<Site[]> {
   try {
     return await api.get<Site[]>("/api/v1/sites");
   } catch (e) {
-    if ((e as { status?: number })?.status !== 404) throw e;
+    if (!USE_MOCKS) throw e;
   }
 
   const [resources, alerts] = await Promise.all([

@@ -1,4 +1,5 @@
 import { api } from "./client";
+import { withMockFallback as withFallback } from "./mocks";
 import type {
   Bill,
   Customer,
@@ -19,17 +20,8 @@ export interface CustomerEnrollmentRequest {
   acknowledged: boolean;
 }
 
-async function withFallback<T>(
-  fn: () => Promise<T>,
-  fallback: () => T,
-): Promise<T> {
-  try {
-    return await fn();
-  } catch (e) {
-    if ((e as { status?: number })?.status === 404) return fallback();
-    throw e;
-  }
-}
+// Every call below falls back to demo data ONLY when mock mode is enabled
+// (NEXT_PUBLIC_USE_MOCKS=1, see ./mocks.ts). Otherwise errors propagate.
 
 export function getMe(): Promise<Customer> {
   return withFallback(
