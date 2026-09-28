@@ -53,7 +53,7 @@ export function PriceTrace({
             strokeOpacity={0.4}
             fontSize={11}
             width={48}
-            tickFormatter={(v: number) => v.toFixed(1)}
+            tickFormatter={(v: number) => v.toFixed(2)}
           />
           <Tooltip
             contentStyle={tooltipStyle}
