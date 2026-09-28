@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+public/monaco
+playwright-report
+test-results
+*.tsbuildinfo
+.env
+.env*.local
+Dockerfile
+.dockerignore
