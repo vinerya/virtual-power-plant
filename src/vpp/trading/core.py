@@ -17,7 +17,7 @@ import uuid
 
 from .orders import Order, OrderStatus, OrderType, OrderBook
 from .markets import Market, MarketType
-from .portfolio import Portfolio, Position, RiskMetrics, Trade
+from .portfolio import Portfolio, Position, RiskMetrics, Trade, parametric_var
 from .data import MarketDataProvider, MarketData
 
 
@@ -240,7 +240,8 @@ class TradingEngine:
             self.logger.error(f"Invalid order quantity: {order.quantity}")
             return False
         
-        if order.price <= 0:
+        # Market orders carry no price; everything else must be priced.
+        if order.order_type != OrderType.MARKET and order.price <= 0:
             self.logger.error(f"Invalid order price: {order.price}")
             return False
         
@@ -311,40 +312,50 @@ class TradingEngine:
             # Execute order in market
             execution_result = market.execute_order(order)
             
-            if execution_result.get("success", False):
-                # Create trade
-                trade = Trade(
-                    id=str(uuid.uuid4()),
-                    order_id=order.id,
-                    market=order.market,
-                    side=order.side,
-                    quantity=execution_result["quantity"],
-                    price=execution_result["price"],
-                    timestamp=datetime.now(),
-                    fees=execution_result.get("fees", 0.0)
-                )
-                
-                # Update portfolio
-                self.portfolio_manager.add_trade(trade)
-                
-                # Update order status
-                order.status = OrderStatus.FILLED
-                order.filled_quantity = execution_result["quantity"]
-                order.average_price = execution_result["price"]
-                
-                # Update metrics
-                self.metrics["trades_executed"] += 1
-                self.metrics["total_volume"] += trade.quantity
-                
-                # Trigger callbacks
-                for callback in self.callbacks["on_trade_executed"]:
-                    callback(trade)
-                
-                self.logger.info(f"Order {order.id} executed: {trade.quantity} @ {trade.price}")
-            else:
+            if not execution_result.get("success", False):
                 order.status = OrderStatus.REJECTED
                 self.logger.warning(f"Order {order.id} rejected: {execution_result.get('reason', 'Unknown')}")
-                
+                return
+
+            filled_quantity = float(execution_result.get("quantity", 0.0) or 0.0)
+            if filled_quantity <= 0:
+                # Accepted but not (yet) executed -- e.g. resting in the book
+                # or queued for a day-ahead auction. Previously this path
+                # booked a zero-quantity trade and marked the order FILLED.
+                self.logger.info(f"Order {order.id} accepted, awaiting execution")
+                return
+
+            # Create trade
+            trade = Trade(
+                id=str(uuid.uuid4()),
+                order_id=order.id,
+                market=order.market,
+                side=order.side,
+                quantity=filled_quantity,
+                price=execution_result["price"],
+                timestamp=datetime.now(),
+                fees=execution_result.get("fees", 0.0)
+            )
+            
+            # Update portfolio
+            self.portfolio_manager.add_trade(trade)
+            
+            # Update order fill state. Continuous markets already applied
+            # the fill via the order book; markets that execute outside
+            # the book (ancillary awards, bilateral contracts) did not.
+            if order.filled_quantity + 1e-12 < filled_quantity:
+                order.update_fill(filled_quantity - order.filled_quantity, execution_result["price"])
+            
+            # Update metrics
+            self.metrics["trades_executed"] += 1
+            self.metrics["total_volume"] += trade.quantity
+            
+            # Trigger callbacks
+            for callback in self.callbacks["on_trade_executed"]:
+                callback(trade)
+            
+            self.logger.info(f"Order {order.id} executed: {trade.quantity} @ {trade.price}")
+            
         except Exception as e:
             self.logger.error(f"Failed to execute order {order.id}: {e}")
             order.status = OrderStatus.REJECTED
@@ -546,24 +557,179 @@ class RiskManager:
         self.logger = logging.getLogger("trading.risk")
     
     def check_order_risk(self, order: Order, portfolio: Portfolio) -> bool:
-        """Check if order violates risk limits."""
-        # Check position limits
-        current_position = portfolio.positions.get(order.market)
-        if current_position:
-            new_position_size = abs(current_position.quantity + 
-                                  (order.quantity if order.side == "buy" else -order.quantity))
-            if new_position_size > self.limits.max_position:
-                self.logger.warning(f"Order would exceed position limit: {new_position_size} > {self.limits.max_position}")
-                return False
-        
-        # Check daily loss limits
+        """Check if order violates risk limits (see :meth:`evaluate_order`)."""
+        reasons = self.evaluate_order(order, portfolio)
+        for reason in reasons:
+            self.logger.warning(f"Order {order.id} rejected: {reason}")
+        return not reasons
+
+    def evaluate_order(
+        self,
+        order: Order,
+        portfolio: Portfolio,
+        market_prices: dict[str, float] | None = None,
+        reference_price: float | None = None,
+        daily_volatility: dict[str, float] | None = None,
+        correlations: dict[str, dict[str, float]] | None = None,
+        open_order_quantity: float = 0.0,
+    ) -> list[str]:
+        """Pre-trade risk check. Returns the list of breached limits (empty = pass).
+
+        Orders that *reduce* the absolute position in their market are
+        always allowed -- a desk must be able to flatten while in breach.
+        Risk-increasing orders are checked against:
+
+        * ``max_position`` on the post-trade absolute position, including
+          ``open_order_quantity`` (signed remaining quantity of resting
+          orders on the same side, which may still fill). The old check
+          skipped this entirely when no position existed yet, so a single
+          order of any size could open a position past the limit.
+        * ``max_daily_loss`` on today's realized P&L.
+        * ``max_drawdown`` on the *current* drawdown from peak equity.
+        * ``var_limit`` on the post-trade parametric VaR (only when
+          ``daily_volatility`` is supplied).
+        * ``concentration_limit`` on the order market's share of post-trade
+          gross notional, when the book spans two or more markets (with a
+          single market concentration is trivially 100%).
+        """
+        reasons: list[str] = []
+        prices = dict(market_prices or {})
+        for market, position in portfolio.positions.items():
+            prices.setdefault(market, position.average_price)
+        price = reference_price or order.price or prices.get(order.market, 0.0)
+        if price:
+            prices[order.market] = price
+
+        position = portfolio.positions.get(order.market)
+        current = position.quantity if position else 0.0
+        signed = order.quantity if order.side == "buy" else -order.quantity
+        post_trade = current + signed
+        if abs(post_trade) <= abs(current) + 1e-12:
+            return reasons  # risk-reducing
+
+        worst_case = post_trade + open_order_quantity
+        if abs(worst_case) > self.limits.max_position + 1e-9:
+            pending = (
+                f" (including {abs(open_order_quantity):g} in resting orders)"
+                if open_order_quantity else ""
+            )
+            reasons.append(
+                f"Position limit exceeded in {order.market}: post-trade "
+                f"{abs(worst_case):g}{pending} > {self.limits.max_position:g}"
+            )
+
         daily_pnl = portfolio.calculate_daily_pnl()
         if daily_pnl < -self.limits.max_daily_loss:
-            self.logger.warning(f"Daily loss limit exceeded: {daily_pnl} < {-self.limits.max_daily_loss}")
-            return False
-        
-        return True
+            reasons.append(
+                f"Daily loss limit breached: {daily_pnl:.2f} < {-self.limits.max_daily_loss:.2f}"
+            )
+
+        drawdown = portfolio.current_drawdown(prices)
+        if drawdown > self.limits.max_drawdown:
+            reasons.append(
+                f"Drawdown limit breached: {drawdown:.1%} > {self.limits.max_drawdown:.1%}"
+            )
+
+        post_positions = {
+            market: pos.quantity for market, pos in portfolio.positions.items()
+        }
+        post_positions[order.market] = post_trade
+        exposures = {
+            market: qty * prices.get(market, 0.0)
+            for market, qty in post_positions.items()
+            if abs(qty) > 1e-12
+        }
+
+        if daily_volatility is not None:
+            var = parametric_var(exposures, daily_volatility, correlations=correlations)
+            if var > self.limits.var_limit:
+                reasons.append(
+                    f"VaR limit exceeded: post-trade 1-day 95% VaR "
+                    f"{var:.2f} > {self.limits.var_limit:.2f}"
+                )
+
+        gross = sum(abs(v) for v in exposures.values())
+        if len(exposures) >= 2 and gross > 0:
+            share = abs(exposures.get(order.market, 0.0)) / gross
+            if share > self.limits.concentration_limit:
+                reasons.append(
+                    f"Concentration limit exceeded in {order.market}: post-trade "
+                    f"{share:.1%} > {self.limits.concentration_limit:.1%}"
+                )
+
+        return reasons
     
+    def assess_portfolio(
+        self,
+        portfolio: Portfolio,
+        market_prices: dict[str, float] | None = None,
+        daily_volatility: dict[str, float] | None = None,
+        correlations: dict[str, dict[str, float]] | None = None,
+    ) -> dict[str, Any]:
+        """Current risk state on the same basis as :meth:`evaluate_order`.
+
+        Unlike :meth:`check_limits`, VaR here is the parametric 1-day 95%
+        VaR of the current positions (needs ``daily_volatility``) rather
+        than a quantile of equity-curve samples, drawdown is measured from
+        the peak to *current* equity, and concentration only applies once
+        the book spans two or more markets.
+        """
+        prices = dict(market_prices or {})
+        for market, position in portfolio.positions.items():
+            prices.setdefault(market, position.average_price)
+        exposures = {
+            market: position.quantity * prices.get(market, 0.0)
+            for market, position in portfolio.positions.items()
+            if abs(position.quantity) > 1e-12
+        }
+        gross = sum(abs(v) for v in exposures.values())
+        concentrations = {
+            market: (abs(v) / gross if gross > 0 else 0.0) for market, v in exposures.items()
+        }
+        var_95 = (
+            parametric_var(exposures, daily_volatility, correlations=correlations)
+            if daily_volatility is not None else None
+        )
+        daily_pnl = portfolio.calculate_daily_pnl()
+        drawdown = portfolio.current_drawdown(prices)
+
+        breaches: list[str] = []
+        for market, position in portfolio.positions.items():
+            if abs(position.quantity) > self.limits.max_position + 1e-9:
+                breaches.append(
+                    f"Position limit exceeded in {market}: "
+                    f"{abs(position.quantity):g} > {self.limits.max_position:g}"
+                )
+        if daily_pnl < -self.limits.max_daily_loss:
+            breaches.append(
+                f"Daily loss limit breached: {daily_pnl:.2f} < {-self.limits.max_daily_loss:.2f}"
+            )
+        if drawdown > self.limits.max_drawdown:
+            breaches.append(
+                f"Drawdown limit breached: {drawdown:.1%} > {self.limits.max_drawdown:.1%}"
+            )
+        if var_95 is not None and var_95 > self.limits.var_limit:
+            breaches.append(f"VaR limit exceeded: {var_95:.2f} > {self.limits.var_limit:.2f}")
+        if len(exposures) >= 2:
+            for market, share in concentrations.items():
+                if share > self.limits.concentration_limit:
+                    breaches.append(
+                        f"Concentration limit exceeded in {market}: "
+                        f"{share:.1%} > {self.limits.concentration_limit:.1%}"
+                    )
+
+        return {
+            "breach": bool(breaches),
+            "breaches": breaches,
+            "var_95_1d": var_95,
+            "daily_pnl": daily_pnl,
+            "current_drawdown": drawdown,
+            "max_drawdown": portfolio.calculate_max_drawdown(prices),
+            "gross_exposure": gross,
+            "net_exposure": sum(exposures.values()),
+            "concentrations": concentrations,
+        }
+
     def check_limits(self, portfolio: Portfolio, market_prices: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """Check all risk limits.
 

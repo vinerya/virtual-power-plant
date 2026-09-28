@@ -202,7 +202,13 @@ class StopLimitOrder(Order):
         self.triggered = False
     
     def is_executable(self, market_price: float) -> bool:
-        """Check if stop-limit order can be executed."""
+        """Check if stop-limit order can be executed.
+
+        The price that triggers the stop is also evaluated against the
+        limit on the same call -- previously the triggering tick always
+        returned False, so a stop-limit could never fill on the price
+        move that armed it.
+        """
         if not self.triggered:
             if self.side == "buy":
                 if market_price >= self.stop_price:
@@ -210,7 +216,8 @@ class StopLimitOrder(Order):
             else:  # sell
                 if market_price <= self.stop_price:
                     self.triggered = True
-            return False
+            if not self.triggered:
+                return False
         
         # Once triggered, behave like limit order
         if self.side == "buy":
@@ -252,7 +259,13 @@ class IcebergOrder(Order):
 
 
 class FillOrKillOrder(Order):
-    """Fill-or-Kill order - must be filled completely or cancelled."""
+    """Fill-or-Kill order - must be filled completely or cancelled.
+
+    All-or-nothing is enforced by :meth:`OrderBook.match_order`, which
+    checks the executable depth *before* touching the book. (The previous
+    ``update_fill`` override cancelled the order on the first partial level
+    while the resting counter-order had already been filled against it.)
+    """
     
     def __init__(self, market: str, side: str, quantity: float, price: float, **kwargs):
         """Initialize FOK order."""
@@ -273,13 +286,6 @@ class FillOrKillOrder(Order):
         else:  # sell
             return market_price >= self.price
     
-    def update_fill(self, fill_quantity: float, fill_price: float) -> None:
-        """FOK orders must be filled completely or cancelled."""
-        if fill_quantity < self.remaining_quantity:
-            # Partial fill not allowed - cancel order
-            self.status = OrderStatus.CANCELLED
-        else:
-            super().update_fill(fill_quantity, fill_price)
 
 
 class ImmediateOrCancelOrder(Order):
@@ -429,9 +435,46 @@ class OrderBook:
             "timestamp": self.last_update
         }
     
+    def _consume(self, level: OrderBookLevel, book_order: Order, fill_quantity: float) -> None:
+        """Reduce a level's displayed quantity by a fill and drop filled orders.
+
+        ``remove_order`` subtracts the order's *remaining* quantity, which is
+        already zero once the order has been filled -- so the level quantity
+        used to stay inflated by every fill. Account for the fill here.
+        """
+        level.quantity = max(0.0, level.quantity - fill_quantity)
+        if book_order.remaining_quantity <= 1e-12:
+            if book_order in level.orders:
+                level.orders.remove(book_order)
+                level.order_count -= 1
+            if level.order_count <= 0:
+                book_side = self.bids if book_order.side == "buy" else self.asks
+                book_side.pop(level.price, None)
+        self.last_update = datetime.now()
+
+    def executable_quantity(self, incoming_order: Order) -> float:
+        """Quantity on the opposite side that *incoming_order* could execute against."""
+        if incoming_order.side == "buy":
+            levels = sorted(self.asks.items(), key=lambda x: x[0])
+        else:
+            levels = sorted(self.bids.items(), key=lambda x: x[0], reverse=True)
+        total = 0.0
+        for price, level in levels:
+            if not incoming_order.is_executable(price):
+                break
+            total += level.quantity
+        return total
+
     def match_order(self, incoming_order: Order) -> List[Dict[str, Any]]:
         """Match incoming order against the book."""
         matches = []
+
+        # FOK is all-or-nothing: probe depth without mutating any order state.
+        if (
+            incoming_order.order_type == OrderType.FILL_OR_KILL
+            and self.executable_quantity(incoming_order) + 1e-9 < incoming_order.remaining_quantity
+        ):
+            return matches
         
         if incoming_order.side == "buy":
             # Match against asks (sell orders)
@@ -462,10 +505,7 @@ class OrderBook:
                     # Update orders
                     incoming_order.update_fill(fill_quantity, price)
                     book_order.update_fill(fill_quantity, price)
-                    
-                    # Remove filled order from book
-                    if book_order.remaining_quantity <= 0:
-                        self.remove_order(book_order)
+                    self._consume(level, book_order, fill_quantity)
                     
                     remaining_to_fill -= fill_quantity
         
@@ -498,10 +538,7 @@ class OrderBook:
                     # Update orders
                     incoming_order.update_fill(fill_quantity, price)
                     book_order.update_fill(fill_quantity, price)
-                    
-                    # Remove filled order from book
-                    if book_order.remaining_quantity <= 0:
-                        self.remove_order(book_order)
+                    self._consume(level, book_order, fill_quantity)
                     
                     remaining_to_fill -= fill_quantity
         
@@ -601,7 +638,7 @@ def validate_order_parameters(order_type: str, market: str, side: str,
         errors.append("Quantity must be positive")
     
     # Order type specific validation
-    if order_type in ["limit", "stop", "stop_limit", "iceberg", "fill_or_kill", "immediate_or_cancel"]:
+    if order_type in ["limit", "stop", "iceberg", "fill_or_kill", "fok", "immediate_or_cancel", "ioc"]:
         if price is None or price <= 0:
             errors.append(f"{order_type} orders require a positive price")
     

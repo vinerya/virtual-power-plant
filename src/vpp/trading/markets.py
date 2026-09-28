@@ -13,7 +13,7 @@ from enum import Enum
 import numpy as np
 import logging
 
-from .orders import Order, OrderStatus, OrderBook
+from .orders import Order, OrderBook, OrderStatus, OrderType
 
 
 class MarketType(Enum):
@@ -70,6 +70,14 @@ class MarketData:
     total_supply: float = 0.0
     clearing_price: Optional[float] = None
     system_lambda: Optional[float] = None  # Marginal price
+
+
+def _is_multiple(value: float, step: float, rel_tol: float = 1e-9) -> bool:
+    """True if *value* is an integer multiple of *step* (float tolerant)."""
+    if step <= 0:
+        return True
+    ratio = value / step
+    return abs(ratio - round(ratio)) <= max(rel_tol * abs(ratio), 1e-9)
 
 
 class Market(ABC):
@@ -131,8 +139,14 @@ class Market(ABC):
         return None
     
     def is_market_open(self) -> bool:
-        """Check if market is currently open for trading."""
-        return self.status == MarketStatus.OPEN and self.get_current_session() is not None
+        """Check if market is currently open for trading.
+
+        A market with no configured sessions trades continuously whenever
+        its status is OPEN; with sessions, one must also be active now.
+        """
+        if self.status != MarketStatus.OPEN:
+            return False
+        return not self.sessions or self.get_current_session() is not None
     
     def update_market_data(self, data: MarketData) -> None:
         """Update market data."""
@@ -174,12 +188,13 @@ class Market(ABC):
             if order.price < self.min_price:
                 errors.append(f"Price {order.price} below minimum {self.min_price}")
             
-            # Check tick size
-            if (order.price % self.tick_size) != 0:
+            # Check tick size. Float modulo is unusable here (0.12 % 0.01
+            # is 0.0099999...), so compare against the nearest multiple.
+            if not _is_multiple(order.price, self.tick_size):
                 errors.append(f"Price {order.price} not aligned to tick size {self.tick_size}")
         
         # Check quantity
-        if (order.quantity % self.lot_size) != 0:
+        if not _is_multiple(order.quantity, self.lot_size):
             errors.append(f"Quantity {order.quantity} not aligned to lot size {self.lot_size}")
         
         return errors
@@ -336,31 +351,45 @@ class RealTimeMarket(Market):
             
             # Try to match order immediately
             matches = self.order_book.match_order(order)
-            
-            if matches:
-                # Order was matched
-                total_filled = sum(match["quantity"] for match in matches)
-                avg_price = sum(match["price"] * match["quantity"] for match in matches) / total_filled
-                
-                return {
-                    "success": True,
-                    "quantity": total_filled,
-                    "price": avg_price,
-                    "fees": total_filled * self.transaction_fee,
-                    "matches": len(matches)
-                }
+            total_filled = sum(match["quantity"] for match in matches)
+            avg_price = (
+                sum(match["price"] * match["quantity"] for match in matches) / total_filled
+                if total_filled > 0 else 0.0
+            )
+
+            # Rest any unfilled remainder of a priced order. Previously a
+            # *partially* matched order silently dropped its remainder, and
+            # a market order with no liquidity was added to the book.
+            rests = (
+                order.remaining_quantity > 0
+                and order.order_type not in (
+                    OrderType.MARKET,
+                    OrderType.FILL_OR_KILL,
+                    OrderType.IMMEDIATE_OR_CANCEL,
+                )
+            )
+            if rests:
+                self.order_book.add_order(order)
+            elif order.remaining_quantity > 0 and order.status in (
+                OrderStatus.PENDING, OrderStatus.PARTIAL
+            ):
+                order.status = OrderStatus.CANCELLED
+
+            if order.remaining_quantity <= 0:
+                status = "filled"
+            elif rests:
+                status = "partial" if total_filled > 0 else "pending"
             else:
-                # Add to order book if not fully filled
-                if order.remaining_quantity > 0:
-                    self.order_book.add_order(order)
-                
-                return {
-                    "success": True,
-                    "quantity": order.filled_quantity,
-                    "price": order.average_price,
-                    "fees": order.filled_quantity * self.transaction_fee,
-                    "status": "partial" if order.filled_quantity > 0 else "pending"
-                }
+                status = "cancelled"
+
+            return {
+                "success": True,
+                "quantity": total_filled,
+                "price": avg_price,
+                "fees": total_filled * (self.transaction_fee + self.market_fee),
+                "matches": len(matches),
+                "status": status,
+            }
             
         except Exception as e:
             self.logger.error(f"Failed to execute order {order.id}: {e}")
