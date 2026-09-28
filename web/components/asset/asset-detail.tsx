@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,32 +45,34 @@ export function AssetDetail({ id }: { id: string }) {
   // entries. This is intentionally documented (see comment above) and will
   // be replaced when the backend exposes `/resources/{id}/metrics`.
   // ----------------------------------------------------------------------
-  const bufferRef = useRef<Buffer>([]);
+  const [buffer, setBuffer] = useState<Buffer>([]);
   useEffect(() => {
     if (metricsQuery.data) return; // Server data wins.
     const snap = resourceQuery.data;
     if (!snap) return;
-    const last = bufferRef.current[bufferRef.current.length - 1];
     const ts = snap.updated_at;
     if (!ts) return;
-    if (last && last.timestamp === ts) return;
-    bufferRef.current = [
-      ...bufferRef.current,
-      {
-        timestamp: ts,
-        power: snap.current_power,
-        state_of_charge:
-          typeof snap.state_of_charge === "number"
-            ? snap.state_of_charge
-            : undefined,
-        efficiency: snap.efficiency ?? undefined,
-      },
-    ].slice(-BUFFER_LIMIT);
+    setBuffer((prev) => {
+      const last = prev[prev.length - 1];
+      if (last && last.timestamp === ts) return prev;
+      return [
+        ...prev,
+        {
+          timestamp: ts,
+          power: snap.current_power,
+          state_of_charge:
+            typeof snap.state_of_charge === "number"
+              ? snap.state_of_charge
+              : undefined,
+          efficiency: snap.efficiency ?? undefined,
+        },
+      ].slice(-BUFFER_LIMIT);
+    });
   }, [metricsQuery.data, resourceQuery.data]);
 
   const series = useMemo(() => {
     const points: ResourceMetricsPoint[] =
-      metricsQuery.data?.points ?? bufferRef.current;
+      metricsQuery.data?.points ?? buffer;
     const isBattery = resourceQuery.data?.resource_type === "battery";
     return points
       .map((p) => ({
@@ -84,7 +86,7 @@ export function AssetDetail({ id }: { id: string }) {
       .filter((p): p is { timestamp: string; value: number } =>
         typeof p.value === "number",
       );
-  }, [metricsQuery.data, resourceQuery.data, resourceQuery.dataUpdatedAt]);
+  }, [metricsQuery.data, resourceQuery.data, buffer]);
 
   if (resourceQuery.isLoading) return <DetailSkeleton />;
   if (resourceQuery.isError || !resourceQuery.data) {

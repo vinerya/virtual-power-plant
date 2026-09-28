@@ -34,7 +34,7 @@ export default function SitesPage() {
     region: false,
   });
 
-  const sites = q.data ?? [];
+  const sites = useMemo(() => q.data ?? [], [q.data]);
 
   const kpi = useMemo(() => {
     const totalKw = sites.reduce((s, x) => s + x.current_power, 0);

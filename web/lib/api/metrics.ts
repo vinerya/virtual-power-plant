@@ -9,7 +9,7 @@ export async function getResourceMetrics(
     return await api.get<ResourceMetricsResponse>(
       `/api/v1/resources/${encodeURIComponent(id)}/metrics?window=${window}`,
     );
-  } catch (e) {
+  } catch {
     // Backend may not implement the metrics endpoint yet; the asset page
     // falls back to a client-side ring buffer.
     return null;

@@ -7,3 +7,6 @@ out
 .DS_Store
 playwright-report
 test-results
+*.tsbuildinfo
+.env*.local
+!.env.example
