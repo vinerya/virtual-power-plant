@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SavingsCard } from "@/components/customer/savings-card";
 import { EnergyFlow } from "@/components/customer/energy-flow";
-import { getMe, getMyBill } from "@/lib/api/customer";
+import { BillUnavailable, isBillUnavailable } from "@/components/customer/bill-unavailable";
+import { getMe, getMyBill, getMyDevices } from "@/lib/api/customer";
 import { ErrorState } from "@/components/ui/error-state";
 
 export default function PortalHomePage() {
@@ -14,8 +15,13 @@ export default function PortalHomePage() {
     queryKey: ["customer", "bill"],
     queryFn: () => getMyBill(),
   });
+  const devices = useQuery({
+    queryKey: ["customer", "devices"],
+    queryFn: getMyDevices,
+    refetchInterval: 15_000,
+  });
 
-  if (me.isLoading || bill.isLoading) {
+  if (me.isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-1/3" />
@@ -25,21 +31,18 @@ export default function PortalHomePage() {
     );
   }
 
-  if (!me.data || !bill.data) {
+  if (!me.data) {
     return (
       <ErrorState
         title="Failed to load your portal."
-        error={me.error ?? bill.error}
-        onRetry={() => {
-          void me.refetch();
-          void bill.refetch();
-        }}
+        error={me.error}
+        onRetry={() => void me.refetch()}
       />
     );
   }
 
-  const total = bill.data.bill.total;
-  const baseline = bill.data.baseline?.total ?? total;
+  const total = bill.data?.bill.total;
+  const baseline = bill.data ? (bill.data.baseline?.total ?? bill.data.bill.total) : undefined;
 
   return (
     <div className="space-y-6">
@@ -52,35 +55,59 @@ export default function PortalHomePage() {
         </p>
       </div>
 
-      <SavingsCard
-        thisMonth={total}
-        baseline={baseline}
-        thisMonthKwh={bill.data.this_month_kwh}
-        lastMonthKwh={bill.data.last_month_kwh}
-      />
+      {bill.isLoading ? (
+        <Skeleton className="h-32 w-full" />
+      ) : bill.data && total != null && baseline != null ? (
+        <SavingsCard
+          thisMonth={total}
+          baseline={baseline}
+          thisMonthKwh={bill.data.this_month_kwh}
+          lastMonthKwh={bill.data.last_month_kwh}
+        />
+      ) : isBillUnavailable(bill.error) ? (
+        <BillUnavailable error={bill.error} />
+      ) : (
+        <ErrorState
+          title="Failed to load your bill."
+          error={bill.error}
+          onRetry={() => void bill.refetch()}
+        />
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
-        <EnergyFlow />
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>This month vs. last</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm">
-            <Row
-              label="Bill"
-              left={`$${total.toFixed(2)}`}
-              right={`$${baseline.toFixed(2)}`}
-            />
-            <Row
-              label="Energy used"
-              left={`${bill.data.this_month_kwh ?? "—"} kWh`}
-              right={`${bill.data.last_month_kwh ?? "—"} kWh`}
-            />
-            <p className="pt-2 text-xs text-muted-foreground">
-              Compared to your typical month at the same usage.
-            </p>
-          </CardContent>
-        </Card>
+        {devices.isLoading ? (
+          <Skeleton className="h-48 w-full" />
+        ) : devices.data ? (
+          <EnergyFlow devices={devices.data} />
+        ) : (
+          <ErrorState
+            title="Failed to load live device data."
+            error={devices.error}
+            onRetry={() => void devices.refetch()}
+          />
+        )}
+        {bill.data && total != null && baseline != null && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle>This month vs. last</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <Row
+                label="Bill"
+                left={`$${total.toFixed(2)}`}
+                right={`$${baseline.toFixed(2)}`}
+              />
+              <Row
+                label="Energy used"
+                left={`${bill.data.this_month_kwh ?? "—"} kWh`}
+                right={`${bill.data.last_month_kwh ?? "—"} kWh`}
+              />
+              <p className="pt-2 text-xs text-muted-foreground">
+                Compared to your typical month at the same usage.
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );

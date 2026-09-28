@@ -173,9 +173,13 @@ export interface CustomerDevice {
   kind: "battery" | "ev" | "thermostat" | string;
   name: string;
   state: string;
+  /** kW. + charging/consuming, − discharging; solar/wind report output as +. */
   current_power?: number;
-  state_of_charge?: number;
+  state_of_charge?: number | null;
   setpoint_c?: number;
+  online?: boolean;
+  rated_power?: number;
+  site_id?: string | null;
 }
 
 export interface DRProgram {
