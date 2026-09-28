@@ -49,6 +49,7 @@ def test_baseline_migration_runs_clean(fresh_db: Path):
         "users",
         "api_keys",
         "event_log",
+        "tariffs",
     }
     assert expected.issubset(tables), f"missing: {expected - tables}"
 

@@ -18,3 +18,26 @@ def test_dispatch_command_does_not_crash():
 
     assert result.exit_code == 0, result.output
     assert result.exception is None
+
+
+def test_migrate_command_upgrades_to_head(tmp_path, monkeypatch):
+    """`vpp migrate` runs `alembic upgrade head` (it used to be a no-op stub)."""
+    from sqlalchemy import create_engine, inspect
+
+    from vpp.settings import get_settings
+
+    db_path = tmp_path / "cli_migrate.db"
+    monkeypatch.setenv("VPP_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
+    get_settings.cache_clear()
+    try:
+        result = CliRunner().invoke(cli, ["migrate"])
+    finally:
+        get_settings.cache_clear()
+
+    assert result.exit_code == 0, result.output
+    engine = create_engine(f"sqlite:///{db_path}")
+    try:
+        tables = set(inspect(engine).get_table_names())
+    finally:
+        engine.dispose()
+    assert {"alembic_version", "resources", "tariffs"} <= tables

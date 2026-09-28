@@ -59,23 +59,36 @@ async def init_db(
             await conn.run_sync(Base.metadata.create_all)
 
 
-async def _run_alembic_upgrade(database_url: str) -> None:
-    """Run ``alembic upgrade head`` synchronously off the event loop."""
-    import asyncio
+def run_alembic_upgrade(database_url: str, revision: str = "head") -> None:
+    """Run ``alembic upgrade <revision>`` synchronously against *database_url*.
+
+    Async driver suffixes are rewritten to sync DBAPIs by ``alembic/env.py``.
+    Requires a source checkout (``alembic.ini`` at the repository root).
+    """
     from pathlib import Path
 
-    def _upgrade() -> None:
-        from alembic import command
-        from alembic.config import Config
+    from alembic import command
+    from alembic.config import Config
 
-        # Locate alembic.ini at the repo root.
-        ini = Path(__file__).resolve().parents[3] / "alembic.ini"
-        cfg = Config(str(ini))
-        # Pass the runtime URL via -x so env.py's _resolve_url picks it up.
-        cfg.cmd_opts = type("X", (), {"x": [f"url={database_url}"]})()
-        command.upgrade(cfg, "head")
+    # Locate alembic.ini at the repo root.
+    ini = Path(__file__).resolve().parents[3] / "alembic.ini"
+    if not ini.is_file():
+        raise FileNotFoundError(
+            f"alembic.ini not found at {ini}; migrations require a source checkout"
+        )
+    cfg = Config(str(ini))
+    # Pass the runtime URL via -x so env.py's _resolve_url picks it up.
+    cfg.cmd_opts = type("X", (), {"x": [f"url={database_url}"]})()
+    command.upgrade(cfg, revision)
 
-    await asyncio.get_event_loop().run_in_executor(None, _upgrade)
+
+async def _run_alembic_upgrade(database_url: str) -> None:
+    """Run ``alembic upgrade head`` off the event loop."""
+    import asyncio
+
+    await asyncio.get_running_loop().run_in_executor(
+        None, run_alembic_upgrade, database_url
+    )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
