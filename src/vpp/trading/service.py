@@ -340,17 +340,17 @@ class TradingService:
             .scalars()
             .all()
         )
-        for row in trades:
+        for trade_row in trades:
             trade = Trade(
-                id=row.id,
-                order_id=row.order_id,
-                market=row.market,
-                side=row.side,
-                quantity=row.quantity,
-                price=row.price,
-                fees=row.fees or 0.0,
-                timestamp=_to_local_naive(row.created_at),
-                strategy=row.strategy or None,
+                id=trade_row.id,
+                order_id=trade_row.order_id,
+                market=trade_row.market,
+                side=trade_row.side,
+                quantity=trade_row.quantity,
+                price=trade_row.price,
+                fees=trade_row.fees or 0.0,
+                timestamp=_to_local_naive(trade_row.created_at),
+                strategy=trade_row.strategy or None,
             )
             # Direct replay (PortfolioManager.add_trade logs every trade at INFO).
             self.engine.portfolio_manager.trades.append(trade)
@@ -609,7 +609,7 @@ class TradingService:
     def _order_event(
         order: Order, event_type: EventType, source: str, reasons: list[str] | None = None
     ) -> Event:
-        data = {
+        data: dict[str, Any] = {
             "order_id": order.id,
             "market": order.market,
             "side": order.side,

@@ -236,9 +236,9 @@ def tariff_to_opt_params(
                 continue
             ts = (horizon_start + t * step).astimezone(tz)
             for tou in tou_components:
-                r = tou.export_rate(ts)
-                if r is not None:
-                    energy_sell[t] = r
+                sell_rate = tou.export_rate(ts)
+                if sell_rate is not None:
+                    energy_sell[t] = sell_rate
                     break
     elif nem == "nem3":
         if not nem3_avoided_cost:

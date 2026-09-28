@@ -9,12 +9,14 @@ class Validator:
     """Base validator class."""
 
     @staticmethod
-    def validate_type(value: Any, expected_type: type) -> None:
-        """Validate value type."""
+    def validate_type(value: Any, expected_type: type | tuple[type, ...]) -> None:
+        """Validate value type (``expected_type`` may be a tuple, as for isinstance)."""
         if not isinstance(value, expected_type):
-            raise ValidationTypeError(
-                f"Expected type {expected_type.__name__}, got {type(value).__name__}"
-            )
+            if isinstance(expected_type, tuple):
+                expected_name = " | ".join(t.__name__ for t in expected_type)
+            else:
+                expected_name = expected_type.__name__
+            raise ValidationTypeError(f"Expected type {expected_name}, got {type(value).__name__}")
 
     @staticmethod
     def validate_range(

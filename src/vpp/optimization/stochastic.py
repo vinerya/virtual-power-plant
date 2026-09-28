@@ -51,12 +51,15 @@ class ScenarioSet:
                 return scenario
         return None
 
-    def get_expected_value(self, key: str) -> float:
-        """Calculate expected value for a given key across scenarios."""
+    def get_expected_value(self, key: str) -> Any:
+        """Calculate expected value for a given key across scenarios.
+
+        A float for scalar scenario data; array-valued data yields an array.
+        """
         return sum(s.probability * s.data.get(key, 0.0) for s in self.scenarios)
 
-    def get_percentile(self, key: str, percentile: float) -> float:
-        """Get percentile value for a given key."""
+    def get_percentile(self, key: str, percentile: float) -> Any:
+        """Get percentile value for a given key (float, or ndarray for array data)."""
         values = [s.data.get(key, 0.0) for s in self.scenarios]
         return np.percentile(values, percentile)
 

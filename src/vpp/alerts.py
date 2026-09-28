@@ -310,7 +310,7 @@ class WebhookAlertChannel(AlertChannel):
         return body, headers
 
     def _backoff(self, attempt: int) -> float:
-        return min(self.backoff_max_s, self.backoff_base_s * (2**attempt))
+        return min(self.backoff_max_s, self.backoff_base_s * (2.0**attempt))
 
     async def send(self, alert: Alert) -> None:
         body, headers = self._build_request(alert)

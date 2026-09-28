@@ -102,9 +102,9 @@ class ExperimentRunner:
             if values:
                 # Lower is better for error metrics (mae, rmse), higher for r2, f1
                 if metric in ("r2", "f1", "precision", "recall"):
-                    best_name = max(values, key=values.get)
+                    best_name = max(values, key=values.__getitem__)
                 else:
-                    best_name = min(values, key=values.get)
+                    best_name = min(values, key=values.__getitem__)
                 best[metric] = {"model": best_name, "value": values[best_name]}
 
         return {

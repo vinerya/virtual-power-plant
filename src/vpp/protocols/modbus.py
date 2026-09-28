@@ -336,5 +336,5 @@ class ModbusAdapter(ProtocolAdapter):
             import struct
 
             raw = struct.pack(">HH", regs[0], regs[1] if len(regs) > 1 else 0)
-            return struct.unpack(">f", raw)[0]
+            return float(struct.unpack(">f", raw)[0])
         return float(regs[0])

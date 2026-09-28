@@ -545,6 +545,8 @@ async def _tariff_prices(
     from vpp.tariffs import load_urdb_json
     from vpp.tariffs.optimization import load_nem3_avoided_cost_2024, tariff_to_opt_params
 
+    if body.tariff_id is None:  # callers check first; ScheduleRequest validates it
+        raise HTTPException(status_code=422, detail="tariff_id is required")
     row = await TariffRepository.get(session, body.tariff_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Tariff not found")
@@ -732,6 +734,10 @@ async def backtest(
         battery = assets[0]
     else:
         spec = body.battery
+        if spec is None:  # excluded by the request model's validator
+            raise HTTPException(
+                status_code=422, detail="provide exactly one of resource_id or battery"
+            )
         battery = FleetAsset(
             id="inline",
             name="inline battery",

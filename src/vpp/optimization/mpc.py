@@ -306,6 +306,8 @@ class MPCController:
             prob = getattr(sc, "probability", None)
             if prob is None and isinstance(sc, dict):
                 prob = sc.get("probability", 1.0 / len(scenarios))
+            if prob is None:
+                raise ValueError("scenario missing probability")
             norm_scen.append({"probability": float(prob), "prices": prices})
 
         params["cvar_alpha"] = cfg.cvar_alpha
@@ -601,7 +603,7 @@ class MultiResourceMPCController:
                     tolerance=cfg.admm_tolerance,
                     subproblem_time_limit_s=cfg.admm_subproblem_time_limit_s,
                 )
-                per_resource = {
+                per_resource: dict[str, dict[str, float]] = {
                     rid: {
                         "p_charge_kw": sol["p_charge"][0],
                         "p_discharge_kw": sol["p_discharge"][0],
@@ -675,7 +677,7 @@ class MultiResourceMPCController:
             return self._fallback_decision(step_input, t_start, reason=f"status={status.value}")
 
         pyo = self._pyo
-        per_resource: dict[str, dict[str, float]] = {}
+        per_resource = {}
         for b in batts:
             p_chg0 = float(pyo.value(model.p_charge[b.id, 0]))
             p_dis0 = float(pyo.value(model.p_discharge[b.id, 0]))

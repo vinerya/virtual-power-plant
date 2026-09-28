@@ -55,6 +55,8 @@ db = [
 ]
 migrations = [
     "alembic>=1.13.0",
+    # alembic/env.py rewrites postgresql+asyncpg URLs to the sync psycopg2 driver.
+    "psycopg2-binary>=2.9",
 ]
 protocols = [
     "paho-mqtt>=1.6.0",
@@ -91,8 +93,11 @@ dev = [
     "httpx>=0.26.0",
     "respx>=0.21.0",
     "factory-boy>=3.3.0",
-    "ruff>=0.2.0",
-    "mypy>=1.8.0",
+    # Linters pinned to the versions CI runs (.github/workflows/ci.yml) so local
+    # and CI results match; bump them together.
+    "ruff==0.15.8",
+    "mypy==2.3.1",
+    "types-PyYAML",
     "pre-commit>=3.6.0",
     "bandit>=1.7.0",
 ]
@@ -182,11 +187,28 @@ known-third-party = ["alembic"]
 
 [tool.mypy]
 python_version = "3.10"
+# Understands pydantic field defaults given positionally (``Field(24, gt=0)``),
+# which plain dataclass_transform treats as required fields.
+plugins = ["pydantic.mypy"]
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# benchmarks/ is the repo-root benchmark harness, imported lazily by the
+# ``vpp benchmark`` CLI.  It is not part of the shipped package: mypy follows
+# it for types but its own findings are out of scope for ``mypy src/vpp``.
+module = ["benchmarks", "benchmarks.*"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# vpp.research is non-production numerical exploration code.  NumPy ufuncs and
+# reductions are typed as returning ``Any``, so ``warn_return_any`` would force
+# a cast on nearly every function; every other check still applies.
+module = ["vpp.research.*"]
+warn_return_any = false
 
 [tool.pytest.ini_options]
 minversion = "7.0"

@@ -495,7 +495,8 @@ def run_to_dict(row: OptimizationRunModel, *, include_details: bool = True) -> d
         out["inputs"] = inputs
         out["solution"] = unpacked["solution"]
         out["metadata"] = metadata
-    return _json_safe(out)
+    safe: dict[str, Any] = _json_safe(out)
+    return safe
 
 
 __all__ = [

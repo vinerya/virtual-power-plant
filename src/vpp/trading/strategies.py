@@ -17,8 +17,11 @@ from .portfolio import Portfolio
 
 def _latest_timestamp(market_data: dict[str, Any]) -> datetime:
     """Most recent ``timestamp`` among the market data snapshots, else now."""
-    stamps = [getattr(data, "timestamp", None) for data in market_data.values()]
-    stamps = [t for t in stamps if isinstance(t, datetime)]
+    stamps = [
+        t
+        for t in (getattr(data, "timestamp", None) for data in market_data.values())
+        if isinstance(t, datetime)
+    ]
     return max(stamps) if stamps else datetime.now()
 
 
@@ -105,7 +108,7 @@ class TradingStrategy(ABC):
         adjusted_quantity = base_quantity * confidence
 
         # Apply position size limits
-        return min(adjusted_quantity, self.max_position_size)
+        return float(min(adjusted_quantity, self.max_position_size))
 
     def get_performance_metrics(self) -> dict[str, Any]:
         """Get strategy performance metrics."""
@@ -135,7 +138,7 @@ class ArbitrageStrategy(TradingStrategy):
         self, market_data: dict[str, Any], portfolio: Portfolio
     ) -> list[dict[str, Any]]:
         """Generate arbitrage signals based on price differences."""
-        signals = []
+        signals: list[dict[str, Any]] = []
 
         try:
             # Get current prices for monitored markets
@@ -456,7 +459,8 @@ class MLTradingStrategy(TradingStrategy):
         super().__init__("ml_trading", kwargs)
         self.model_path = model_path
         self.model = None
-        self.feature_history: dict[str, list[dict[str, float]]] = {}
+        # Each entry: {"timestamp": datetime, **features}
+        self.feature_history: dict[str, list[dict[str, Any]]] = {}
         self.prediction_threshold = kwargs.get("prediction_threshold", 0.6)
 
         # Try to load model
@@ -556,7 +560,7 @@ class MLTradingStrategy(TradingStrategy):
         self, market_data: dict[str, Any], portfolio: Portfolio
     ) -> list[dict[str, Any]]:
         """Generate ML-based trading signals."""
-        signals = []
+        signals: list[dict[str, Any]] = []
 
         try:
             # Extract features
@@ -684,7 +688,7 @@ class MultiMarketStrategy(TradingStrategy):
         self, strategy_signals: dict[str, list[dict[str, Any]]]
     ) -> list[dict[str, Any]]:
         """Aggregate signals using weighted average."""
-        market_signals = {}
+        market_signals: dict[Any, list[dict[str, Any]]] = {}
 
         # Group signals by market
         for strategy_name, signals in strategy_signals.items():
@@ -753,7 +757,7 @@ class MultiMarketStrategy(TradingStrategy):
         self, strategy_signals: dict[str, list[dict[str, Any]]]
     ) -> list[dict[str, Any]]:
         """Aggregate signals using majority vote."""
-        market_signals = {}
+        market_signals: dict[Any, list[dict[str, Any]]] = {}
 
         # Group signals by market
         for _strategy_name, signals in strategy_signals.items():

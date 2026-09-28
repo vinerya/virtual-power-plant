@@ -8,6 +8,7 @@ exposes a long-running async loop suitable for FastAPI background tasks.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -201,7 +202,7 @@ class DegradationUpdater:
             for bid in battery_ids:
                 try:
                     res = fetch_telemetry(bid)
-                    window = await res if asyncio.iscoroutine(res) else res
+                    window = await res if inspect.isawaitable(res) else res
                     if window is not None:
                         await self.apply_window(window)
                 except Exception:  # pragma: no cover - defensive

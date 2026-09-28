@@ -275,8 +275,8 @@ class DayAheadMarket(Market):
         demand = sorted(self.demand_bids[current_period], reverse=True)
 
         # Find intersection
-        supply_cumulative = 0
-        demand_cumulative = 0
+        supply_cumulative = 0.0
+        demand_cumulative = 0.0
 
         for _i, (supply_price, supply_qty) in enumerate(supply):
             supply_cumulative += supply_qty

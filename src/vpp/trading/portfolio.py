@@ -270,15 +270,14 @@ class Portfolio:
         the old implementation only looked at sells (and read a
         ``realized_pnl`` field that was never populated).
         """
-        if date is None:
-            date = datetime.now().date()
-        elif isinstance(date, datetime):
-            date = date.date()
+        day = datetime.now().date() if date is None else date
+        if isinstance(day, datetime):
+            day = day.date()
 
         return sum(
             trade.realized_pnl - trade.fees - trade.commission
             for trade in self.trades
-            if trade.timestamp.date() == date
+            if trade.timestamp.date() == day
         )
 
     def calculate_max_drawdown(self, market_prices: dict[str, float] | None = None) -> float:
@@ -359,7 +358,7 @@ class Portfolio:
         if market_prices is None:
             market_prices = {}
 
-        summary = {
+        summary: dict[str, Any] = {
             "total_positions": len(self.positions),
             "long_positions": 0,
             "short_positions": 0,
@@ -484,7 +483,7 @@ class PnLCalculator:
             return {"realized_pnl": 0.0, "unrealized_pnl": 0.0, "total_pnl": 0.0}
 
         # Group trades by market
-        market_trades = {}
+        market_trades: dict[str, list[Trade]] = {}
         for trade in trades:
             if trade.market not in market_trades:
                 market_trades[trade.market] = []
@@ -621,7 +620,7 @@ class RiskMetrics:
         # Scale by time horizon
         var_scaled = var_1d * np.sqrt(time_horizon) * current_equity
 
-        return var_scaled
+        return float(var_scaled)
 
     def calculate_position_concentration(
         self, market_prices: dict[str, float]
@@ -643,7 +642,7 @@ class RiskMetrics:
     ) -> dict[str, dict[str, float]]:
         """Calculate correlation matrix for portfolio positions."""
         markets = list(self.portfolio.positions.keys())
-        correlation_matrix = {}
+        correlation_matrix: dict[str, dict[str, float]] = {}
 
         for market1 in markets:
             correlation_matrix[market1] = {}

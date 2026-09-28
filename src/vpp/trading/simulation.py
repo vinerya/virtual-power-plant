@@ -30,7 +30,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from .orders import (
     LimitOrder,
@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
     from .data import MarketData, SimulatedDataProvider
     from .markets import Market
+    from .markets import MarketData as MarketsMarketData
 
 logger = logging.getLogger("trading.simulation")
 
@@ -161,7 +162,9 @@ class SimulatedExchange:
             data.bid_price = best_bid
             data.ask_price = best_ask
             data.last_price = round(data.last_price, 6) if data.last_price is not None else None
-            market.update_market_data(data)
+            # ``trading.data.MarketData`` and ``trading.markets.MarketData`` are
+            # structurally identical dataclasses; Market only reads attributes.
+            market.update_market_data(cast("MarketsMarketData", data))
             self.latest[name] = data
             result.market_data[name] = data
         self.last_tick = now

@@ -523,7 +523,7 @@ URDB_API_URL = "https://api.openei.org/utility_rates"
 
 async def _fetch_urdb_record(label: str, api_key: str) -> dict[str, Any]:
     """Fetch a single URDB record by getpage id."""
-    params = {
+    params: dict[str, str | int] = {
         "version": 8,
         "format": "json",
         "getpage": label,
@@ -550,7 +550,8 @@ async def _fetch_urdb_record(label: str, api_key: str) -> dict[str, Any]:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"URDB record '{label}' not found",
         )
-    return items[0]
+    record: dict[str, Any] = items[0]
+    return record
 
 
 @router.post("/import-urdb", response_model=TariffRead, status_code=status.HTTP_201_CREATED)

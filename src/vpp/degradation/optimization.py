@@ -89,7 +89,7 @@ class WearCost:
     @classmethod
     def from_preset(
         cls,
-        preset: Mapping[str, Mapping[str, float]],
+        preset: Mapping[str, Mapping[str, Any]],
         capacity_kwh: float,
         replacement_cost_dollars: float,
         eol_capacity_fraction: float = 0.8,

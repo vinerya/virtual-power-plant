@@ -89,6 +89,11 @@ ObjectiveTerm = Callable[[pyo.ConcreteModel, dict[str, Any]], Any]
 ConstraintBuilder = Callable[[pyo.ConcreteModel, dict[str, Any]], None]
 
 
+def _terminal_soc(b: FleetBattery) -> float:
+    """Terminal SOC target, defaulting to ``soc_init``."""
+    return b.terminal_soc if b.terminal_soc is not None else b.soc_init
+
+
 def _validate_battery(b: FleetBattery) -> None:
     if b.capacity_kwh <= 0:
         raise ValueError(f"battery {b.id}: capacity must be > 0")
@@ -162,11 +167,7 @@ def build_fleet_dispatch_model(
     )
     m.soc_terminal = pyo.Param(
         m.R,
-        initialize={
-            r: (by_id[r].terminal_soc if by_id[r].terminal_soc is not None else by_id[r].soc_init)
-            * by_id[r].capacity_kwh
-            for r in ids
-        },
+        initialize={r: _terminal_soc(by_id[r]) * by_id[r].capacity_kwh for r in ids},
     )
 
     # Coupling caps stored as attributes (None-allowed); also exposed as
@@ -342,12 +343,12 @@ def build_fleet_dispatch_model(
     if objective_terms:
         for i, term in enumerate(objective_terms):
             try:
-                e = term(m, params_view)
+                term_expr = term(m, params_view)
             except Exception as exc:
                 raise RuntimeError(
                     f"objective_term #{i} ({getattr(term, '__name__', term)}) failed: {exc}"
                 ) from exc
-            extra_terms.append(e)
+            extra_terms.append(term_expr)
 
     if extra_terms:
         m.cost = pyo.Objective(expr=m.energy_cost + sum(extra_terms), sense=pyo.minimize)

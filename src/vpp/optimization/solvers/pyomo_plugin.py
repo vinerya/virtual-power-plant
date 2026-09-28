@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..base import (
     OptimizationPlugin,
@@ -38,6 +38,22 @@ from ..base import (
     RuleBasedOptimizer,
 )
 from ..formulations.dispatch import REQUIRED_KEYS, build_battery_dispatch_model
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+
+def _classic_solver_factory(pyo: Any, name: str) -> Callable[[float | None], Any]:
+    """Return a ``SolverFactory(name)`` builder that applies an optional time limit."""
+
+    def _factory(time_limit_s: float | None) -> Any:
+        sv = pyo.SolverFactory(name)
+        if time_limit_s is not None:
+            with contextlib.suppress(Exception):
+                sv.options["time_limit"] = float(time_limit_s)
+        return sv
+
+    return _factory
 
 
 def _try_import_pyomo():
@@ -82,15 +98,7 @@ def _try_import_pyomo():
             try:
                 s = pyo.SolverFactory(name)
                 if s is not None and s.available(exception_flag=False):
-
-                    def _factory(time_limit_s: float | None, _name=name):
-                        sv = pyo.SolverFactory(_name)
-                        if time_limit_s is not None:
-                            with contextlib.suppress(Exception):
-                                sv.options["time_limit"] = float(time_limit_s)
-                        return sv
-
-                    return pyo, _factory
+                    return pyo, _classic_solver_factory(pyo, name)
             except Exception:
                 continue
     except Exception:

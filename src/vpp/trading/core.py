@@ -95,7 +95,7 @@ class TradingEngine:
         # Threading and execution
         self._stop_event = threading.Event()
         self._threads: list[threading.Thread] = []
-        self._order_queue = queue.Queue()
+        self._order_queue: queue.Queue[Order] = queue.Queue()
 
         # Performance tracking
         self.metrics = {
@@ -107,7 +107,7 @@ class TradingEngine:
         }
 
         # Event callbacks
-        self.callbacks = {
+        self.callbacks: dict[str, list[Callable[..., Any]]] = {
             "on_order_filled": [],
             "on_trade_executed": [],
             "on_risk_breach": [],
@@ -596,8 +596,8 @@ class RiskManager:
         """
         reasons: list[str] = []
         prices = dict(market_prices or {})
-        for market, position in portfolio.positions.items():
-            prices.setdefault(market, position.average_price)
+        for market, held in portfolio.positions.items():
+            prices.setdefault(market, held.average_price)
         price = reference_price or order.price or prices.get(order.market, 0.0)
         if price:
             prices[order.market] = price
@@ -807,6 +807,7 @@ class MarketDataManager:
         """Initialize market data providers."""
         provider_type = config.get("type", "simulated")
 
+        provider: MarketDataProvider
         if provider_type == "simulated":
             from .data import SimulatedDataProvider
 

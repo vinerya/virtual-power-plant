@@ -493,7 +493,7 @@ class ModelPredictiveControlPlugin(OptimizationPlugin):
             problem_cvx = cp.Problem(objective, constraints)
 
             # Set solver options for speed
-            solver_options = {"verbose": False}
+            solver_options: dict[str, Any] = {"verbose": False}
             if timeout_ms:
                 solver_options["max_iters"] = min(100, timeout_ms // 50)
 

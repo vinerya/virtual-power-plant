@@ -100,7 +100,8 @@ class ComEdHourlyFeed(PriceFeed):
                 resp = await client.get(COMED_URL, params=params)
                 if resp.status_code == 200:
                     try:
-                        return resp.json()
+                        rows: list[dict[Any, Any]] = resp.json()
+                        return rows
                     except ValueError:
                         return []
                 if resp.status_code == 429 and attempt < self.max_retries:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ class MeterTrace:
         tariffs.optimization's `nem` mode), not by MeterTrace itself.
     interval_minutes : int
         Length of each interval in minutes (e.g. 15, 60).
-    tz : timezone
+    tz : tzinfo
         Local timezone for season/hour-of-day classification.
     """
 
@@ -34,7 +34,7 @@ class MeterTrace:
     import_kwh: list[float]
     export_kwh: list[float] = field(default_factory=list)
     interval_minutes: int = 60
-    tz: timezone = field(default_factory=lambda: timezone.utc)
+    tz: tzinfo = field(default_factory=lambda: timezone.utc)
 
     def __post_init__(self) -> None:
         n = len(self.timestamps)
@@ -93,7 +93,7 @@ class MeterTrace:
         start: datetime,
         days: int,
         interval_minutes: int = 60,
-        tz: timezone = timezone.utc,
+        tz: tzinfo = timezone.utc,
     ) -> MeterTrace:
         """Build a synthetic constant-kW trace, useful for smoke tests."""
         if start.tzinfo is None:

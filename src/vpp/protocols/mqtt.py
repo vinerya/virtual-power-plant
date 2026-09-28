@@ -105,14 +105,15 @@ class MQTTAdapter(ProtocolAdapter):
         logger.info("MQTT disconnected")
 
     async def send(self, message: ProtocolMessage) -> None:
-        if not self.is_connected or self._client is None:
+        client = self._client
+        if not self.is_connected or client is None:
             raise ConnectionError("MQTT adapter is not connected")
 
         payload = json.dumps(message.payload)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
-            lambda: self._client.publish(message.topic, payload, qos=message.qos),
+            lambda: client.publish(message.topic, payload, qos=message.qos),
         )
         self._metrics.messages_sent += 1
         self._metrics.last_message_at = time.time()
@@ -138,10 +139,11 @@ class MQTTAdapter(ProtocolAdapter):
 
     async def subscribe_topic(self, topic: str, qos: int = 1) -> None:
         """Subscribe to an MQTT topic on the broker."""
-        if self._client is None:
+        client = self._client
+        if client is None:
             raise ConnectionError("Not connected")
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: self._client.subscribe(topic, qos))
+        await loop.run_in_executor(None, lambda: client.subscribe(topic, qos))
         logger.info("MQTT subscribed to %s (QoS %d)", topic, qos)
 
     async def publish(

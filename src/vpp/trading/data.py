@@ -104,7 +104,7 @@ class MarketDataProvider(ABC):
         # Threading
         self._stop_event = threading.Event()
         self._data_thread: threading.Thread | None = None
-        self._data_queue = queue.Queue()
+        self._data_queue: queue.Queue[MarketData] = queue.Queue()
 
     @abstractmethod
     def connect(self) -> bool:
@@ -304,7 +304,7 @@ class SimulatedDataProvider(MarketDataProvider):
     def seasonal_factor(self, timestamp: datetime) -> float:
         """Daily shape multiplier (peaks mid-day, troughs overnight)."""
         hour = timestamp.hour + timestamp.minute / 60.0 + timestamp.second / 3600.0
-        return 1 + self.seasonal_amplitude * np.sin(2 * np.pi * (hour - 6) / 24)
+        return float(1 + self.seasonal_amplitude * np.sin(2 * np.pi * (hour - 6) / 24))
 
     def generate(self, market: str, timestamp: datetime | None = None) -> MarketData | None:
         """Generate, store, and return the next data point for *market*.
@@ -635,7 +635,7 @@ class DataAggregator:
 
     def get_latest_data(self) -> dict[str, MarketData]:
         """Get latest data from all providers."""
-        latest_data = {}
+        latest_data: dict[str, MarketData] = {}
 
         for provider in self.providers.values():
             for market in provider.markets:

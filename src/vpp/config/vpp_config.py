@@ -179,7 +179,8 @@ class VPPConfig(BaseConfig):
             result.add_error("Timezone cannot be empty")
 
         # Validate component configurations
-        components = [
+        # Each component config exposes ``validate() -> ConfigValidationResult``.
+        components: list[tuple[str, Any]] = [
             ("optimization", self.optimization),
             ("heuristics", self.heuristics),
             ("rules", self.rules),

@@ -190,7 +190,7 @@ def create_distributed_problem(
 # Convenience functions for common use cases
 def solve_with_fallback(
     problem: OptimizationProblem,
-    plugin: OptimizationPlugin = None,
+    plugin: OptimizationPlugin | None = None,
     timeout_ms: int = 5000,
     force_fallback: bool = False,
 ) -> OptimizationResult:
@@ -371,12 +371,15 @@ def benchmark_optimization_methods(
     results = {}
 
     for method in methods:
-        method_results = {"solve_times": [], "objective_values": [], "success_count": 0}
+        solve_times: list[float] = []
+        objective_values: list[float] = []
+        success_count = 0
 
         for _run in range(num_runs):
             engine = create_optimization_engine("standard")
 
             # Configure method-specific plugin
+            plugin: OptimizationPlugin
             if method == "cvar":
                 plugin = CVaRStochasticPlugin()
                 engine.register_plugin(plugin)
@@ -389,19 +392,19 @@ def benchmark_optimization_methods(
             result = engine.solve(problem, force_fallback=(method == "rules"))
             solve_time = time.time() - start_time
 
-            method_results["solve_times"].append(solve_time)
-            method_results["objective_values"].append(result.objective_value)
+            solve_times.append(solve_time)
+            objective_values.append(result.objective_value)
 
             if result.status in [OptimizationStatus.SUCCESS, OptimizationStatus.FALLBACK_USED]:
-                method_results["success_count"] += 1
+                success_count += 1
 
         # Calculate statistics
         results[method] = {
-            "avg_solve_time": sum(method_results["solve_times"]) / num_runs,
-            "min_solve_time": min(method_results["solve_times"]),
-            "max_solve_time": max(method_results["solve_times"]),
-            "avg_objective": sum(method_results["objective_values"]) / num_runs,
-            "success_rate": method_results["success_count"] / num_runs,
+            "avg_solve_time": sum(solve_times) / num_runs,
+            "min_solve_time": min(solve_times),
+            "max_solve_time": max(solve_times),
+            "avg_objective": sum(objective_values) / num_runs,
+            "success_rate": success_count / num_runs,
         }
 
     return results
