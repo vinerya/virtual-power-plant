@@ -2,18 +2,28 @@
 
 Supports threshold, rate-of-change, and statistical anomaly detection rules.
 Alerts are dispatched through pluggable channels (log, webhook, WebSocket).
+
+This module is the in-memory evaluation engine.  Persistence, the REST API
+and the EventBus/WebSocket wiring live in :mod:`vpp.alert_service`.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import hashlib
+import hmac
+import json
 import logging
 import time
+import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
-from collections import deque
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +100,9 @@ class AlertRule:
     z_score_threshold: float = 3.0  # for anomaly rules
     cooldown_s: float = 300.0  # min time between alerts for this rule
     enabled: bool = True
+    # Optional scope: only evaluate values coming from this source (e.g. a
+    # resource id) when the manager is called with ``source=...``.
+    resource_id: str | None = None
 
     _last_fired: float = 0.0
     _value_history: deque = field(default_factory=lambda: deque(maxlen=100))
@@ -118,7 +131,7 @@ class AlertRule:
         if triggered:
             self._last_fired = now
             return Alert(
-                alert_id=f"{self.name}_{int(now)}",
+                alert_id=uuid.uuid4().hex,
                 rule_name=self.name,
                 severity=self.severity,
                 message=message,
@@ -127,6 +140,24 @@ class AlertRule:
                 source=self.metric_name,
             )
         return None
+
+    def condition_met(self, value: float) -> bool:
+        """Whether a *threshold* rule's condition holds for ``value``.
+
+        Stateless (ignores cooldown and history); used to auto-resolve open
+        threshold alerts once the value is back in range.  Always ``False``
+        for non-threshold rules.
+        """
+        if self.rule_type != RuleType.THRESHOLD:
+            return False
+        return self._check_threshold(value)[0]
+
+    def fresh_copy(self) -> AlertRule:
+        """Copy of this rule with independent cooldown / history state."""
+        clone = dataclasses.replace(self)
+        clone._last_fired = 0.0
+        clone._value_history = deque(maxlen=100)
+        return clone
 
     def _check_threshold(self, value: float) -> tuple[bool, str]:
         ops = {
@@ -198,15 +229,115 @@ class LogAlertChannel(AlertChannel):
         logger.log(level, "ALERT [%s] %s: %s", alert.severity.value, alert.rule_name, alert.message)
 
 
-class WebhookAlertChannel(AlertChannel):
-    """Sends alerts to a webhook URL (stub for production use)."""
+class WebhookDeliveryError(RuntimeError):
+    """Raised when a webhook could not be delivered after all retries."""
 
-    def __init__(self, url: str) -> None:
+
+class WebhookAlertChannel(AlertChannel):
+    """POSTs alerts as JSON to a webhook URL.
+
+    Delivery semantics:
+
+    * ``POST <url>`` with body ``{"alert": {...}, "sent_at": <unix ts>}``.
+    * Network errors, timeouts, ``429`` and ``5xx`` responses are retried
+      up to ``max_retries`` times with exponential backoff
+      (``backoff_base_s * 2**attempt``, capped at ``backoff_max_s``).
+      Other ``4xx`` responses are treated as permanent and not retried.
+    * If ``secret`` is set, the request carries
+      ``X-VPP-Timestamp: <unix seconds>`` and
+      ``X-VPP-Signature: sha256=<hex>`` where the digest is
+      ``HMAC-SHA256(secret, f"{timestamp}.{raw_body}")``.  Receivers should
+      recompute it over the raw body and reject stale timestamps to prevent
+      replay.
+    * A final failure raises :class:`WebhookDeliveryError`;
+      :class:`AlertManager` logs channel errors without affecting other
+      channels.
+    """
+
+    SIGNATURE_HEADER = "X-VPP-Signature"
+    TIMESTAMP_HEADER = "X-VPP-Timestamp"
+
+    def __init__(
+        self,
+        url: str,
+        *,
+        secret: str | None = None,
+        timeout_s: float = 5.0,
+        max_retries: int = 3,
+        backoff_base_s: float = 0.5,
+        backoff_max_s: float = 10.0,
+        headers: dict[str, str] | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self.url = url
+        self.secret = secret
+        self.timeout_s = timeout_s
+        self.max_retries = max(0, max_retries)
+        self.backoff_base_s = backoff_base_s
+        self.backoff_max_s = backoff_max_s
+        self.headers = dict(headers or {})
+        self._client = client
+
+    @staticmethod
+    def sign(secret: str, timestamp: str, body: bytes) -> str:
+        """Return the ``sha256=<hex>`` signature for ``body``."""
+        mac = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256)
+        return "sha256=" + mac.hexdigest()
+
+    def _build_request(self, alert: Alert) -> tuple[bytes, dict[str, str]]:
+        payload = {"alert": alert.to_dict(), "sent_at": time.time()}
+        body = json.dumps(payload, separators=(",", ":"), default=str).encode()
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "vpp-alerts/1",
+            **self.headers,
+        }
+        if self.secret:
+            ts = str(int(time.time()))
+            headers[self.TIMESTAMP_HEADER] = ts
+            headers[self.SIGNATURE_HEADER] = self.sign(self.secret, ts, body)
+        return body, headers
+
+    def _backoff(self, attempt: int) -> float:
+        return min(self.backoff_max_s, self.backoff_base_s * (2 ** attempt))
 
     async def send(self, alert: Alert) -> None:
-        # In production, use httpx to POST the alert
-        logger.info("Webhook alert to %s: %s", self.url, alert.message)
+        body, headers = self._build_request(alert)
+        if self._client is not None:
+            await self._deliver(self._client, body, headers)
+            return
+        async with httpx.AsyncClient(timeout=self.timeout_s) as client:
+            await self._deliver(client, body, headers)
+
+    async def _deliver(
+        self, client: httpx.AsyncClient, body: bytes, headers: dict[str, str],
+    ) -> None:
+        last_error = ""
+        for attempt in range(self.max_retries + 1):
+            try:
+                resp = await client.post(
+                    self.url, content=body, headers=headers, timeout=self.timeout_s,
+                )
+            except httpx.HTTPError as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+            else:
+                if resp.status_code < 300:
+                    return
+                last_error = f"HTTP {resp.status_code}"
+                if resp.status_code != 429 and resp.status_code < 500:
+                    raise WebhookDeliveryError(
+                        f"Webhook {self.url} rejected alert permanently: {last_error}"
+                    )
+            if attempt < self.max_retries:
+                delay = self._backoff(attempt)
+                logger.warning(
+                    "Webhook delivery to %s failed (%s); retry %d/%d in %.2fs",
+                    self.url, last_error, attempt + 1, self.max_retries, delay,
+                )
+                await asyncio.sleep(delay)
+        raise WebhookDeliveryError(
+            f"Webhook {self.url} failed after {self.max_retries + 1} attempts: {last_error}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -214,40 +345,107 @@ class WebhookAlertChannel(AlertChannel):
 # ---------------------------------------------------------------------------
 
 class AlertManager:
-    """Manages alert rules, evaluation, and channel dispatch."""
+    """Manages alert rules, evaluation, and channel dispatch.
 
-    def __init__(self) -> None:
+    Rules are evaluated per *source*: when ``source`` is passed to
+    :meth:`check`/:meth:`evaluate` (e.g. a resource id), every rule keeps an
+    independent cooldown/history per source, so one battery firing does not
+    suppress the same rule for another battery.
+    """
+
+    def __init__(self, *, history_limit: int = 1000) -> None:
         self._rules: dict[str, AlertRule] = {}
+        self._scoped_rules: dict[tuple[str, str], AlertRule] = {}
         self._channels: list[AlertChannel] = [LogAlertChannel()]
         self._active_alerts: dict[str, Alert] = {}
-        self._alert_history: list[Alert] = []
+        self._alert_history: deque[Alert] = deque(maxlen=history_limit)
 
     def add_rule(self, rule: AlertRule) -> None:
         self._rules[rule.name] = rule
+        self._drop_scoped(rule.name)
 
     def remove_rule(self, name: str) -> None:
         self._rules.pop(name, None)
+        self._drop_scoped(name)
+
+    def clear_rules(self) -> None:
+        self._rules.clear()
+        self._scoped_rules.clear()
+
+    def get_rule(self, name: str) -> AlertRule | None:
+        return self._rules.get(name)
+
+    @property
+    def rules(self) -> list[AlertRule]:
+        return list(self._rules.values())
+
+    def metric_names(self) -> set[str]:
+        """Metric names referenced by at least one enabled rule."""
+        return {r.metric_name for r in self._rules.values() if r.enabled}
+
+    def _drop_scoped(self, name: str) -> None:
+        for key in [k for k in self._scoped_rules if k[0] == name]:
+            del self._scoped_rules[key]
 
     def add_channel(self, channel: AlertChannel) -> None:
         self._channels.append(channel)
 
-    async def evaluate(self, metric_name: str, value: float) -> list[Alert]:
-        """Evaluate all rules matching a metric.  Returns triggered alerts."""
-        triggered: list[Alert] = []
+    @property
+    def channels(self) -> list[AlertChannel]:
+        return list(self._channels)
+
+    def matching_rules(self, metric_name: str, source: str | None = None) -> list[AlertRule]:
+        """Rule instances for a metric (per-source state when ``source`` is set)."""
+        out: list[AlertRule] = []
         for rule in self._rules.values():
             if rule.metric_name != metric_name:
                 continue
+            if source is None:
+                out.append(rule)
+                continue
+            if rule.resource_id is not None and rule.resource_id != source:
+                continue
+            key = (rule.name, source)
+            scoped = self._scoped_rules.get(key)
+            if scoped is None:
+                scoped = rule.fresh_copy()
+                self._scoped_rules[key] = scoped
+            out.append(scoped)
+        return out
+
+    def check(self, metric_name: str, value: float, source: str | None = None) -> list[Alert]:
+        """Evaluate matching rules without recording or dispatching."""
+        triggered: list[Alert] = []
+        for rule in self.matching_rules(metric_name, source):
             alert = rule.evaluate(value)
             if alert is not None:
+                if source is not None:
+                    alert.source = source
+                alert.metadata.setdefault("metric", metric_name)
                 triggered.append(alert)
-                self._active_alerts[alert.alert_id] = alert
-                self._alert_history.append(alert)
-                # Dispatch to channels
-                for channel in self._channels:
-                    try:
-                        await channel.send(alert)
-                    except Exception:
-                        logger.exception("Alert channel error")
+        return triggered
+
+    async def dispatch(self, alert: Alert) -> None:
+        """Send an alert to every channel; a failing channel never blocks others."""
+        for channel in self._channels:
+            try:
+                await channel.send(alert)
+            except Exception:
+                logger.exception("Alert channel %s error", type(channel).__name__)
+
+    async def evaluate(
+        self, metric_name: str, value: float, source: str | None = None,
+    ) -> list[Alert]:
+        """Evaluate all rules matching a metric.  Returns triggered alerts.
+
+        Triggered alerts are recorded as active, appended to (bounded)
+        history and dispatched to all channels.
+        """
+        triggered = self.check(metric_name, value, source)
+        for alert in triggered:
+            self._active_alerts[alert.alert_id] = alert
+            self._alert_history.append(alert)
+            await self.dispatch(alert)
         return triggered
 
     def resolve(self, alert_id: str) -> bool:
@@ -273,7 +471,7 @@ class AlertManager:
         return alerts
 
     def get_alert_history(self, limit: int = 100) -> list[Alert]:
-        return self._alert_history[-limit:]
+        return list(self._alert_history)[-limit:]
 
     @property
     def active_count(self) -> int:
