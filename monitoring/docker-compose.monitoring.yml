@@ -1,12 +1,23 @@
 version: "3.9"
 
+# Monitoring overlay. Run from the repository root together with the main
+# stack (relative paths below resolve against the project directory, i.e.
+# the directory of the first -f file):
+#
+#   docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
+#
+# Grafana: http://localhost:3001 (admin / $GRAFANA_ADMIN_PASSWORD, default
+# "vpp-grafana"). Dashboards "VPP Overview", "VPP Trading" and "VPP Fleet"
+# are provisioned automatically from monitoring/grafana/dashboards.
+# Port 3001 avoids clashing with the Next.js console on 3000.
+
 services:
   prometheus:
     image: prom/prometheus:v2.51.0
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -18,14 +29,18 @@ services:
   grafana:
     image: grafana/grafana:10.4.0
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: vpp-grafana
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-vpp-grafana}
       GF_INSTALL_PLUGINS: ""
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/vpp/vpp-overview.json
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards/vpp:ro
+    depends_on:
+      - prometheus
     networks:
       - vpp-network
     restart: unless-stopped
@@ -42,7 +57,6 @@ volumes:
   prometheus_data:
   grafana_data:
 
+# Joins the main stack's "vpp-network" (defined in docker-compose.yml).
 networks:
   vpp-network:
-    external: true
-    name: stupefied-zhukovsky_vpp-network

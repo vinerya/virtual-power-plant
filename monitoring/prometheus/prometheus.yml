@@ -10,6 +10,11 @@ scrape_configs:
         labels:
           service: "vpp"
           environment: "production"
+    # /metrics is unauthenticated unless VPP_METRICS_BEARER_TOKEN is set on
+    # the API. If you set it, uncomment and use the same token here:
+    # authorization:
+    #   type: Bearer
+    #   credentials: "<VPP_METRICS_BEARER_TOKEN>"
 
   - job_name: "node-exporter"
     static_configs:
