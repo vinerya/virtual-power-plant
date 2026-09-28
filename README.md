@@ -291,7 +291,7 @@ fresh token.
 | `/settings` | platform config YAML editor with schema validation |
 | `/settings/account` | change password, log out everywhere, your API keys |
 | `/settings/users` | admin: users (role, activation, password reset, sessions) and every API key |
-| `/portal/*` | customer portal: overview, bill, devices, program enrollment |
+| `/portal/*` | customer portal: overview, bill, devices, program enrollment, account (password) |
 
 Viewers get read-only pages; the backend enforces every permission
 regardless of what the UI shows.

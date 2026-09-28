@@ -6,8 +6,11 @@ const PUBLIC_PATHS = [
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/me",
-  // Returns its own 401 JSON; must not be redirected to the HTML login page.
+  // These return their own 401 JSON; must not be redirected to the HTML
+  // login page.
   "/api/auth/ws-token",
+  "/api/auth/password",
+  "/api/auth/logout-all",
 ];
 
 // Operator routes are everything else under /(operator); customer routes

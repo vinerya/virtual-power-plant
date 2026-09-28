@@ -13,6 +13,7 @@ const NAV = [
   { href: "/portal/bill", label: "Bill" },
   { href: "/portal/devices", label: "Devices" },
   { href: "/portal/enroll", label: "Programs" },
+  { href: "/portal/account", label: "Account" },
 ];
 
 export default function CustomerLayout({

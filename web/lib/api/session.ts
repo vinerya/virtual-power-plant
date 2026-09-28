@@ -10,7 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import { USE_MOCKS } from "./mocks";
 
-export const ROLES = ["admin", "operator", "viewer", "customer"] as const;
+export const ROLES = ["admin", "operator", "viewer", "researcher", "customer"] as const;
 export type Role = (typeof ROLES)[number];
 
 const sessionSchema = z.object({
