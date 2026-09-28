@@ -36,6 +36,8 @@ How metrics get populated
                                ``quantity``, optional ``total_pnl``
                                (portfolio P&L, sets the P&L gauge)
   ``PROTOCOL_ERROR``           ``protocol`` (falls back to event source)
+  ``V2G_DISPATCH``             ``avg_soc``, ``connected_evs``,
+                               ``dispatch_kw`` (sets the V2G fleet gauges)
   ===========================  ===========================================
 
 * **Direct calls** -- modules that do not publish events can call the
@@ -531,6 +533,12 @@ def observe_event(event: Event, collector: MetricsCollector | None = None) -> No
             c.set_trading_pnl(pnl)
     elif et == EventType.PROTOCOL_ERROR:
         c.record_protocol_error(str(data.get("protocol") or event.source or "unknown"))
+    elif et == EventType.V2G_DISPATCH:
+        avg_soc = _first_float(data, ("avg_soc",))
+        connected = _first_float(data, ("connected_evs",))
+        dispatch_kw = _first_float(data, ("dispatch_kw",))
+        if avg_soc is not None and connected is not None and dispatch_kw is not None:
+            c.set_v2g_fleet_metrics(normalise_soc(avg_soc), int(connected), dispatch_kw)
 
 
 def subscribe_event_bus(bus: EventBus, collector: MetricsCollector | None = None) -> str:
@@ -553,5 +561,6 @@ def subscribe_event_bus(bus: EventBus, collector: MetricsCollector | None = None
             EventType.ORDER_CANCELLED,
             EventType.TRADE_EXECUTED,
             EventType.PROTOCOL_ERROR,
+            EventType.V2G_DISPATCH,
         },
     )

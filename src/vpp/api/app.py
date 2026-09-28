@@ -448,6 +448,11 @@ def create_app(
     app.include_router(degradation.router)
     app.include_router(ocpp.router)  # OCPP 1.6-J websocket: /ocpp/{charge_point_id}
 
+    from .routes import protocol_ops
+
+    app.include_router(protocol_ops.router)  # OCPP/OpenADR/2030.5 data + operator actions
+    app.include_router(protocol_ops.dr_router)  # /api/v1/dr (DR orchestrator)
+
     from .routes import customer, customers, resource_metrics, sites
 
     app.include_router(resource_metrics.router)

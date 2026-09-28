@@ -139,6 +139,24 @@ class Settings(BaseSettings):
     ieee2030_5_key_path: str | None = None
     ieee2030_5_tls_ciphers: str | None = None  # e.g. ECDHE-ECDSA-AES128-CCM8
 
+    # Demand-response orchestrator: OpenADR events / IEEE 2030.5 DER controls
+    # -> DB-backed fleet dispatch (see vpp.dr.orchestrator). Off by default:
+    # grid signals are still recorded and shown, and the VEN still answers
+    # opt-in/out per openadr_auto_opt_in, but nothing is dispatched until an
+    # operator turns auto-response on.
+    dr_auto_response_enabled: bool = False
+    dr_tick_interval_s: float = 5.0
+    dr_redispatch_interval_s: float = 900.0  # re-plan an ongoing event this often
+    dr_max_export_kw: float | None = None  # hard cap on any DR export target (kW)
+    dr_max_import_kw: float | None = None  # hard cap on any DR absorb target (kW)
+    # OpenADR SIMPLE level 0..3 -> fraction of the fleet's nominal export capacity.
+    dr_simple_level_fractions: list[float] = Field(default_factory=lambda: [0.0, 0.5, 0.75, 1.0])
+    # Opt out of an event when nominal fleet capability < this fraction of the request.
+    dr_min_opt_in_fraction: float = 0.5
+    dr_include_v2g: bool = True  # connected V2G vehicles take part (setpoints via OCPP)
+    dr_ieee2030_5_set_max_w: float | None = None  # setMaxW for %-controls (default: fleet)
+    v2g_max_profile_periods: int = 48  # ChargingScheduleMaxPeriods budget per profile
+
     # Simulated trading venue: periodically advance simulated prices, match
     # resting orders, and publish `market_data` events. Everything it emits
     # is labelled source="simulated"; no orders leave the process.
