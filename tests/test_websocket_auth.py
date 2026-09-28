@@ -160,3 +160,21 @@ async def test_regular_access_token_authenticates_socket(client: AsyncClient, ad
     )
     assert await ws_module.authenticate_websocket(token) is not None
     assert await ws_module.authenticate_websocket("garbage") is None
+
+
+def test_customer_token_is_rejected(monkeypatch):
+    """Channels carry fleet-wide data, so member-portal accounts can't subscribe."""
+    customer = _User("c-1")
+    customer.role = "customer"
+
+    async def _fake_load(user_id: str):
+        return customer if user_id == "c-1" else None
+
+    monkeypatch.setattr(ws_module, "_load_active_user", _fake_load)
+    app = FastAPI()
+    app.add_api_websocket_route("/api/v1/ws", ws_module.websocket_endpoint)
+    token = create_access_token({"sub": "c-1", "username": "carol", "role": "customer"})
+    with TestClient(app) as tc, pytest.raises(WebSocketDisconnect), tc.websocket_connect(
+        f"/api/v1/ws?token={token}"
+    ) as ws:
+        ws.receive_text()

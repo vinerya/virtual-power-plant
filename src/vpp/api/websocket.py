@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from vpp.auth.security import decode_access_token, get_current_user
 from vpp.db.models import UserModel
 from vpp.events.bus import Event, EventBus, EventType
-from vpp.schemas.auth import TokenPayload
+from vpp.schemas.auth import TokenPayload, UserRole
 from vpp.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -204,7 +204,12 @@ async def authenticate_websocket(token: str) -> Optional[TokenPayload]:
         payload = decode_access_token(token)
     except HTTPException:
         return None
-    if await _load_active_user(payload.sub) is None:
+    user = await _load_active_user(payload.sub)
+    if user is None:
+        return None
+    # Every channel carries fleet-wide data, so customer accounts (member
+    # portal) are refused, mirroring get_current_user on the HTTP API.
+    if user.role == UserRole.CUSTOMER.value:
         return None
     return payload
 
