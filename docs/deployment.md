@@ -250,8 +250,9 @@ docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml
   `src/vpp/metrics.py`.
 - Logs: set `VPP_LOG_JSON=true` (the default when `VPP_ENV=production`) and
   ship stdout to your log stack; correlate with `X-Request-ID`.
-- `GET /health` is a liveness check. `GET /ready` currently returns a
-  static "ready" and does not probe the database.
+- `GET /health` is a liveness check. `GET /ready` runs `SELECT 1` against
+  the database and returns 503 when it can't, so use it as the readiness
+  probe.
 
 ## Enabling integrations
 

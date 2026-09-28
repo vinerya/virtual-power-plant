@@ -67,7 +67,7 @@ Maturity labels used below:
 |---|---|---|
 | Database & migrations | SQLAlchemy 2.0 async, PostgreSQL/SQLite, alembic migrations 0001-0007, model/migration drift test | production-grade |
 | Observability | `/metrics` (Prometheus), request ids, structured JSON logs, provisioned Grafana dashboards | production-grade |
-| Auth & RBAC | JWT with `aud` claim, API keys, roles admin/operator/viewer/researcher/customer, deny-by-default for customers, authenticated WebSocket | beta — API-key `role` is not enforced (see [security](docs/security.md)); no user-management endpoints beyond register |
+| Auth & RBAC | JWT with `aud` claim, API keys, roles admin/operator/viewer/researcher/customer, deny-by-default for customers, authenticated WebSocket | beta — no user-management endpoints beyond register (see [security](docs/security.md)) |
 | Resources, sites, telemetry | typed battery/solar/wind resources, sites with live aggregates, telemetry and meter-reading ingest, time-bucketed history | beta |
 | Dispatch optimization | single-interval allocation LP (Pyomo + HiGHS) over DB resources with SOC/energy limits and SOH-aware wear cost; proportional fallback; run history + explainer | beta — computes and records; does not command devices by itself |
 | MPC schedule & backtest | horizon MPC from prices or a stored tariff; closed-loop backtest vs idle / rule-based / perfect foresight | beta |

@@ -66,3 +66,32 @@ def test_version_unknown_when_no_source(monkeypatch, tmp_path):
     monkeypatch.setattr(_version, "version", _missing)
     monkeypatch.setattr(_version, "_PYPROJECT", tmp_path / "missing.toml")
     assert _version.get_version() == _version.UNKNOWN_VERSION
+
+
+@pytest.mark.asyncio
+async def test_readiness_reports_503_when_database_is_unreachable(
+    client: AsyncClient, monkeypatch
+):
+    from vpp.api.routes import health as health_routes
+
+    def _broken_factory():
+        raise RuntimeError("Database not initialised")
+
+    monkeypatch.setattr(health_routes, "get_session_factory", _broken_factory)
+    resp = await client.get("/ready")
+    assert resp.status_code == 503
+    assert resp.json()["subsystems"]["database"] is False
+
+
+def test_production_refuses_the_default_or_short_secret_key():
+    from pydantic import ValidationError
+
+    from vpp.settings import Settings
+
+    with pytest.raises(ValidationError, match="VPP_SECRET_KEY"):
+        Settings(env="production", secret_key="change-me-to-a-real-secret-key")
+    with pytest.raises(ValidationError, match="VPP_SECRET_KEY"):
+        Settings(env="production", secret_key="too-short")
+    assert Settings(env="production", secret_key="x" * 48).is_production
+    # Development keeps working out of the box.
+    assert Settings(env="development").secret_key

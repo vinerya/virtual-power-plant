@@ -33,11 +33,11 @@ issue.
   against the user's current role on every request.
 - **API keys** (`X-API-Key`) are random 32-byte URL-safe strings with a
   `vpp_` prefix; only their SHA-256 hash is stored and the key is shown
-  once. A key acts as the user who created it, with that user's current
-  role: **the `role` requested for the key is recorded but not enforced**,
-  so give each integration its own least-privileged user rather than a
-  "viewer" key minted by an admin. Non-admins cannot mint a key for a
-  higher role. There is no key listing/revocation endpoint yet;
+  once. A key acts as the user who created it, narrowed to the *lesser* of
+  the key's `role` and that user's current role: an admin can mint a
+  `viewer` key that carries only viewer rights, and demoting a user
+  immediately narrows all of their keys. Non-admins cannot mint a key for
+  a higher role. There is no key listing/revocation endpoint yet;
   deactivating the user disables all of their keys.
 - **WebSocket.** Handshakes require a token by default
   (`VPP_WS_AUTH_REQUIRED`). Browsers should use the 60-second socket-only

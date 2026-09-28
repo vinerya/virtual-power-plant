@@ -5,8 +5,10 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEFAULT_SECRET_KEY = "change-me-to-a-real-secret-key"
 
 
 class Settings(BaseSettings):
@@ -36,7 +38,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
 
     # Security
-    secret_key: str = "change-me-to-a-real-secret-key"
+    secret_key: str = _DEFAULT_SECRET_KEY
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60
     api_key_header: str = "X-API-Key"
@@ -175,6 +177,19 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"log_level must be one of {valid}")
         return upper
+
+    @model_validator(mode="after")
+    def _require_real_secret_in_production(self) -> Settings:
+        # The default key is public (it's in this file), so any JWT signed
+        # with it is forgeable. Refuse to boot a production instance on it.
+        if self.is_production and (
+            self.secret_key == _DEFAULT_SECRET_KEY or len(self.secret_key) < 32
+        ):
+            raise ValueError(
+                "VPP_SECRET_KEY must be set to a random value of at least 32 characters "
+                "when VPP_ENV=production"
+            )
+        return self
 
     @property
     def is_production(self) -> bool:

@@ -188,7 +188,36 @@ async def get_api_key_user(api_key: str, session: AsyncSession) -> UserModel:
     user = await _UR.get_by_id(session, key_obj.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    # A key acts with the *lesser* of its own role and its owner's current
+    # role: a viewer-scoped key minted by an admin must not carry admin
+    # rights, and a key must not outlive a demotion of its owner. The user
+    # is detached before its role is narrowed so the override can never be
+    # flushed back to the users table.
+    effective = effective_api_key_role(key_obj.role, user.role)
+    if effective != user.role:
+        session.expunge(user)
+        user.role = effective
     return user
+
+
+#: Privilege order for API-key scoping. ``customer`` is ranked lowest: it
+#: only reaches self-scoped portal routes.
+_ROLE_RANK: dict[str, int] = {
+    UserRole.CUSTOMER.value: 0,
+    UserRole.VIEWER.value: 1,
+    UserRole.RESEARCHER.value: 1,  # read-only, like viewer
+    UserRole.OPERATOR.value: 2,
+    UserRole.ADMIN.value: 3,
+}
+
+
+def effective_api_key_role(key_role: str, owner_role: str) -> str:
+    """Return the role an API-key request runs with: the less privileged one.
+
+    Unknown roles rank below everything, so a corrupted key role fails closed.
+    """
+    return min(key_role, owner_role, key=lambda r: _ROLE_RANK.get(r, -1))
 
 
 def require_role(*roles: str | UserRole):

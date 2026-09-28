@@ -116,3 +116,50 @@ async def test_token_rejects_bad_requests(client: AsyncClient, admin_user):
 def test_token_openapi_documents_form_and_json(app):
     body = app.openapi()["paths"]["/api/v1/auth/token"]["post"]["requestBody"]["content"]
     assert set(body) == {"application/x-www-form-urlencoded", "application/json"}
+
+
+@pytest.mark.asyncio
+async def test_api_key_is_limited_to_its_own_role(client: AsyncClient, auth_headers: dict):
+    """A viewer-scoped key minted by an admin must not carry admin rights."""
+    minted = await client.post(
+        "/api/v1/auth/api-key",
+        json={"name": "viewer-scope-enforced", "role": "viewer"},
+        headers=auth_headers,
+    )
+    assert minted.status_code == 201
+    key_headers = {"X-API-Key": minted.json()["key"]}
+
+    # Reads a viewer may make still work ...
+    assert (await client.get("/api/v1/resources", headers=key_headers)).status_code == 200
+    me = await client.get("/api/v1/auth/me", headers=key_headers)
+    assert me.status_code == 200
+    assert me.json()["role"] == "viewer"
+
+    # ... but admin/operator actions are refused.
+    escalate = await client.post(
+        "/api/v1/auth/register",
+        json={"username": "minted-by-viewer-key", "password": "s3cret-pass!", "role": "admin"},
+        headers=key_headers,
+    )
+    assert escalate.status_code == 403
+    write = await client.post(
+        "/api/v1/resources",
+        json={"name": "viewer-key-batt", "resource_type": "battery", "rated_power": 5.0},
+        headers=key_headers,
+    )
+    assert write.status_code == 403
+
+    # The narrowing is per-request only: the owning admin keeps full rights.
+    owner = await client.get("/api/v1/auth/me", headers=auth_headers)
+    assert owner.json()["role"] == "admin"
+
+
+def test_effective_api_key_role_takes_the_lesser_privilege():
+    from vpp.auth.security import effective_api_key_role
+
+    assert effective_api_key_role("viewer", "admin") == "viewer"
+    assert effective_api_key_role("admin", "operator") == "operator"  # owner demoted
+    assert effective_api_key_role("operator", "operator") == "operator"
+    assert effective_api_key_role("admin", "customer") == "customer"
+    assert effective_api_key_role("researcher", "admin") == "researcher"
+    assert effective_api_key_role("bogus", "admin") == "bogus"  # unknown ranks lowest

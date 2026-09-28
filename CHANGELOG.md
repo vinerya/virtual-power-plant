@@ -15,6 +15,13 @@ changes** before upgrading.
 
 ### Breaking changes
 
+- **API keys are limited to their own role.** A key now acts with the lesser
+  of its `role` and its owner's current role. Integrations that relied on a
+  lower-role key minted by an admin having admin rights must be given a key
+  with the role they actually need.
+- **Production requires a real secret key.** With `VPP_ENV=production` the
+  API refuses to start on the default `VPP_SECRET_KEY` or one shorter than
+  32 characters.
 - **WebSocket requires authentication by default.** `/api/v1/ws` (new
   canonical path) and `/ws` refuse handshakes without a valid JWT with close
   code `1008` (`VPP_WS_AUTH_REQUIRED=true`). Customer accounts are always
@@ -324,8 +331,14 @@ changes** before upgrading.
 - Alert webhooks can be HMAC-signed; `/metrics` can require a bearer token.
 - OpenADR / IEEE 2030.5 XML is parsed with entity resolution and network
   access disabled.
-- Known issue: an API key's requested `role` is recorded but not enforced;
-  the key acts with its creator's role (documented in `docs/security.md`).
+- API keys are now limited to their own `role`: a request made with a key
+  runs with the lesser of the key's role and its owner's current role.
+  Previously the key's role was ignored, so a `viewer` key minted by an
+  admin carried full admin rights.
+- A production instance (`VPP_ENV=production`) refuses to start with the
+  public default `VPP_SECRET_KEY` or a key shorter than 32 characters.
+- `GET /ready` probes the database and returns 503 when it is unreachable
+  (it previously always reported ready).
 
 ## [2.0.0] - 2025-02-24
 

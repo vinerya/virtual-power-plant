@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "virtual-power-plant"
 version = "2.0.0"
-description = "The world's first comprehensive open-source Virtual Power Plant platform — production-ready optimization, multi-market trading, V2G, and grid protocol integration"
+description = "Open-source Virtual Power Plant platform: DER dispatch optimization, tariffs and billing, V2G, demand response and grid protocol integration"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"

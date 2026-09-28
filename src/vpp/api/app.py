@@ -388,7 +388,7 @@ def create_app(
     app = FastAPI(
         title="Virtual Power Plant Platform",
         description=(
-            "Production-ready API for managing distributed energy resources, "
+            "API for managing distributed energy resources, "
             "optimization dispatch, multi-market trading, and grid protocol integration."
         ),
         version=__version__,

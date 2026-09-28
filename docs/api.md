@@ -85,12 +85,10 @@ curl -s -X POST http://localhost:8000/api/v1/auth/api-key \
 curl -s http://localhost:8000/api/v1/resources -H "X-API-Key: vpp_..."
 ```
 
-A non-admin can only mint a key with their own role. **The key's `role`
-is currently not enforced**: requests made with a key act as the user who
-created it, with that user's current role. An admin who mints a
-`viewer` key therefore hands out admin rights; create a dedicated
-low-privilege user for each integration and mint its key while logged in
-as that user. There is no endpoint to list or revoke keys yet; setting the
+A non-admin can only mint a key with their own role. Requests made with a
+key act as the user who created it, limited to the lesser of the key's
+`role` and that user's current role, so an admin can hand an integration
+a `viewer` key without giving away admin rights. There is no endpoint to list or revoke keys yet; setting the
 user inactive (`users.is_active`, database only) disables all of them.
 
 ### Metrics

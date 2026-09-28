@@ -14,7 +14,7 @@ def test_defaults():
 
 
 def test_production_flag():
-    s = Settings(env="production", secret_key="x")
+    s = Settings(env="production", secret_key="x" * 32)
     assert s.is_production
     assert not s.is_development
 
