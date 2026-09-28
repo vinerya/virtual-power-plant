@@ -281,8 +281,10 @@ class WsClient {
       }
       if (this.stopped || gen !== this.generation) return;
       // 1008 = token rejected (expired between fetch and dial, or user
-      // disabled). The next attempt fetches a fresh token; if the session
-      // itself is gone, fetchToken reports "unauthorized" and we stop.
+      // disabled); 4001 = the server closed an open socket because the
+      // session it was opened with expired. Either way the next attempt
+      // fetches a fresh token; if the session itself is gone, fetchToken
+      // reports "unauthorized" and we stop.
       if (ev.code === POLICY_VIOLATION && process.env.NODE_ENV !== "production") {
         console.warn("[ws] handshake rejected:", ev.reason || "policy violation");
       }

@@ -20,6 +20,20 @@ exposing the long-lived session token to JavaScript.
 When ``VPP_WS_AUTH_REQUIRED`` is true (the default) an unauthenticated or
 invalid handshake is refused with close code 1008 (policy violation), which
 ASGI servers surface as an HTTP 403 on the upgrade request.
+
+Credential expiry
+-----------------
+An authenticated socket does not outlive the credential behind it: it is
+closed with code **4001** (reason ``"Token expired"``) when
+
+* the session it was minted from expires, for tokens from
+  ``POST /api/v1/ws/token`` (the ``sexp`` claim -- the session JWT's ``exp``,
+  or ``now + VPP_JWT_EXPIRE_MINUTES`` when minted with an API key); the
+  token's own short ``exp`` only bounds the handshake;
+* the JWT itself expires, for regular access tokens used directly.
+
+Clients should reconnect with a fresh token (the console does so
+automatically); if the session is gone, minting a new token fails with 401.
 """
 
 from __future__ import annotations
@@ -31,11 +45,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from pydantic import BaseModel
 
 from vpp.auth.security import decode_access_token, get_current_user
-from vpp.db.models import UserModel
+from vpp.db.models import UserModel  # noqa: TC001 -- runtime annotation (FastAPI)
 from vpp.events.bus import Event, EventBus, EventType
 from vpp.schemas.auth import TokenPayload, UserRole
 from vpp.settings import get_settings
@@ -156,6 +171,8 @@ def subscribe_event_bus_to_websocket(bus: EventBus, mgr: ConnectionManager) -> s
 # ---------------------------------------------------------------------------
 
 WS_POLICY_VIOLATION = 1008
+#: Application close code: the socket's credential expired (reconnect).
+WS_TOKEN_EXPIRED = 4001
 WS_TOKEN_TYPE = "ws"
 _BEARER_SUBPROTOCOL = "bearer"
 
@@ -215,11 +232,23 @@ async def authenticate_websocket(token: str) -> TokenPayload | None:
     return payload
 
 
-def create_ws_token(user: UserModel) -> tuple[str, int]:
-    """Mint a short-lived JWT that is only accepted by the WebSocket endpoint."""
+def create_ws_token(
+    user: UserModel, session_expires_at: datetime | None = None
+) -> tuple[str, int]:
+    """Mint a short-lived JWT that is only accepted by the WebSocket endpoint.
+
+    ``session_expires_at`` is the expiry of the credential the caller used;
+    it is embedded as ``sexp`` (sockets opened with the token are closed at
+    that time) and caps the token's own ``exp``. Defaults to a fresh
+    session lifetime (``VPP_JWT_EXPIRE_MINUTES``), e.g. for API keys.
+    """
     settings = get_settings()
+    now = datetime.now(timezone.utc)
+    if session_expires_at is None:
+        session_expires_at = now + timedelta(minutes=settings.jwt_expire_minutes)
     ttl = max(1, settings.ws_token_expire_seconds)
-    expire = datetime.now(timezone.utc) + timedelta(seconds=ttl)
+    expire = min(now + timedelta(seconds=ttl), session_expires_at)
+    ttl = max(1, int((expire - now).total_seconds()))
     token = jwt.encode(
         {
             "sub": user.id,
@@ -227,11 +256,19 @@ def create_ws_token(user: UserModel) -> tuple[str, int]:
             "role": user.role,
             "typ": WS_TOKEN_TYPE,
             "exp": expire,
+            "sexp": int(session_expires_at.timestamp()),
         },
         settings.secret_key,
         algorithm=settings.jwt_algorithm,
     )
     return token, ttl
+
+
+def socket_expires_at(payload: TokenPayload) -> float:
+    """Epoch seconds at which a socket opened with ``payload`` must close."""
+    if payload.typ == WS_TOKEN_TYPE and payload.sexp is not None:
+        return float(payload.sexp)
+    return float(payload.exp)
 
 
 class WsTokenResponse(BaseModel):
@@ -243,15 +280,28 @@ class WsTokenResponse(BaseModel):
 router = APIRouter(prefix="/api/v1/ws", tags=["WebSocket"])
 
 
+_optional_bearer = HTTPBearer(auto_error=False)
+
+
 @router.post("/token", response_model=WsTokenResponse)
-async def issue_ws_token(user: UserModel = Depends(get_current_user)) -> WsTokenResponse:
+async def issue_ws_token(
+    user: UserModel = Depends(get_current_user),
+    bearer: HTTPAuthorizationCredentials | None = Depends(_optional_bearer),
+) -> WsTokenResponse:
     """Exchange the caller's credentials for a short-lived WebSocket token.
 
     The token is only valid for opening a socket (the HTTP API rejects it)
-    and expires after ``VPP_WS_TOKEN_EXPIRE_SECONDS`` (default 60s). Expiry
-    only gates the handshake; an already-open socket is not closed.
+    and must be used within ``VPP_WS_TOKEN_EXPIRE_SECONDS`` (default 60s).
+    A socket opened with it stays open until the caller's *session* expires
+    (the bearer JWT's ``exp``; for API keys, ``VPP_JWT_EXPIRE_MINUTES`` from
+    now) and is then closed with code 4001.
     """
-    token, ttl = create_ws_token(user)
+    session_exp: datetime | None = None
+    if bearer is not None:
+        # Already validated by get_current_user (bearer takes precedence).
+        exp = decode_access_token(bearer.credentials).exp
+        session_exp = datetime.fromtimestamp(exp, tz=timezone.utc)
+    token, ttl = create_ws_token(user, session_exp)
     return WsTokenResponse(token=token, expires_in=ttl, channels=sorted(VALID_CHANNELS))
 
 
@@ -294,10 +344,13 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     settings = get_settings()
     token, subprotocol = _extract_token(ws)
 
+    expires_at: float | None = None
     if token is not None:
-        if await authenticate_websocket(token) is None:
+        payload = await authenticate_websocket(token)
+        if payload is None:
             await ws.close(code=WS_POLICY_VIOLATION, reason="Invalid or expired token")
             return
+        expires_at = socket_expires_at(payload)
     elif settings.ws_auth_required:
         await ws.close(code=WS_POLICY_VIOLATION, reason="Authentication required")
         return
@@ -312,7 +365,18 @@ async def websocket_endpoint(ws: WebSocket) -> None:
             await ws.send_text(json.dumps({"error": f"Unknown channel: {channel}"}))
 
         while True:
-            raw = await ws.receive_text()
+            if expires_at is None:
+                raw = await ws.receive_text()
+            else:
+                remaining = expires_at - datetime.now(timezone.utc).timestamp()
+                try:
+                    if remaining <= 0:
+                        raise TimeoutError
+                    raw = await asyncio.wait_for(ws.receive_text(), timeout=remaining)
+                except TimeoutError:
+                    await manager.disconnect(ws)
+                    await ws.close(code=WS_TOKEN_EXPIRED, reason="Token expired")
+                    return
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
