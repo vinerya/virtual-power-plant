@@ -68,8 +68,39 @@ changes** before upgrading.
 - Sub-packages (`vpp.optimization`, `vpp.config`, `vpp.trading`,
   `vpp.models`) no longer define their own `__version__`; use
   `vpp.__version__`.
+- **Password policy.** New passwords (register, `POST /api/v1/users`,
+  `POST /api/v1/customers`, password change/reset, CLI, bootstrap) must be
+  at least 12 characters (`VPP_PASSWORD_MIN_LENGTH`), at most 72 bytes, and
+  not common or containing the username; otherwise `422`. Existing
+  passwords keep working.
+- **Login throttle.** 5 failed logins for a username lock it for 5 minutes
+  (`429`; `VPP_LOGIN_MAX_FAILURES`, `VPP_LOGIN_LOCKOUT_SECONDS`).
+- **Migration `0009_user_management`** adds `users.token_version`,
+  `users.last_login_at`, `api_keys.key_prefix` and `api_keys.last_used_at`.
 
 ### Added
+
+**Users and credentials**
+- `vpp users create-admin | set-password | list` CLI (password from a
+  prompt, stdin, a file or `VPP_ADMIN_PASSWORD`), and a first-boot admin
+  bootstrap (`VPP_BOOTSTRAP_ADMIN_USERNAME` +
+  `VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE`, only while no user exists), wired
+  into `docker-compose.yml`; replaces the database script in the docs.
+- Admin user management under `/api/v1/users`: list/get/create, role
+  change, activate/deactivate (not yourself, never the last active admin),
+  password reset, revoke sessions, per-user API keys.
+- Self-service `POST /api/v1/auth/password` and
+  `POST /api/v1/auth/logout-all`; `GET /api/v1/auth/api-keys` (own, or
+  `?all=true` for admins) with key prefix and last-used time;
+  `DELETE /api/v1/auth/api-keys/{id}` (owner or admin).
+- Server-side session revocation: JWTs and socket tokens carry the user's
+  `token_version` (`ver`); password change/reset, role change,
+  deactivation and "log out everywhere" revoke existing tokens and close
+  open WebSockets. Tokens without `ver` remain valid until expiry only
+  while the user's version is 0.
+- Console: **Settings → Account** (change password, log out everywhere,
+  own API keys with show-once creation) and **Settings → Users & API keys**
+  (admin).
 
 **Optimization**
 - DB-backed dispatch: single-interval allocation LP (Pyomo + HiGHS) with
@@ -343,6 +374,10 @@ changes** before upgrading.
 
 ### Security
 
+- Login no longer reveals whether a username exists through response
+  timing (a dummy bcrypt check runs for unknown users) and passwords over
+  72 bytes answer `401` instead of `500`.
+- Deactivating a user also revokes their API keys.
 - WebSocket authentication (see Breaking changes); socket-only tokens are
   rejected by the HTTP API; sockets close when their session expires.
 - Customer accounts are denied by default on operator endpoints and the

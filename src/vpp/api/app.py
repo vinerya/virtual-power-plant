@@ -273,6 +273,10 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         echo=settings.debug,
         use_alembic=settings.use_alembic,
     )
+    # First-boot admin (VPP_BOOTSTRAP_ADMIN_*); a no-op once any user exists.
+    from vpp.auth.bootstrap import bootstrap_admin_from_settings
+
+    await bootstrap_admin_from_settings(get_session_factory(), settings)
 
     # Re-apply the newest stored config document (PUT /api/v1/config); never
     # blocks startup -- an empty/missing table keeps the defaults.
@@ -469,12 +473,13 @@ def create_app(
     app.include_router(protocol_ops.router)  # OCPP/OpenADR/2030.5 data + operator actions
     app.include_router(protocol_ops.dr_router)  # /api/v1/dr (DR orchestrator)
 
-    from .routes import customer, customers, resource_metrics, sites
+    from .routes import customer, customers, resource_metrics, sites, users
 
     app.include_router(resource_metrics.router)
     app.include_router(sites.router)
     app.include_router(customer.router)
     app.include_router(customers.router)
+    app.include_router(users.router)  # /api/v1/users (admin user management)
 
     # -- WebSocket ----------------------------------------------------------
     from .websocket import router as websocket_router

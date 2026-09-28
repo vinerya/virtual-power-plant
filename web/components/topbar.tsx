@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { HealthPill } from "@/components/health-pill";
 import { LiveStatusBadge } from "@/components/live-updates";
@@ -9,14 +10,15 @@ function SessionChip() {
   const q = useSession();
   if (!q.data?.authenticated || !q.data.username) return null;
   return (
-    <span
-      className="hidden text-xs text-muted-foreground sm:inline"
+    <Link
+      href="/settings/account"
+      className="hidden text-xs text-muted-foreground hover:text-foreground hover:underline sm:inline"
       data-testid="session-chip"
-      title="Signed-in user and role"
+      title="Signed-in user and role — account settings"
     >
       {q.data.username}
       {q.data.role ? ` · ${q.data.role}` : ""}
-    </span>
+    </Link>
   );
 }
 

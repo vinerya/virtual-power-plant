@@ -31,7 +31,7 @@ async def user_headers(db_session, role: str) -> dict[str, str]:
     user = await UserRepository.create_user(
         db_session,
         username=uid(role),
-        hashed_password=get_password_hash("password123"),
+        hashed_password=get_password_hash("Grid-Battery-4217"),
         role=role,
     )
     await db_session.commit()
@@ -44,11 +44,16 @@ async def create_customer(
 ) -> tuple[str, dict[str, str]]:
     """Onboard a customer via the admin API, log in as them; return (id, headers)."""
     username = uid("cust")
-    body = {"username": username, "password": "password123", "name": "Ada Lovelace", **profile}
+    body = {
+        "username": username,
+        "password": "Grid-Battery-4217",
+        "name": "Ada Lovelace",
+        **profile,
+    }
     resp = await client.post("/api/v1/customers", json=body, headers=admin_headers)
     assert resp.status_code == 201, resp.text
     login = await client.post(
-        "/api/v1/auth/token", data={"username": username, "password": "password123"}
+        "/api/v1/auth/token", data={"username": username, "password": "Grid-Battery-4217"}
     )
     assert login.status_code == 200, login.text
     return resp.json()["id"], {"Authorization": f"Bearer {login.json()['access_token']}"}

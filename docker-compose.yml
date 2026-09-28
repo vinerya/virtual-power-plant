@@ -3,6 +3,11 @@
 #   export VPP_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
 #   export POSTGRES_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(24))")
 #   docker compose up -d --build
+#   docker compose exec vpp-api vpp users create-admin admin   # prompts for a password
+#
+# Or bootstrap the first admin on first boot (ignored once any user exists):
+#   printf '%s' 'a-long-unique-passphrase' > admin_password && chmod 644 admin_password
+#   VPP_BOOTSTRAP_ADMIN_USERNAME=admin VPP_ADMIN_PASSWORD_FILE=./admin_password docker compose up -d
 #
 # API:     http://localhost:8000  (OpenAPI docs at /docs)
 # Console: http://localhost:3000
@@ -39,6 +44,13 @@ services:
       VPP_RATE_LIMIT_REQUESTS_PER_MINUTE: ${VPP_RATE_LIMIT_REQUESTS_PER_MINUTE:-600}
       # Optional: OpenEI key for GET/POST /api/v1/tariffs/import-urdb.
       OPENEI_API_KEY: ${OPENEI_API_KEY:-}
+      # Optional first-boot admin (empty = disabled; ignored once any user
+      # exists). The password comes from the vpp_admin_password secret, never
+      # from the environment; startup fails if it is missing or too weak.
+      VPP_BOOTSTRAP_ADMIN_USERNAME: ${VPP_BOOTSTRAP_ADMIN_USERNAME:-}
+      VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/vpp_admin_password
+    secrets:
+      - vpp_admin_password
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +97,11 @@ services:
 
 volumes:
   postgres-data:
+
+secrets:
+  # Host file holding the bootstrap admin password (/dev/null when unused).
+  vpp_admin_password:
+    file: ${VPP_ADMIN_PASSWORD_FILE:-/dev/null}
 
 networks:
   vpp-network:

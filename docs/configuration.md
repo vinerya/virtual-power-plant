@@ -50,6 +50,11 @@ defined in code.
 | `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | Bucket size and refill rate. Requests over the limit get `429`. All web-console traffic reaches the API from the Next.js server's address, so raise this when several people use the console (see [deployment](deployment.md#rate-limiting-behind-the-console)). |
 | `VPP_WS_AUTH_REQUIRED` | `true` | Refuse WebSocket handshakes without a valid token (close code 1008). Setting `false` lets anonymous sockets receive fleet-wide data; only for isolated development. |
 | `VPP_WS_TOKEN_EXPIRE_SECONDS` | `60` | How long a token from `POST /api/v1/ws/token` may be used to *open* a socket. The socket itself lives until the underlying session expires (see [api.md](api.md#websocket)). |
+| `VPP_PASSWORD_MIN_LENGTH` | `12` | Minimum password length; the rest of the policy is fixed (see [security.md](security.md#authentication)). |
+| `VPP_LOGIN_MAX_FAILURES` | `5` | Failed logins per username before it is locked out (`429`); in memory, per process. `0` disables. |
+| `VPP_LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration, and the window in which failures are counted. |
+| `VPP_BOOTSTRAP_ADMIN_USERNAME` | unset | With `VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE`: create this admin at startup while the users table is empty. |
+| `VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE` | unset | File holding the bootstrap admin's password (e.g. `/run/secrets/...`); read only when the bootstrap runs. |
 
 ## Database
 

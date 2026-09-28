@@ -1,22 +1,21 @@
 import { SettingsNav } from "@/components/settings/settings-nav";
-import { SettingsView } from "@/components/settings/settings-view";
+import { UsersView } from "@/components/settings/users-view";
 
 export const metadata = {
-  title: "Settings · VPP Console",
+  title: "Users & API keys · VPP Console",
 };
 
-export default function SettingsPage() {
+export default function UsersPage() {
   return (
     <div className="space-y-3">
       <header>
         <h2 className="text-2xl font-semibold tracking-tight">Settings</h2>
         <p className="text-sm text-muted-foreground">
-          Edit the runtime YAML configuration. Changes are validated against
-          the backend&apos;s JSON Schema and require explicit Apply.
+          Manage user accounts, roles and every API key (admin).
         </p>
       </header>
       <SettingsNav />
-      <SettingsView />
+      <UsersView />
     </div>
   );
 }

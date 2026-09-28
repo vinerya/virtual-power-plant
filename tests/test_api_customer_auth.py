@@ -122,6 +122,6 @@ async def test_inactive_user_cannot_log_in(client: AsyncClient, auth_headers: di
     user.is_active = False
     await db_session.commit()
     resp = await client.post(
-        "/api/v1/auth/token", data={"username": user.username, "password": "password123"}
+        "/api/v1/auth/token", data={"username": user.username, "password": "Grid-Battery-4217"}
     )
     assert resp.status_code == 401

@@ -76,6 +76,163 @@ def migrate(revision: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+
+_PASSWORD_ENV = "VPP_ADMIN_PASSWORD"
+
+
+def _read_new_password(password_stdin: bool, password_file: str | None) -> str:
+    """Password from stdin, a file, $VPP_ADMIN_PASSWORD, or an interactive prompt."""
+    import os
+
+    from vpp.auth.bootstrap import read_password_file
+
+    if password_stdin:
+        return sys.stdin.readline().removesuffix("\n").removesuffix("\r")
+    if password_file:
+        return read_password_file(password_file)
+    env = os.environ.get(_PASSWORD_ENV)
+    if env:
+        return env
+    if not sys.stdin.isatty():
+        raise click.UsageError(
+            f"No password given: use --password-stdin, --password-file or ${_PASSWORD_ENV}"
+        )
+    return str(click.prompt("Password", hide_input=True, confirmation_prompt=True))
+
+
+async def _with_session(fn):
+    """Run ``fn(session)`` against the configured database, then commit.
+
+    Uses a private engine (not the process-global one) and prepares the
+    schema the same way the API does: ``alembic upgrade head`` when
+    ``VPP_USE_ALEMBIC`` is set, else ``create_all``.
+    """
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from vpp.db import models as _models  # noqa: F401  (register tables)
+    from vpp.db.base import Base
+    from vpp.db.engine import create_engine_from_settings, run_alembic_upgrade
+    from vpp.settings import get_settings
+
+    settings = get_settings()
+    engine = create_engine_from_settings(settings.database_url)
+    try:
+        if settings.use_alembic:
+            await asyncio.to_thread(run_alembic_upgrade, settings.database_url)
+        else:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            result = await fn(session)
+            await session.commit()
+            return result
+    finally:
+        await engine.dispose()
+
+
+_password_options = [
+    click.option("--password-stdin", is_flag=True, help="Read the password from stdin."),
+    click.option(
+        "--password-file",
+        type=click.Path(exists=True, dir_okay=False),
+        help="Read the password from a file (e.g. a mounted secret).",
+    ),
+]
+
+
+def _with_password_options(fn):
+    for option in reversed(_password_options):
+        fn = option(fn)
+    return fn
+
+
+@cli.group("users")
+def users_group() -> None:
+    """Manage user accounts (works without a running API)."""
+
+
+@users_group.command("create-admin")
+@click.argument("username")
+@_with_password_options
+def users_create_admin(username: str, password_stdin: bool, password_file: str | None) -> None:
+    """Create an admin account USERNAME.
+
+    The password is read from --password-stdin, --password-file,
+    $VPP_ADMIN_PASSWORD or an interactive prompt, in that order, and must
+    satisfy the password policy. The password is never echoed or logged.
+    """
+    import asyncio
+
+    from vpp.auth.bootstrap import BootstrapError, create_admin
+
+    password = _read_new_password(password_stdin, password_file)
+    try:
+        asyncio.run(_with_session(lambda s: create_admin(s, username, password)))
+    except BootstrapError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Created admin user {username!r}")
+
+
+@users_group.command("set-password")
+@click.argument("username")
+@_with_password_options
+def users_set_password(username: str, password_stdin: bool, password_file: str | None) -> None:
+    """Set USERNAME's password (e.g. a locked-out admin) and revoke their sessions.
+
+    Also re-activates the account.
+    """
+    import asyncio
+
+    from vpp.auth.passwords import password_problem
+    from vpp.auth.security import get_password_hash, revoke_user_sessions
+    from vpp.db.repositories import UserRepository
+
+    password = _read_new_password(password_stdin, password_file)
+    problem = password_problem(password, username=username)
+    if problem:
+        raise click.ClickException(problem)
+
+    async def _set(session) -> bool:
+        user = await UserRepository.get_by_username(session, username)
+        if user is None:
+            return False
+        user.hashed_password = get_password_hash(password)
+        user.is_active = True
+        revoke_user_sessions(user)
+        return True
+
+    if not asyncio.run(_with_session(_set)):
+        raise click.ClickException(f"No user named {username!r}")
+    click.echo(f"Password of {username!r} updated; existing sessions revoked")
+
+
+@users_group.command("list")
+def users_list() -> None:
+    """List user accounts."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from vpp.db.models import UserModel
+
+    async def _list(session):
+        return list(
+            (await session.execute(select(UserModel).order_by(UserModel.username))).scalars()
+        )
+
+    users = asyncio.run(_with_session(_list))
+    if not users:
+        click.echo("No users. Create one with: vpp users create-admin <username>")
+        return
+    for u in users:
+        click.echo(f"  {u.username:<32} {u.role:<11} {'active' if u.is_active else 'INACTIVE'}")
+
+
+# ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
 

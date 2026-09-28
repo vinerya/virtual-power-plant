@@ -66,7 +66,10 @@ See `.env.example` for the annotated list; also in
 | `/optimization` | Horizon schedule planner (prices or tariff, degradation-aware) and closed-loop MPC backtest | `/api/v1/optimization/schedule`, `/backtest` |
 | `/protocols` | Protocol adapters with LIVE / SIMULATED badges, counters, connect / disconnect | `/api/v1/protocols` |
 | `/settings` | Platform config YAML editor (self-hosted Monaco), schema validation, server errors inline, diff, apply | `/api/v1/config` |
+| `/settings/account` | Change password, log out everywhere, own API keys (new keys shown once) | `/api/auth/password`, `/api/auth/logout-all`, `/api/v1/auth/api-keys` |
+| `/settings/users` | Admin: create users, change roles, activate/deactivate, reset passwords, revoke sessions, every API key | `/api/v1/users*`, `/api/v1/auth/api-keys?all=true` |
 | `/portal` | Customer overview: energy flow from their live devices, bill summary | `/api/v1/customer/me*` |
+| `/portal/account` | Change password, log out everywhere | `/api/auth/password`, `/api/auth/logout-all` |
 | `/portal/bill`, `/portal/devices`, `/portal/enroll` | Bill breakdown (or the server's explanation when no bill is possible), devices, DR program enrollment | `/api/v1/customer/*` |
 
 Write actions are hidden from viewers (role from `/api/auth/me`); the
@@ -81,6 +84,10 @@ backend enforces every permission anyway.
   which calls `POST /api/v1/auth/token` with a form body and sets an
   `httpOnly`, `SameSite=Lax` cookie (`Secure` in production builds, so serve
   the console over HTTPS). The token is never exposed to client JS.
+  Changing the password (`app/api/auth/password/route.ts`) replaces the
+  cookie with the fresh token the backend returns (every older token is
+  revoked); "log out everywhere" (`app/api/auth/logout-all/route.ts`)
+  revokes all sessions and clears the cookie.
 - **API proxy.** Authenticated calls go through
   `app/api/proxy/[...path]/route.ts`, which reads the cookie server-side and
   adds `Authorization: Bearer …`. Client components use an axios instance

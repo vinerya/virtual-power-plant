@@ -50,45 +50,40 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
 ### Create the first admin
 
-There is no self-registration and no user-management CLI yet; create the
-first admin directly in the database, then create further users with
-`POST /api/v1/auth/register`:
+There is no self-registration. Create the first admin with the CLI, which
+prompts for the password (twice, hidden):
 
 ```bash
-docker compose exec -T vpp-api python - <<'EOF'
-import asyncio
-
-from vpp.auth.security import get_password_hash
-from vpp.db.engine import get_session_factory, init_db
-from vpp.db.repositories import UserRepository
-from vpp.settings import get_settings
-
-
-async def main() -> None:
-    settings = get_settings()
-    await init_db(settings.database_url, use_alembic=settings.use_alembic)
-    async with get_session_factory()() as session:
-        await UserRepository.create_user(
-            session,
-            username="admin",
-            hashed_password=get_password_hash("change-me-now"),
-            role="admin",
-        )
-        await session.commit()
-
-
-asyncio.run(main())
-EOF
+docker compose exec vpp-api vpp users create-admin admin
 ```
 
-Without Docker, run the same script with `python -` from the repository
-root, with the same `VPP_DATABASE_URL` as the API. Then log in at
-<http://localhost:3000>.
+Non-interactively, pipe the password in (`--password-stdin`), point at a
+file (`--password-file`) or set `VPP_ADMIN_PASSWORD` for the command. Weak
+passwords are refused (see [security.md](security.md#authentication)).
+`vpp users set-password <name>` resets a password (and re-activates the
+account) if every admin is locked out; `vpp users list` shows accounts.
 
-Pick a strong password before running the script: there are no endpoints
-yet to change passwords or to list, deactivate or delete users (only
-`POST /api/v1/auth/register`), so those changes currently mean editing the
-`users` table.
+**Or bootstrap it on first boot.** When `VPP_BOOTSTRAP_ADMIN_USERNAME` and
+`VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE` are set and the `users` table is empty,
+the API creates that admin at startup. The password is read from the file
+(e.g. a Docker/Kubernetes secret), never from the environment, and is never
+logged; startup fails if the file is missing or the password is too weak.
+Once any user exists both settings are ignored and the file is not read. With
+the provided compose file:
+
+```bash
+printf '%s' 'a-long-unique-passphrase' > admin_password
+chmod 644 admin_password   # readable by the container's non-root user
+VPP_BOOTSTRAP_ADMIN_USERNAME=admin VPP_ADMIN_PASSWORD_FILE=./admin_password \
+  docker compose up -d
+```
+
+Then log in at <http://localhost:3000>. Further users, roles, password
+resets, deactivation and API keys are managed in the console under
+**Settings → Users & API keys**, or with the `/api/v1/users` API
+([api.md](api.md)). Without Docker, run `vpp users create-admin admin` from
+the repository root with the same `VPP_DATABASE_URL` (and `VPP_USE_ALEMBIC`)
+as the API.
 
 ## Without Docker
 

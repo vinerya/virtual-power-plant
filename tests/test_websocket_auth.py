@@ -30,6 +30,7 @@ class _User:
         self.username = "alice"
         self.role = "operator"
         self.is_active = True
+        self.token_version = 0
 
 
 @pytest.fixture

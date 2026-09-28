@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from vpp.api.routes.customer import customer_payload, devices_for, raise_billing
-from vpp.auth.security import get_password_hash, require_role
+from vpp.auth.security import get_password_hash, require_role, require_valid_password
 from vpp.db.engine import get_db
 from vpp.db.models import (
     CustomerProfileModel,
@@ -83,6 +83,7 @@ async def create_customer(
 ):
     if await UserRepository.get_by_username(session, body.username) is not None:
         raise HTTPException(status.HTTP_409_CONFLICT, detail="Username already taken")
+    require_valid_password(body.password, username=body.username)
     await _check_tariff(session, body.tariff_id)
     user = await UserRepository.create_user(
         session,

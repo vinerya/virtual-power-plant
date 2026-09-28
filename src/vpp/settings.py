@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     ws_auth_required: bool = True
     # Lifetime of the short-lived tokens minted by POST /api/v1/ws/token.
     ws_token_expire_seconds: int = 60
+    # Accounts (see vpp.auth.passwords / vpp.auth.throttle / vpp.auth.bootstrap).
+    password_min_length: int = 12
+    # Per-username failed-login throttle (in-memory, per process); 0 disables.
+    login_max_failures: int = 5
+    login_lockout_seconds: int = 300
+    # First-boot admin: created only while the users table is empty.
+    bootstrap_admin_username: str | None = None
+    bootstrap_admin_password_file: str | None = None
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./vpp.db"

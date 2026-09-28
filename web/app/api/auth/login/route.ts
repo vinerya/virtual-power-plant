@@ -44,6 +44,13 @@ export async function POST(request: Request) {
       typeof err === "object" && err && "status" in err
         ? (err as { status: number }).status
         : 500;
+    if (status === 429) {
+      // Per-username lockout after repeated failures (backend throttle).
+      return NextResponse.json(
+        { detail: "Too many failed attempts. Wait a few minutes and try again." },
+        { status: 429 },
+      );
+    }
     return NextResponse.json(
       { detail: "Invalid credentials" },
       { status: status === 401 ? 401 : 500 },

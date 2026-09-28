@@ -393,7 +393,7 @@ async def test_customer_admin_endpoints(client: AsyncClient, auth_headers: dict,
             "username": (await client.get("/api/v1/customer/me", headers=cheaders)).json()[
                 "username"
             ],
-            "password": "password123",
+            "password": "Grid-Battery-4217",
             "name": "Dup",
         },
         headers=auth_headers,
@@ -404,7 +404,7 @@ async def test_customer_admin_endpoints(client: AsyncClient, auth_headers: dict,
             "/api/v1/customers",
             json={
                 "username": uid("c"),
-                "password": "password123",
+                "password": "Grid-Battery-4217",
                 "name": "X",
                 "tariff_id": "missing",
             },
@@ -414,7 +414,7 @@ async def test_customer_admin_endpoints(client: AsyncClient, auth_headers: dict,
     assert (
         await client.post(
             "/api/v1/customers",
-            json={"username": uid("c"), "password": "password123", "name": "X"},
+            json={"username": uid("c"), "password": "Grid-Battery-4217", "name": "X"},
             headers=operator,
         )
     ).status_code == 403
@@ -425,12 +425,12 @@ async def test_register_customer_without_profile(client: AsyncClient, auth_heade
     username = uid("reg")
     resp = await client.post(
         "/api/v1/auth/register",
-        json={"username": username, "password": "password123", "role": "customer"},
+        json={"username": username, "password": "Grid-Battery-4217", "role": "customer"},
         headers=auth_headers,
     )
     assert resp.status_code == 201
     login = await client.post(
-        "/api/v1/auth/token", data={"username": username, "password": "password123"}
+        "/api/v1/auth/token", data={"username": username, "password": "Grid-Battery-4217"}
     )
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
     me = (await client.get("/api/v1/customer/me", headers=headers)).json()
