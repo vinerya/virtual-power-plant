@@ -98,6 +98,8 @@ def resource_to_response(row: ResourceModel, telemetry_soc: float | None = None)
         out["capacity_kwh"] = cap
         out["chemistry"] = row.chemistry
         out["state_of_health"] = row.state_of_health
+        soc: float | None
+        source: str | None
         if telemetry_soc is not None:
             soc, source = max(0.0, min(1.0, telemetry_soc)), "telemetry"
         else:
