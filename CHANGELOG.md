@@ -261,6 +261,9 @@ changes** before upgrading.
   directory and from an installed wheel. `alembic.ini` at the repo root
   points at the new location. The API image now installs the wheel instead
   of an editable source checkout.
+- `vpp.trading.markets.MarketData` is now the same class as
+  `vpp.trading.data.MarketData` (the duplicate dataclass and the cast that
+  bridged them are gone); API responses are unchanged.
 - Demos and benchmarks moved into the package as `vpp.demos` and
   `vpp.benchmarks`, so `vpp demo` / `vpp benchmark` work from an installed
   command. The repo-root `demos/` and `benchmarks/` remain as deprecated

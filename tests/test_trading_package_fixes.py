@@ -423,3 +423,20 @@ class TestStrategies:
         strat = MLTradingStrategy(model_path="missing.pkl")
         assert strat.model is None
         assert strat._load_model() is False
+
+
+def test_single_market_data_type_shared_by_exchange_and_markets():
+    """``trading.markets.MarketData`` is ``trading.data.MarketData`` (no bridge cast)."""
+    from vpp.trading import markets as markets_mod
+    from vpp.trading.markets import DayAheadMarket
+    from vpp.trading.simulation import SimulatedExchange
+
+    assert markets_mod.MarketData is MarketData
+
+    market = DayAheadMarket()
+    exchange = SimulatedExchange(
+        [market], SimulatedDataProvider(config={"seed": 1}), start=datetime(2025, 1, 1)
+    )
+    snapshot = exchange.snapshot(market.name)
+    assert isinstance(market.current_data, MarketData)
+    assert market.current_data is snapshot

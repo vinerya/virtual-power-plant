@@ -7,11 +7,14 @@ real-time, ancillary services, and bilateral markets.
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+# One ``MarketData`` type shared by data providers, the simulated exchange
+# and markets; re-exported for ``from vpp.trading.markets import MarketData``.
+from .data import MarketData as MarketData
 from .orders import Order, OrderBook, OrderStatus, OrderType
 
 
@@ -47,32 +50,6 @@ class MarketSession:
     market_type: MarketType
     auction_time: datetime | None = None
     settlement_time: datetime | None = None
-
-
-@dataclass
-class MarketData:
-    """Market data snapshot."""
-
-    market: str
-    timestamp: datetime
-    bid_price: float | None = None
-    ask_price: float | None = None
-    last_price: float | None = None
-    volume: float = 0.0
-    high: float | None = None
-    low: float | None = None
-    open_price: float | None = None
-    close_price: float | None = None
-
-    # Market depth
-    bid_levels: list[tuple[float, float]] = field(default_factory=list)  # (price, quantity)
-    ask_levels: list[tuple[float, float]] = field(default_factory=list)
-
-    # Additional market info
-    total_demand: float = 0.0
-    total_supply: float = 0.0
-    clearing_price: float | None = None
-    system_lambda: float | None = None  # Marginal price
 
 
 def _is_multiple(value: float, step: float, rel_tol: float = 1e-9) -> bool:
