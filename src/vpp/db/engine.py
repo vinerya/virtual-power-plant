@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 from collections.abc import AsyncGenerator
+from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -12,6 +15,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from .base import Base
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -58,27 +64,34 @@ async def init_db(
             await conn.run_sync(Base.metadata.create_all)
 
 
-def run_alembic_upgrade(database_url: str, revision: str = "head") -> None:
-    """Run ``alembic upgrade <revision>`` synchronously against *database_url*.
+def migrations_dir() -> Path:
+    """Return the directory holding the packaged alembic environment."""
+    return Path(__file__).resolve().parent.parent / "migrations"
 
-    Async driver suffixes are rewritten to sync DBAPIs by ``alembic/env.py``.
-    Requires a source checkout (``alembic.ini`` at the repository root).
+
+def alembic_config(database_url: str | None = None) -> Config:
+    """Build an alembic :class:`~alembic.config.Config` for the packaged migrations.
+
+    No ``alembic.ini`` is needed: ``script_location`` points at
+    ``vpp/migrations`` inside the installed package, so this works from any
+    working directory and from a wheel install.  When *database_url* is given
+    it is passed to ``env.py`` as ``-x url=...`` (async drivers are rewritten
+    to sync DBAPIs there).
     """
-    from pathlib import Path
-
-    from alembic import command
     from alembic.config import Config
 
-    # Locate alembic.ini at the repo root.
-    ini = Path(__file__).resolve().parents[3] / "alembic.ini"
-    if not ini.is_file():
-        raise FileNotFoundError(
-            f"alembic.ini not found at {ini}; migrations require a source checkout"
-        )
-    cfg = Config(str(ini))
-    # Pass the runtime URL via -x so env.py's _resolve_url picks it up.
-    cfg.cmd_opts = type("X", (), {"x": [f"url={database_url}"]})()
-    command.upgrade(cfg, revision)
+    cfg = Config()
+    cfg.set_main_option("script_location", str(migrations_dir()))
+    if database_url is not None:
+        cfg.cmd_opts = argparse.Namespace(x=[f"url={database_url}"])
+    return cfg
+
+
+def run_alembic_upgrade(database_url: str, revision: str = "head") -> None:
+    """Run ``alembic upgrade <revision>`` synchronously against *database_url*."""
+    from alembic import command
+
+    command.upgrade(alembic_config(database_url), revision)
 
 
 async def _run_alembic_upgrade(database_url: str) -> None:

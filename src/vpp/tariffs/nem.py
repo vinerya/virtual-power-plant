@@ -17,8 +17,8 @@ Regimes
     TOU periods (tiered-only) fall back to the bill's blended energy rate.
 ``nem3``
     Net Billing Tariff (CA "NEM 3.0"): exports are credited at an hourly
-    avoided-cost vector (``$/kWh`` indexed by *local* hour; a 24-entry vector
-    repeats daily, a longer one is indexed modulo its length).
+    avoided-cost vector (``$/kWh`` indexed by *local* time), see
+    :func:`avoided_cost_at` for the accepted shapes.
 ``net_billing``
     Generic net billing (URDB ``dgrules`` = "Net Billing ..." / "Buy All Sell
     All"): exports are credited only at explicit URDB ``sell`` rates; intervals
@@ -36,6 +36,23 @@ Where the regime comes from
    ``net_billing``, or ``nem3`` when an avoided-cost vector is present);
 3. otherwise ``none``.
 
+Avoided-cost shapes
+-------------------
+``nem3_avoided_cost`` may be (all indexed by *local* wall-clock time):
+
+* 1 value -- flat rate;
+* 24 values -- hour of day, repeated every day;
+* 12 x 24 -- month x hour of day (CPUC ACC style), given either as 12 lists
+  of 24 or flattened month-major to 288 values;
+* 8760 values -- hour of year (365 days); on Feb 29 of a leap year the
+  Feb 28 values are reused;
+* 8784 values -- hour of year on a leap-year calendar (366 days); in a
+  non-leap year the Feb 29 block is skipped.
+
+Any other shape, or a non-finite value, is rejected
+(:func:`normalize_avoided_cost`). On DST days the repeated autumn hour uses
+the same entry twice and the skipped spring hour is unused.
+
 Known simplifications: credits are applied within a single billing window
 (no month-to-month roll-over or annual true-up), and a credit may take a bill
 below the tariff's minimum charge.
@@ -44,8 +61,9 @@ below the tariff's minimum charge.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from .components import BillLineItem, TimeOfUseRate
@@ -108,12 +126,81 @@ def normalize_regime(value: str | None) -> str:
     return regime
 
 
-def _avoided_cost(raw: Any) -> tuple[float, ...]:
-    if not isinstance(raw, list):
+#: Accepted flat lengths of an avoided-cost vector -> what they index.
+AVOIDED_COST_SHAPES: dict[int, str] = {
+    1: "flat",
+    24: "hour of day",
+    12 * 24: "month x hour of day",
+    8760: "hour of year",
+    8784: "hour of leap year",
+}
+
+
+def normalize_avoided_cost(raw: Any) -> tuple[float, ...]:
+    """Validate an avoided-cost vector and flatten it to a tuple of floats.
+
+    Accepts a flat list of one of the lengths in :data:`AVOIDED_COST_SHAPES`
+    or a 12 x 24 nested list (month x hour). Raises :class:`NEMConfigError`
+    otherwise. ``None`` / empty gives ``()`` (no vector).
+    """
+    if raw is None:
         return ()
+    if not isinstance(raw, (list, tuple)):
+        raise NEMConfigError("nem3_avoided_cost must be a list of $/kWh values")
+    if not raw:
+        return ()
+    if all(isinstance(row, (list, tuple)) for row in raw):
+        if len(raw) != 12 or any(len(row) != 24 for row in raw):
+            raise NEMConfigError(
+                "nested nem3_avoided_cost must be 12 months x 24 hours "
+                f"(got {len(raw)} rows of lengths {sorted({len(r) for r in raw})})"
+            )
+        raw = [v for row in raw for v in row]
     try:
-        return tuple(float(v) for v in raw)
-    except (TypeError, ValueError):
+        values = tuple(float(v) for v in raw)
+    except (TypeError, ValueError) as exc:
+        raise NEMConfigError("nem3_avoided_cost values must be numbers ($/kWh)") from exc
+    if not all(math.isfinite(v) for v in values):
+        raise NEMConfigError("nem3_avoided_cost values must be finite")
+    if len(values) not in AVOIDED_COST_SHAPES:
+        shapes = ", ".join(f"{n} ({what})" for n, what in AVOIDED_COST_SHAPES.items())
+        raise NEMConfigError(
+            f"nem3_avoided_cost has {len(values)} values; expected one of: {shapes}"
+        )
+    return values
+
+
+def _hour_of_year(dt_local: datetime, *, leap_calendar: bool) -> int:
+    """0-based hour of year of ``dt_local`` on a fixed 365- or 366-day calendar."""
+    month, day = dt_local.month, dt_local.day
+    if leap_calendar:
+        ref = date(2024, month, day)  # any leap year
+    else:
+        ref = date(2023, month, min(day, 28) if month == 2 else day)  # Feb 29 -> Feb 28
+    return (ref.timetuple().tm_yday - 1) * 24 + dt_local.hour
+
+
+def avoided_cost_at(avoided_cost: tuple[float, ...] | list[float], dt_local: datetime) -> float:
+    """Return the $/kWh avoided cost for local time ``dt_local`` (see module doc)."""
+    n = len(avoided_cost)
+    if n == 1:
+        idx = 0
+    elif n == 24:
+        idx = dt_local.hour
+    elif n == 12 * 24:
+        idx = (dt_local.month - 1) * 24 + dt_local.hour
+    elif n in (8760, 8784):
+        idx = _hour_of_year(dt_local, leap_calendar=n == 8784)
+    else:
+        raise NEMConfigError(f"unsupported nem3_avoided_cost length {n}")
+    return float(avoided_cost[idx])
+
+
+def _avoided_cost(raw: Any) -> tuple[float, ...]:
+    try:
+        return normalize_avoided_cost(raw)
+    except NEMConfigError as exc:
+        logger.warning("Ignoring invalid tariff nem3_avoided_cost: %s", exc)
         return ()
 
 
@@ -142,7 +229,7 @@ def compute_export_credit(
     end: datetime,
     *,
     regime: str,
-    avoided_cost: list[float] | tuple[float, ...] | None = None,
+    avoided_cost: list[float] | list[list[float]] | tuple[float, ...] | None = None,
     bill: Bill | None = None,
 ) -> ExportCredit:
     """Credit the exports of ``trace`` inside ``[start, end)`` under ``regime``.
@@ -168,13 +255,13 @@ def compute_export_credit(
     tou = [c for c in tariff.components if isinstance(c, TimeOfUseRate)]
 
     if regime == "nem3":
-        acc = list(avoided_cost or [])
+        acc = normalize_avoided_cost(list(avoided_cost or []))
         if not acc:
             raise NEMConfigError(
-                "nem3 requires an avoided-cost vector (nem3_avoided_cost, $/kWh by local hour)"
+                "nem3 requires an avoided-cost vector (nem3_avoided_cost, $/kWh by local time)"
             )
         for dt_local, exp in in_window:
-            credit += exp * float(acc[dt_local.hour % len(acc)])
+            credit += exp * avoided_cost_at(acc, dt_local)
             credited_kwh += exp
     elif regime == "nem2" and not tou:
         # No TOU periods to be period-accurate about (flat/tiered-only tariff):

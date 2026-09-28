@@ -45,9 +45,10 @@ defined in code.
 | `VPP_SECRET_KEY` | `change-me-to-a-real-secret-key` | HMAC key for every JWT (sessions and WebSocket tokens). **Must** be replaced with a long random value; the default is public. `docker-compose.yml` refuses to start without it. Rotating it invalidates all sessions. |
 | `VPP_JWT_ALGORITHM` | `HS256` | JWT signing algorithm (symmetric). |
 | `VPP_JWT_EXPIRE_MINUTES` | `60` | Lifetime of access tokens from `POST /api/v1/auth/token`, and of WebSocket sessions opened with an API key. |
-| `VPP_API_KEY_HEADER` | `X-API-Key` | Not currently read: the API key header is fixed to `X-API-Key`. |
+| `VPP_API_KEY_HEADER` | `X-API-Key` | Request header that carries API keys (`POST /api/v1/auth/api-key`). The OpenAPI security scheme shows the name configured at startup. |
 | `VPP_RATE_LIMIT_ENABLED` | `true` | Per-client-IP token-bucket rate limit on every HTTP route (in-process, per worker). |
-| `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | Bucket size and refill rate. Requests over the limit get `429`. All web-console traffic reaches the API from the Next.js server's address, so raise this when several people use the console (see [deployment](deployment.md#rate-limiting-behind-the-console)). |
+| `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | Bucket size and refill rate per client. Requests over the limit get `429`. |
+| `VPP_TRUSTED_PROXIES` | `[]` | JSON list of CIDRs/addresses (e.g. `'["172.29.0.10/32"]'`) whose `X-Forwarded-For` / `X-Real-IP` headers identify the client for rate limiting. The web console forwards them, so trust its address to give each console user their own bucket. Empty: the headers are ignored (every console user shares the Next.js server's bucket). `X-Forwarded-For` is walked from the right past trusted hops, so clients cannot choose their address by sending the header themselves. See [deployment](deployment.md#rate-limiting-behind-the-console). |
 | `VPP_WS_AUTH_REQUIRED` | `true` | Refuse WebSocket handshakes without a valid token (close code 1008). Setting `false` lets anonymous sockets receive fleet-wide data; only for isolated development. |
 | `VPP_WS_TOKEN_EXPIRE_SECONDS` | `60` | How long a token from `POST /api/v1/ws/token` may be used to *open* a socket. The socket itself lives until the underlying session expires (see [api.md](api.md#websocket)). |
 | `VPP_PASSWORD_MIN_LENGTH` | `12` | Minimum password length; the rest of the policy is fixed (see [security.md](security.md#authentication)). |
@@ -68,7 +69,6 @@ defined in code.
 | Variable | Default | Meaning |
 |---|---|---|
 | `VPP_METRICS_ENABLED` | `true` | Mount `GET /metrics` (Prometheus text format). Requires `prometheus-client` (`monitoring` extra); otherwise the route is not mounted. |
-| `VPP_METRICS_PREFIX` | `vpp` | Not currently read: metric names are fixed (`vpp_*`). |
 | `VPP_METRICS_BEARER_TOKEN` | unset | When set, `/metrics` requires `Authorization: Bearer <token>`. Unset = unauthenticated; restrict it at the network/proxy level. |
 | `VPP_ALERTS_ENABLED` | `true` | Evaluate persisted alert rules against `RESOURCE_UPDATED` telemetry. |
 | `VPP_ALERTS_SEED_DEFAULT_RULES` | `true` | On startup, insert three default rules (SOC low, over-temperature, SOH degraded) if the `alert_rules` table is empty. |
@@ -189,7 +189,7 @@ settings live in each resource's `metadata.modbus.control`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VPP_CONFIG_PATH` | unset | Not currently read by the API. The live platform configuration (a YAML document validated against `GET /api/v1/config/schema`) is applied with `PUT /api/v1/config`, stored in the database (versioned) and re-applied on startup. |
+| `VPP_CONFIG_PATH` | unset | YAML platform configuration document (validated against `GET /api/v1/config/schema`) applied at startup **only while no document is stored**. Precedence: newest document stored with `PUT /api/v1/config` (versioned in the database, re-applied on every start) > `VPP_CONFIG_PATH` > built-in defaults. The file is not copied into the database; the first `PUT` supersedes it. A missing or invalid file fails startup. |
 | `VPP_DEFAULT_TIMEZONE` | `UTC` | Reported in `GET /api/v1/config`. Tariff simulations take an explicit `timezone`; sites carry their own IANA timezone. |
 
 ## Non-`VPP_` variables read by the API

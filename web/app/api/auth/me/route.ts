@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { AUTH_COOKIE_NAME, serverFetch } from "@/lib/api/client";
+import { forwardedClientHeaders } from "@/lib/api/forwarded";
 
 interface MeResponse {
   username?: string;
@@ -15,14 +16,17 @@ interface MeResponse {
  * advisory base64 decode for routing; this endpoint is the authoritative
  * check whenever the UI needs to gate per-page behavior.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const cookieStore = await cookies();
   const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
   if (!token) return NextResponse.json({ authenticated: false }, { status: 401 });
 
   try {
     const me = await serverFetch<MeResponse>("/api/v1/auth/me", {
-      headers: { authorization: `Bearer ${token}` },
+      headers: {
+        ...forwardedClientHeaders(request.headers),
+        authorization: `Bearer ${token}`,
+      },
     });
     return NextResponse.json({
       authenticated: true,

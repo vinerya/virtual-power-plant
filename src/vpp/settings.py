@@ -8,6 +8,8 @@ from pathlib import Path
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from vpp.client_ip import parse_trusted_proxies
+
 _DEFAULT_SECRET_KEY = "change-me-to-a-real-secret-key"
 
 
@@ -44,6 +46,10 @@ class Settings(BaseSettings):
     api_key_header: str = "X-API-Key"
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = 120
+    # Reverse proxies (CIDRs or addresses, e.g. the web console container)
+    # whose X-Forwarded-For / X-Real-IP headers identify the client for rate
+    # limiting. Empty (default): those headers are ignored.
+    trusted_proxies: list[str] = Field(default_factory=list)
     # WebSocket (/ws, /api/v1/ws). When true (default) a socket must present
     # a valid JWT (``token`` query param, ``bearer, <jwt>`` subprotocol pair,
     # or Authorization header) or it is refused with close code 1008.
@@ -64,7 +70,6 @@ class Settings(BaseSettings):
 
     # Monitoring
     metrics_enabled: bool = True
-    metrics_prefix: str = "vpp"
     # When set, GET /metrics requires "Authorization: Bearer <token>".
     metrics_bearer_token: str | None = None
     # Structured logging: JSON lines (None -> JSON only when env=production)
@@ -182,7 +187,8 @@ class Settings(BaseSettings):
     trading_market_data_enabled: bool = True
     trading_market_data_interval_seconds: float = 5.0
 
-    # VPP Config
+    # Platform configuration document loaded at startup when none has been
+    # stored with PUT /api/v1/config yet (a stored document always wins).
     config_path: str | None = None
     default_timezone: str = "UTC"
 
@@ -194,6 +200,12 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"log_level must be one of {valid}")
         return upper
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def validate_trusted_proxies(cls, v: list[str]) -> list[str]:
+        parse_trusted_proxies(v)  # raises ValueError on an invalid CIDR/address
+        return [item.strip() for item in v if item.strip()]
 
     @model_validator(mode="after")
     def _require_real_secret_in_production(self) -> Settings:

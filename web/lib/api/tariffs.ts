@@ -96,7 +96,8 @@ export interface SimulateRequest {
   billing_cycle?: "auto" | "single" | "monthly";
   /** Omit to use the tariff's own regime. */
   nem?: NemRegime;
-  nem3_avoided_cost?: number[];
+  /** $/kWh by local time: 24 (hour), 12x24 (month x hour), 8760/8784 (hour of year) or 1. */
+  nem3_avoided_cost?: number[] | number[][];
   compare_to?: string;
 }
 

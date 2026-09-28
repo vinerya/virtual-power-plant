@@ -33,6 +33,7 @@ from sqlalchemy import create_engine, inspect
 
 from vpp.db import models as _models  # noqa: F401  (register tables on Base.metadata)
 from vpp.db.base import Base
+from vpp.db.engine import migrations_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
@@ -45,7 +46,7 @@ def _sqlite_url(db_path: Path) -> str:
 
 def _make_config(db_url: str) -> Config:
     cfg = Config(str(ALEMBIC_INI))
-    cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+    cfg.set_main_option("script_location", str(migrations_dir()))
     # ConfigParser interpolation: a literal "%" (URL-encoded passwords) must be doubled.
     cfg.set_main_option("sqlalchemy.url", db_url.replace("%", "%%"))
     return cfg
@@ -73,7 +74,7 @@ def test_migrations_match_models(tmp_path: Path) -> None:
 
     assert diffs == [], (
         "ORM models and alembic migrations have drifted. Add a migration under "
-        "alembic/versions/ covering:\n" + pprint.pformat(diffs)
+        "src/vpp/migrations/versions/ covering:\n" + pprint.pformat(diffs)
     )
 
 

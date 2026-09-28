@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from vpp.tariffs.nem import NEMConfigError, normalize_regime
+from vpp.tariffs.nem import NEMConfigError, normalize_avoided_cost, normalize_regime
 
 
 class TariffCreate(BaseModel):
@@ -155,8 +155,10 @@ class BillSimulationRequest(BaseModel):
 
     NEM (M4): ``nem`` is 'none' | 'nem2' | 'nem3' | 'net_billing'; when
     omitted the regime is derived from the tariff (see ``vpp.tariffs.nem``).
-    ``nem3_avoided_cost`` is an hourly $/kWh vector (24 entries repeat daily);
-    falls back to the tariff's ``nem3_avoided_cost``.
+    ``nem3_avoided_cost`` is a $/kWh vector by local time: 24 (hour of day),
+    12 x 24 (month x hour, nested or flat 288), 8760 / 8784 (hour of year)
+    or a single flat value (see ``vpp.tariffs.nem``); falls back to the
+    tariff's ``nem3_avoided_cost``.
 
     ``compare_to``: another stored tariff id billed on the same load.
     """
@@ -172,7 +174,7 @@ class BillSimulationRequest(BaseModel):
     timezone: str = "UTC"
     billing_cycle: Literal["auto", "single", "monthly"] = "auto"
     nem: str | None = None
-    nem3_avoided_cost: list[float] | None = Field(default=None, max_length=8784)
+    nem3_avoided_cost: list[float] | list[list[float]] | None = None
     compare_to: str | None = None
 
     @field_validator("nem")
@@ -184,6 +186,15 @@ class BillSimulationRequest(BaseModel):
             return normalize_regime(v)
         except NEMConfigError as exc:
             raise ValueError(str(exc)) from exc
+
+    @field_validator("nem3_avoided_cost")
+    @classmethod
+    def _avoided_cost(cls, v: list[float] | list[list[float]] | None) -> list[float] | None:
+        try:
+            values = normalize_avoided_cost(v)
+        except NEMConfigError as exc:
+            raise ValueError(str(exc)) from exc
+        return list(values) or None
 
     @field_validator("timezone")
     @classmethod

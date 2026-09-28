@@ -310,6 +310,18 @@ changes** before upgrading.
   writable `/app`.
 - README and docs rewritten to describe maturity honestly (production-grade
   / beta / simulated / research).
+- Alembic migrations moved from `alembic/` into the package
+  (`src/vpp/migrations/`) and ship in the wheel; `vpp migrate` works from any
+  directory and from an installed wheel. `alembic.ini` at the repo root
+  points at the new location. The API image now installs the wheel instead
+  of an editable source checkout.
+- `vpp.trading.markets.MarketData` is now the same class as
+  `vpp.trading.data.MarketData` (the duplicate dataclass and the cast that
+  bridged them are gone); API responses are unchanged.
+- Demos and benchmarks moved into the package as `vpp.demos` and
+  `vpp.benchmarks`, so `vpp demo` / `vpp benchmark` work from an installed
+  command. The repo-root `demos/` and `benchmarks/` remain as deprecated
+  import aliases.
 
 ### Deprecated
 
@@ -318,6 +330,24 @@ changes** before upgrading.
 
 ### Fixed
 
+- Per-user rate limiting behind the console: the Next.js proxy and auth
+  routes forward the client address (`X-Forwarded-For` / `X-Real-IP`), and
+  the API honours those headers only from `VPP_TRUSTED_PROXIES` (new, empty
+  by default), walking `X-Forwarded-For` from the right so forged entries
+  are ignored. Compose pins `vpp-web` to a fixed address on its own subnet,
+  trusts only it, and sets the per-client limit back to 120/min (was 600
+  shared by every console user).
+- NEM 3.0 avoided cost supports full-year vectors: 24 (hour of day),
+  12 x 24 (month x hour, nested or flat), 8760 and 8784 (hour of year,
+  leap-day aware), indexed by local time in both the bill credit and the
+  optimizer. Previously only the hour of day was used for bills and the
+  optimizer indexed long vectors by horizon offset. Other lengths are now
+  rejected (422) instead of being indexed modulo their length.
+- `VPP_API_KEY_HEADER` now sets the header API keys are read from (it was
+  ignored in favour of a hard-coded `X-API-Key`).
+- `VPP_CONFIG_PATH` is now loaded at startup when no configuration document
+  has been stored; a stored document still wins, and a missing or invalid
+  file fails startup. A test fails if a new setting is never read.
 - EventBus publishes now reach connected WebSocket clients (previously two
   disconnected pub/sub systems), and non-alert events no longer land on the
   `alerts` channel.
@@ -365,6 +395,8 @@ changes** before upgrading.
 ### Removed
 
 - Redis setting and compose service.
+- `VPP_METRICS_PREFIX`: it was never read (metric names are fixed to
+  `vpp_*`, which the Grafana dashboards rely on). Setting it is harmless.
 - Dead modules shadowed by packages: `vpp/models.py`, and the flat
   `analysis.py`, `config.py`, `events.py`, `optimization.py`,
   `simulation.py`, `visualization.py`.

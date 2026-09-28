@@ -83,9 +83,13 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install package with migration dependencies
-        run: pip install -e ".[dev,db,migrations]"
-      - name: alembic upgrade head
-        run: alembic -x url="$MIGRATION_DB_URL" upgrade head
+        run: pip install -e ".[dev,db,migrations,cli]"
+      - name: vpp migrate (from outside the checkout)
+        # Migrations ship inside the package, so this must not depend on CWD.
+        working-directory: ${{ runner.temp }}
+        run: vpp migrate
+        env:
+          VPP_DATABASE_URL: ${{ env.MIGRATION_DB_URL }}
       - name: Schema drift check against PostgreSQL
         run: pytest tests/test_alembic_drift.py -v
         env:

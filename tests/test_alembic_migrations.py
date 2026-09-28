@@ -10,13 +10,15 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, inspect, text
 
+from vpp.db.engine import migrations_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ALEMBIC_INI = PROJECT_ROOT / "alembic.ini"
 
 
 def _make_config(db_path: Path) -> Config:
     cfg = Config(str(ALEMBIC_INI))
-    cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+    cfg.set_main_option("script_location", str(migrations_dir()))
     cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_path}")
     return cfg
 
@@ -129,3 +131,13 @@ def test_upgrade_from_pre_m3(fresh_db: Path):
     assert row.rated_power == 50.0
     assert row.state_of_health == 1.0
     assert row.nominal_energy_kwh is None
+
+
+def test_repo_alembic_ini_points_at_packaged_migrations() -> None:
+    """``alembic`` run from the repo root uses the same scripts as ``vpp migrate``."""
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory.from_config(Config(str(ALEMBIC_INI)))
+    assert Path(script.dir).resolve() == migrations_dir().resolve()
+    assert (migrations_dir() / "env.py").is_file()
+    assert (migrations_dir() / "script.py.mako").is_file()

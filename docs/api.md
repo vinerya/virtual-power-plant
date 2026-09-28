@@ -21,7 +21,8 @@ the WebSocket protocol, and conventions shared by all routes.
   `422 {"detail": {"code": "risk_limit_breached", "message": "...", "reasons": [...], "order_id": "..."}}`.
 - **Rate limiting.** When `VPP_RATE_LIMIT_ENABLED` (default), each client IP
   gets `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` requests per minute; beyond that
-  the API answers `429`.
+  the API answers `429`. Behind the console or another proxy, the client IP
+  comes from `X-Forwarded-For` only if the peer is in `VPP_TRUSTED_PROXIES`.
 - **Units and signs.** Power in kW, energy in kWh, prices in $/kWh for
   tariffs and $/MWh on the trading venue. Dispatch targets are
   **export-positive**: a positive `target_power_kw` delivers power to the

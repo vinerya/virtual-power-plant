@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { AUTH_COOKIE_NAME, serverFetch } from "@/lib/api/client";
+import { forwardedClientHeaders } from "@/lib/api/forwarded";
 
 // Always evaluate per request (reads cookies + env at runtime).
 export const dynamic = "force-dynamic";
@@ -41,7 +42,7 @@ function publicWsUrl(): string {
  * (FastAPI `POST /api/v1/ws/token`). The long-lived session JWT never
  * reaches client-side JavaScript.
  */
-export async function GET() {
+export async function GET(request: Request) {
   const cookieStore = await cookies();
   const session = cookieStore.get(AUTH_COOKIE_NAME)?.value;
   if (!session) {
@@ -51,7 +52,10 @@ export async function GET() {
   try {
     const t = await serverFetch<BackendWsToken>("/api/v1/ws/token", {
       method: "POST",
-      headers: { authorization: `Bearer ${session}` },
+      headers: {
+        ...forwardedClientHeaders(request.headers),
+        authorization: `Bearer ${session}`,
+      },
     });
     return NextResponse.json(
       { token: t.token, expires_in: t.expires_in, url: publicWsUrl() },

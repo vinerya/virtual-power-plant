@@ -1,18 +1,22 @@
 # Alembic migrations for the VPP platform
 
 Alembic manages the SQL schema for the persistence layer.  Migration scripts
-live in `alembic/versions/`.  Configuration is in `alembic.ini` at the repo
-root, and the environment in `alembic/env.py`.
+live in `src/vpp/migrations/versions/` and the environment in
+`src/vpp/migrations/env.py`.  They ship inside the `vpp` package, so
+`vpp migrate` (which builds its alembic config in code, see
+`vpp.db.engine.alembic_config`) works from an installed wheel and any
+directory.  `alembic.ini` at the repo root points the `alembic` CLI at the
+same directory for authoring revisions.
 
 ## Configuration source
 
-`alembic/env.py` reads the database URL from
+`env.py` reads the database URL from
 `vpp.settings.Settings.database_url` (i.e. the `VPP_DATABASE_URL` environment
 variable, falling back to the `.env` default of
 `sqlite+aiosqlite:///./vpp.db`).
 
 The application uses an *async* SQLAlchemy engine, but alembic operates
-synchronously — `env.py` strips async driver suffixes:
+synchronously; `env.py` strips async driver suffixes:
 
 | Runtime URL                       | Alembic URL                  |
 |-----------------------------------|------------------------------|

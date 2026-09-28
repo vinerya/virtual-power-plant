@@ -9,6 +9,8 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from vpp.client_ip import parse_trusted_proxies, resolve_client_ip
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Simple token-bucket rate limiter keyed by client IP.
@@ -18,10 +20,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     app : ASGI app
     requests_per_minute : int
         Maximum sustained requests per minute per IP.
+    trusted_proxies : list of str
+        CIDRs/addresses whose ``X-Forwarded-For`` / ``X-Real-IP`` headers
+        identify the client (``VPP_TRUSTED_PROXIES``). Empty: headers are
+        ignored and the TCP peer address is the key.
     """
 
-    def __init__(self, app, *, requests_per_minute: int = 120):
+    def __init__(
+        self,
+        app,
+        *,
+        requests_per_minute: int = 120,
+        trusted_proxies: list[str] | tuple[str, ...] = (),
+    ):
         super().__init__(app)
+        self.trusted = parse_trusted_proxies(trusted_proxies)
         self.rate = requests_per_minute / 60.0  # tokens per second
         self.capacity = requests_per_minute
         self._buckets: dict[str, list[float]] = defaultdict(
@@ -29,7 +42,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         )
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        ip = request.client.host if request.client else "unknown"
+        forwarded = request.headers.getlist("x-forwarded-for")
+        ip = resolve_client_ip(
+            request.client.host if request.client else None,
+            ",".join(forwarded) if forwarded else None,
+            request.headers.get("x-real-ip"),
+            self.trusted,
+        )
 
         tokens, last_time = self._buckets[ip]
         now = time.monotonic()

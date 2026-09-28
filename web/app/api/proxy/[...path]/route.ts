@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE_NAME } from "@/lib/api/client";
+import { forwardedClientHeaders } from "@/lib/api/forwarded";
 
 const BACKEND =
   process.env.API_BASE_URL ||
@@ -18,7 +19,7 @@ async function proxy(
   const cookieStore = await cookies();
   const token = cookieStore.get(AUTH_COOKIE_NAME)?.value;
 
-  const headers = new Headers();
+  const headers = new Headers(forwardedClientHeaders(request.headers));
   const incomingCT = request.headers.get("content-type");
   if (incomingCT) headers.set("content-type", incomingCT);
   if (token) headers.set("authorization", `Bearer ${token}`);

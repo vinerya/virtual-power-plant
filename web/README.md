@@ -51,6 +51,12 @@ See `.env.example` for the annotated list; also in
 
 `NEXT_PUBLIC_*` values are inlined at build time.
 
+The server-side proxy (`/api/proxy/*`) and the auth routes forward the
+user's address to FastAPI as `X-Forwarded-For` / `X-Real-IP`, so the API can
+rate-limit each user separately once this server's address is in the API's
+`VPP_TRUSTED_PROXIES` (see
+[deployment](../docs/deployment.md#rate-limiting-behind-the-console)).
+
 ## Pages
 
 | Route | What it does | Backend |
@@ -131,7 +137,10 @@ pnpm test:e2e
 ```
 
 The Playwright specs (`tests/*.spec.ts`) stub every backend call with
-`page.route()` / `page.routeWebSocket()`, so no FastAPI server is needed.
+`page.route()` / `page.routeWebSocket()`, so no FastAPI server is needed;
+`proxy.spec.ts` starts a tiny fake API on `E2E_BACKEND_PORT` (default
+`E2E_PORT + 1`, passed to the web server as `API_BASE_URL`) to check the
+headers the server-side proxy sends.
 They start `pnpm dev` (or `pnpm start` when `CI` is set — run `pnpm build`
 first). Knobs: `E2E_PORT`, `E2E_BASE_URL` (reuse a running app),
 `E2E_NO_SERVER`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE` (use a preinstalled

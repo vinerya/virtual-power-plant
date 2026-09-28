@@ -4,10 +4,10 @@
 #   docker build -t vpp-api .
 #   docker run -p 8000:8000 -e VPP_SECRET_KEY=... vpp-api
 #
-# The image ships the source checkout layout (src/, alembic/, alembic.ini)
-# and installs the package in editable mode, because `vpp migrate` locates
-# alembic.ini relative to the source tree. Run migrations with
-# `vpp migrate` (docker-compose.yml does this before starting uvicorn).
+# The package is installed from its wheel; the alembic migrations ship inside
+# it (vpp/migrations), so `vpp migrate` works from any directory. Run
+# migrations with `vpp migrate` (docker-compose.yml does this before
+# starting uvicorn).
 # ============================================================================
 FROM python:3.11-slim AS builder
 
@@ -51,15 +51,8 @@ WORKDIR /app
 COPY --from=builder /wheels /wheels
 RUN pip install /wheels/*.whl && rm -rf /wheels
 
-# Source layout needed at runtime (package, migrations, sample configs).
-COPY pyproject.toml README.md alembic.ini ./
-COPY src/ src/
-COPY alembic/ alembic/
+# Sample configuration files (library examples).
 COPY configs/ configs/
-
-# Re-install the package itself in editable mode on top of the wheel so
-# src/vpp is what runs and alembic.ini resolves from /app.
-RUN pip install --no-deps -e .
 
 # Non-root user. /app/data is a writable place for a SQLite database
 # (e.g. VPP_DATABASE_URL=sqlite+aiosqlite:///./data/vpp.db); /app itself is

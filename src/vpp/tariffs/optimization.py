@@ -62,6 +62,7 @@ from .components import (
     TieredEnergyRate,
     TimeOfUseRate,
 )
+from .nem import avoided_cost_at, normalize_avoided_cost
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -115,7 +116,7 @@ def tariff_to_opt_params(
     horizon_hours: int,
     interval_minutes: int = 15,
     nem: Literal["none", "nem2", "nem3"] = "nem2",
-    nem3_avoided_cost: list[float] | None = None,
+    nem3_avoided_cost: list[float] | list[list[float]] | None = None,
     prior_demand_max_kw: float = 0.0,
     tz: timezone = timezone.utc,
     live_price_overrides: list[Any] | None = None,
@@ -140,11 +141,15 @@ def tariff_to_opt_params(
         * ``nem2`` : exports earn the same per-kWh price as imports, unless
           the tariff's TOU schedule defines an explicit URDB ``sell`` rate
           for that period, in which case that rate is used instead.
-        * ``nem3`` : exports earn ``nem3_avoided_cost[t mod len]``
-          (must be supplied).
+        * ``nem3`` : exports earn the avoided cost at each step's local
+          time (``nem3_avoided_cost`` must be supplied).
         * ``none`` : exports earn $0/kWh.
     nem3_avoided_cost : list[float] or None
-        Hourly $/kWh avoided cost vector. If shorter than horizon, repeats.
+        $/kWh avoided-cost vector indexed by local time in ``tz``: 24 (hour
+        of day), 12 x 24 (month x hour, nested or flat 288), 8760 / 8784
+        (hour of year) or a single flat value; see
+        :func:`vpp.tariffs.nem.avoided_cost_at`. Other shapes raise
+        ``ValueError``.
     prior_demand_max_kw : float
         Highest billed demand in the prior 11 months. Combined with the
         first ratchet-bearing :class:`DemandCharge` in the tariff (if any)
@@ -241,16 +246,12 @@ def tariff_to_opt_params(
                     energy_sell[t] = sell_rate
                     break
     elif nem == "nem3":
-        if not nem3_avoided_cost:
+        ac = normalize_avoided_cost(nem3_avoided_cost)
+        if not ac:
             raise ValueError("nem='nem3' requires a nem3_avoided_cost vector")
-        ac = list(nem3_avoided_cost)
-        energy_sell = []
-        for t in range(T):
-            # Map step index to hour index in the source vector.
-            hour_idx = int((horizon_start + t * step).astimezone(tz).hour)
-            # Allow a multi-day vector by also indexing day-of-horizon hours.
-            full_h_idx = int(t * dt_h) if len(ac) >= T * dt_h else hour_idx
-            energy_sell.append(float(ac[full_h_idx % len(ac)]))
+        energy_sell = [
+            avoided_cost_at(ac, (horizon_start + t * step).astimezone(tz)) for t in range(T)
+        ]
     else:  # "none"
         energy_sell = [0.0] * T
 

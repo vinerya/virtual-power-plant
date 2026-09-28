@@ -27,6 +27,11 @@ def test_migrate_command_upgrades_to_head(tmp_path, monkeypatch):
     from vpp.settings import get_settings
 
     db_path = tmp_path / "cli_migrate.db"
+    # Run from an unrelated directory: migrations ship inside the package and
+    # must not be resolved relative to the working directory.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
     monkeypatch.setenv("VPP_DATABASE_URL", f"sqlite+aiosqlite:///{db_path}")
     get_settings.cache_clear()
     try:

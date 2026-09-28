@@ -18,7 +18,13 @@ stored verbatim so operator comments survive a round-trip. Until the first
 
 Applying a document replaces the live ``VPPConfig`` held in
 :mod:`vpp.api.deps`; on startup :func:`apply_stored_config` (called from the
-API lifespan) re-applies the newest stored document. Settings that are
+API lifespan) re-applies the newest stored document.
+
+Startup precedence: the newest stored document wins; when none has been
+stored yet and ``VPP_CONFIG_PATH`` names a YAML file, that file is loaded
+(and must validate, or startup fails); otherwise the built-in defaults are
+used. The file is never written to the database; the first ``PUT`` takes
+over from it. Settings that are
 read from the environment at process start (``VPP_*`` variables: database,
 auth, rate limiting, ingestion toggles) are *not* part of this document and
 are reported read-only alongside it.
@@ -29,6 +35,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
@@ -142,17 +149,18 @@ def _response(row: ConfigDocumentModel | None, *, warnings: list[str] | None = N
 
 
 def validate_config_document(
-    data: Any,
+    data: Any, *, allow_log_file: bool = False
 ) -> tuple[VPPConfig | None, list[dict[str, str]], list[str]]:
     """Full validation pipeline: structure (schema) then semantics (``validate()``).
 
     Returns ``(config, errors, warnings)``; ``config`` is ``None`` iff there
-    are errors.
+    are errors. ``allow_log_file`` is only for operator-supplied files
+    (``VPP_CONFIG_PATH``), never for documents arriving over the API.
     """
     document, errors = validate_config_mapping(data)
     if document is None:
         return None, errors, []
-    if document.monitoring.log_file is not None:
+    if document.monitoring.log_file is not None and not allow_log_file:
         # VPPConfig opens a FileHandler at construction time; letting an API
         # caller choose an arbitrary server-side path is a file-write primitive.
         return (
@@ -173,23 +181,49 @@ def validate_config_document(
     return config, [], list(result.warnings)
 
 
-async def apply_stored_config(session_factory: async_sessionmaker[AsyncSession]) -> int | None:
+def load_config_file(path: str | Path) -> VPPConfig:
+    """Load and validate a YAML config document from ``path`` (``VPP_CONFIG_PATH``).
+
+    Raises :class:`ValueError` when the file is missing, is not YAML, or does
+    not validate: an explicitly configured file is never silently ignored.
+    """
+    file = Path(path)
+    try:
+        data = yaml.safe_load(file.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"VPP_CONFIG_PATH: cannot read {file}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"VPP_CONFIG_PATH: {file} is not valid YAML: {exc}") from exc
+    config, errors, _warnings = validate_config_document(data, allow_log_file=True)
+    if config is None:
+        details = "; ".join(f"{e['path']}: {e['message']}" for e in errors)
+        raise ValueError(f"VPP_CONFIG_PATH: {file} is not a valid configuration: {details}")
+    return config
+
+
+async def apply_stored_config(
+    session_factory: async_sessionmaker[AsyncSession],
+    config_path: str | Path | None = None,
+) -> int | None:
     """Apply the newest stored config document on boot; return its version.
 
-    Never raises: an empty or missing ``config_documents`` table (fresh
-    database, migrations not yet run) keeps the built-in defaults, and a
-    stored document that no longer validates (e.g. after a schema change)
-    is logged and skipped rather than blocking startup.
+    An empty or missing ``config_documents`` table (fresh database,
+    migrations not yet run) falls back to ``config_path`` when given
+    (``VPP_CONFIG_PATH``; see :func:`load_config_file`, which raises on a
+    bad file) and to the built-in defaults otherwise; ``None`` is returned
+    in both cases. A stored document that no longer validates (e.g. after a
+    schema change) is logged and skipped rather than blocking startup.
     """
     try:
         async with session_factory() as session:
             row = await _latest(session)
     except SQLAlchemyError:
-        logger.warning(
-            "Could not read config_documents; serving default configuration", exc_info=True
-        )
-        return None
+        logger.warning("Could not read config_documents", exc_info=True)
+        row = None
     if row is None:
+        if config_path is not None:
+            set_live_config(load_config_file(config_path))
+            logger.info("Applied configuration from VPP_CONFIG_PATH=%s", config_path)
         return None
     try:
         data = yaml.safe_load(row.yaml)

@@ -39,9 +39,11 @@ services:
       VPP_LOG_LEVEL: ${VPP_LOG_LEVEL:-INFO}
       VPP_METRICS_ENABLED: "true"
       VPP_CORS_ORIGINS: '["http://localhost:${VPP_WEB_PORT:-3000}"]'
-      # Every console user's requests arrive from the vpp-web container's IP
-      # and share one rate-limit bucket; size it for the whole team.
-      VPP_RATE_LIMIT_REQUESTS_PER_MINUTE: ${VPP_RATE_LIMIT_REQUESTS_PER_MINUTE:-600}
+      # Per-client limit. Console requests arrive from vpp-web, which forwards
+      # the user's address in X-Forwarded-For; the API honours that header
+      # only from the vpp-web container's fixed address (see networks below).
+      VPP_RATE_LIMIT_REQUESTS_PER_MINUTE: ${VPP_RATE_LIMIT_REQUESTS_PER_MINUTE:-120}
+      VPP_TRUSTED_PROXIES: '["${VPP_WEB_IPV4:-172.29.0.10}/32"]'
       # Optional: OpenEI key for GET/POST /api/v1/tariffs/import-urdb.
       OPENEI_API_KEY: ${OPENEI_API_KEY:-}
       # Optional first-boot admin (empty = disabled; ignored once any user
@@ -75,7 +77,11 @@ services:
         condition: service_healthy
     restart: unless-stopped
     networks:
-      - vpp-network
+      vpp-network:
+        # Fixed so the API can trust exactly this container's forwarded
+        # client addresses (VPP_TRUSTED_PROXIES), and not the bridge gateway
+        # through which published-port traffic may arrive.
+        ipv4_address: ${VPP_WEB_IPV4:-172.29.0.10}
 
   postgres:
     image: postgres:16-alpine
@@ -106,3 +112,11 @@ secrets:
 networks:
   vpp-network:
     driver: bridge
+    ipam:
+      config:
+        # Override VPP_NETWORK_SUBNET, VPP_NETWORK_IP_RANGE and VPP_WEB_IPV4
+        # together if this range collides with a local network. Dynamic
+        # addresses come from ip_range, so no other container can take
+        # vpp-web's fixed (trusted) address.
+        - subnet: ${VPP_NETWORK_SUBNET:-172.29.0.0/24}
+          ip_range: ${VPP_NETWORK_IP_RANGE:-172.29.0.128/25}

@@ -214,15 +214,14 @@ console with bundled demo data and no backend.
 ### Demos and benchmarks (no server needed)
 
 ```bash
-# from the repository root; PYTHONPATH=. makes the top-level demos/ and
-# benchmarks/ packages importable for the `vpp` command
-PYTHONPATH=. vpp demo                    # list: residential, ev_fleet, microgrid, trading, protocols, dashboard
-PYTHONPATH=. vpp demo residential
-PYTHONPATH=. vpp benchmark list
-PYTHONPATH=. vpp benchmark run PEAK_SHAVING
+vpp demo                    # list: residential, ev_fleet, microgrid, trading, protocols, dashboard
+vpp demo residential
+vpp benchmark list
+vpp benchmark run PEAK_SHAVING
 ```
 
-Demos and benchmarks run on synthetic data.
+Demos and benchmarks run on synthetic data and ship in the package
+(`vpp.demos`, `vpp.benchmarks`), so they work from any directory.
 
 ## Configuration
 
@@ -360,12 +359,13 @@ Protocol tests run against in-process mock peers (no certification suites).
 │   ├── config/         platform configuration document and schema
 │   ├── events/         in-process EventBus
 │   ├── cli/            `vpp` command
+│   ├── migrations/     alembic environment and revisions (`vpp migrate`)
+│   ├── benchmarks/     synthetic datasets, scenarios, metrics, runner
+│   ├── demos/          `vpp demo` applications
 │   └── settings.py     VPP_* settings
 ├── web/                Next.js console + customer portal (Playwright tests in web/tests)
-├── alembic/            database migrations
 ├── monitoring/         Prometheus + Grafana (compose overlay, dashboards)
-├── benchmarks/         synthetic datasets, scenarios, metrics, runner
-├── demos/, examples/   runnable scripts
+├── examples/           runnable scripts
 ├── docs/               architecture, configuration, deployment, protocols, API, tariffs, security
 ├── tests/              pytest suite
 ├── Dockerfile, web/Dockerfile, docker-compose*.yml

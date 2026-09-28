@@ -17,27 +17,25 @@ most portable approach is to:
 
 This keeps migrations decoupled from the runtime async stack while
 honouring the same configuration source.
+
+The migration scripts ship inside the ``vpp`` package
+(``vpp/migrations``) so ``vpp migrate`` works from an installed wheel and
+from any working directory; ``alembic.ini`` at the repository root points
+the ``alembic`` CLI at the same directory.
 """
 
 from __future__ import annotations
 
-import os
-import sys
 from logging.config import fileConfig
-from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# Make ``src`` importable when alembic is invoked from the project root.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SRC = PROJECT_ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
-
-from vpp.db.base import Base  # noqa: E402
-from vpp.db import models as _models  # noqa: F401,E402  (register tables on Base.metadata)
-from vpp.settings import get_settings  # noqa: E402
+# ``vpp`` must be importable: it is when the package is installed, and
+# ``alembic.ini`` prepends ``src`` to ``sys.path`` for a source checkout.
+from vpp.db import models as _models  # noqa: F401  (register tables on Base.metadata)
+from vpp.db.base import Base
+from vpp.settings import get_settings
 
 config = context.config
 
