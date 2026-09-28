@@ -47,9 +47,6 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./vpp.db"
 
-    # Redis (optional)
-    redis_url: Optional[str] = None
-
     # Monitoring
     metrics_enabled: bool = True
     metrics_prefix: str = "vpp"

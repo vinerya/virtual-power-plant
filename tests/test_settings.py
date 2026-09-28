@@ -33,3 +33,11 @@ def test_database_is_sqlite():
 def test_database_is_postgres():
     s = Settings(database_url="postgresql+asyncpg://u:p@localhost/db", secret_key="x")
     assert not s.database_is_sqlite
+
+
+def test_removed_redis_url_is_ignored(monkeypatch):
+    """VPP_REDIS_URL was never consumed and has been removed; deployments that
+    still set it must keep starting (extra settings are ignored)."""
+    monkeypatch.setenv("VPP_REDIS_URL", "redis://localhost:6379/0")
+    s = Settings(secret_key="x")
+    assert not hasattr(s, "redis_url")
