@@ -44,11 +44,12 @@ This project fills that gap: a **complete, production-ready VPP platform** with 
 - **Risk controls**: position limits, daily loss caps, VaR, max drawdown, concentration limits
 
 ### Protocol Integrations
-- **OpenADR 2.0b** — demand response event handling (VTN/VEN roles)
-- **OCPP 1.6** — EV charger management, remote start/stop, charging profiles
+- **OpenADR 2.0b** — VEN over HTTPS pull (registration, `oadrPoll`, `oadrDistributeEvent` parsing, opt-in/out via `oadrCreatedEvent`, optional mutual TLS); VTN role is simulation-only
+- **OCPP 1.6-J** — Central System on `ws(s)://<api>/ocpp/{charge_point_id}`: Boot/Heartbeat/Status/Authorize/Start/StopTransaction/MeterValues, plus RemoteStart/Stop and SetChargingProfile (V2G schedules → charging profiles)
 - **MQTT** — IoT telemetry pub/sub with topic hierarchy (`vpp/{site}/{type}/{id}/{metric}`)
 - **Modbus TCP/RTU** — inverter control with pre-built register maps (SMA, Fronius, SolarEdge)
-- **IEEE 2030.5** — Smart Energy Profile, DER program control
+- **IEEE 2030.5** — mutual-TLS client discovering DeviceCapability → EndDevice → FunctionSetAssignments → DERProgram → DERControl and exposing active DER controls by primacy
+- Adapters without a configured endpoint report status **`simulated`** (never `connected`) in `GET /api/v1/protocols`; all endpoints are opt-in via `VPP_OCPP_*`, `VPP_OPENADR_*`, `VPP_IEEE2030_5_*` (see `.env.example`)
 
 ### Vehicle-to-Grid (V2G)
 - **Smart scheduling** — TOU-aware and solar-priority charge/discharge
