@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp import audit
 from vpp.auth.security import get_current_user, require_role
+from vpp.db.engine import get_db
 from vpp.protocols.base import ProtocolMode, ProtocolRegistry
 
 router = APIRouter(prefix="/api/v1/protocols", tags=["protocols"])
@@ -80,9 +83,11 @@ async def list_protocols(
 @router.post("/{name}/connect", response_model=ConnectResponse)
 async def connect_protocol(
     name: str,
+    request: Request,
     body: ConnectRequest | None = None,
     _user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Connect a protocol adapter."""
     adapter = registry.get(name)
@@ -100,15 +105,37 @@ async def connect_protocol(
 
     if body and body.config:
         adapter.configure(**body.config)
+    # Only the option names: values may hold endpoint credentials.
+    details = {"config_keys": sorted(body.config) if body and body.config else []}
 
     try:
         await adapter.connect()
     except Exception as exc:
+        audit.record(
+            session,
+            request,
+            "control.protocol_connect",
+            actor=_user,
+            target_type="protocol",
+            target_id=name,
+            outcome="failure",
+            details={**details, "error": str(exc)},
+            always=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Connection failed: {exc}",
         ) from exc
 
+    audit.record(
+        session,
+        request,
+        "control.protocol_connect",
+        actor=_user,
+        target_type="protocol",
+        target_id=name,
+        details={**details, "mode": adapter.mode.value},
+    )
     if adapter.is_simulated:
         return ConnectResponse(
             name=name,
@@ -121,8 +148,10 @@ async def connect_protocol(
 @router.post("/{name}/disconnect", response_model=ConnectResponse)
 async def disconnect_protocol(
     name: str,
+    request: Request,
     _user=Depends(require_role("admin", "operator")),
     registry: ProtocolRegistry = Depends(get_registry),
+    session: AsyncSession = Depends(get_db),
 ):
     """Disconnect a protocol adapter."""
     adapter = registry.get(name)
@@ -132,6 +161,14 @@ async def disconnect_protocol(
         )
 
     await adapter.disconnect()
+    audit.record(
+        session,
+        request,
+        "control.protocol_disconnect",
+        actor=_user,
+        target_type="protocol",
+        target_id=name,
+    )
     return ConnectResponse(name=name, status=adapter.status.value, message="Disconnected")
 
 

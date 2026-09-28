@@ -35,6 +35,7 @@ from vpp.alert_service import (
     snooze_until_from,
     utcnow,
 )
+from vpp.api.pagination import Page, page_params, paginate
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import AlertRuleModel, UserModel
@@ -154,27 +155,30 @@ async def delete_rule(
 @router.get("", response_model=list[AlertRead])
 @router.get("/", response_model=list[AlertRead], include_in_schema=False)
 async def list_alerts(
+    response: Response,
     since: datetime | None = Query(None, description="Only alerts fired at/after (ISO-8601)"),
     until: datetime | None = Query(None, description="Only alerts fired at/before (ISO-8601)"),
     severity: SeverityFilter = Query("all"),
     status_: StatusFilter = Query("all", alias="status"),
     source: str | None = Query(None, max_length=255),
-    limit: int = Query(200, ge=1, le=1000),
+    page: Page = Depends(page_params(default_limit=200, max_limit=1000)),
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """List alerts, newest first."""
+    """List alerts, newest first.
+
+    Paginated (``limit`` / ``offset``); the total is in ``X-Total-Count``.
+    """
     now = utcnow()
-    rows = await AlertRepository.list_alerts(
-        session,
+    stmt = AlertRepository.alerts_query(
         since=as_utc(since),
         until=as_utc(until),
         severity=None if severity == "all" else severity,
         status=status_,
         source=source,
-        limit=limit,
         now=now,
     )
+    rows = await paginate(session, response, stmt, page)
     return [serialize_alert(r, now) for r in rows]
 
 

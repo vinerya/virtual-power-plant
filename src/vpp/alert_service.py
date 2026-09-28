@@ -47,7 +47,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 
 from vpp.alerts import Alert, AlertManager, AlertRule, AlertSeverity, RuleType
 from vpp.db.models import AlertModel, AlertRuleModel, ResourceModel
@@ -221,8 +221,26 @@ class AlertRepository:
         status: str | None = None,
         source: str | None = None,
         limit: int = 200,
+        offset: int = 0,
         now: datetime | None = None,
     ) -> list[AlertModel]:
+        stmt = AlertRepository.alerts_query(
+            since=since, until=until, severity=severity, status=status, source=source, now=now
+        )
+        stmt = stmt.offset(offset).limit(limit)
+        return list((await session.execute(stmt)).scalars().all())
+
+    @staticmethod
+    def alerts_query(
+        *,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+        source: str | None = None,
+        now: datetime | None = None,
+    ) -> Select:
+        """Filtered alerts, newest first (no paging)."""
         now = now or utcnow()
         stmt = select(AlertModel)
         if since is not None:
@@ -236,8 +254,7 @@ class AlertRepository:
             stmt = stmt.where(AlertRepository.status_clause(status, now))
         if source:
             stmt = stmt.where(AlertModel.source == source)
-        stmt = stmt.order_by(AlertModel.fired_at.desc()).limit(limit)
-        return list((await session.execute(stmt)).scalars().all())
+        return stmt.order_by(AlertModel.fired_at.desc(), AlertModel.id)
 
     @staticmethod
     async def get(session: AsyncSession, alert_id: str) -> AlertModel | None:

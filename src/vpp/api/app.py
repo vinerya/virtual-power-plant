@@ -469,6 +469,8 @@ def create_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Lets browser clients read the list-endpoint totals (vpp.api.pagination).
+        expose_headers=["X-Total-Count"],
     )
 
     enable_rate_limit = (
@@ -524,13 +526,14 @@ def create_app(
     app.include_router(protocol_ops.router)  # OCPP/OpenADR/2030.5 data + operator actions
     app.include_router(protocol_ops.dr_router)  # /api/v1/dr (DR orchestrator)
 
-    from .routes import customer, customers, resource_metrics, sites, users
+    from .routes import audit, customer, customers, resource_metrics, sites, users
 
     app.include_router(resource_metrics.router)
     app.include_router(sites.router)
     app.include_router(customer.router)
     app.include_router(customers.router)
     app.include_router(users.router)  # /api/v1/users (admin user management)
+    app.include_router(audit.router)  # /api/v1/audit (admin audit log)
 
     # -- WebSocket ----------------------------------------------------------
     from .websocket import router as websocket_router

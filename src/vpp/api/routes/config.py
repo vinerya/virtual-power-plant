@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
 
+from vpp import audit
 from vpp.api.deps import get_live_config, set_live_config
 from vpp.auth.security import get_current_user, require_role
 from vpp.config import VPPConfig
@@ -263,6 +264,7 @@ async def get_config_schema(_user: UserModel = Depends(get_current_user)) -> dic
 @router.put("/", response_model=ConfigDocumentResponse, include_in_schema=False)
 async def apply_config(
     body: ConfigApplyRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(require_role(UserRole.ADMIN)),
 ):
@@ -315,6 +317,15 @@ async def apply_config(
     await session.flush()
     await session.refresh(row)
     set_live_config(config)
+    audit.record(
+        session,
+        request,
+        "config.update",
+        actor=user,
+        target_type="config",
+        target_id=str(row.version),
+        details={"version": row.version, "hash": row.hash, "previous_hash": live_hash},
+    )
     return _response(row, warnings=warnings)
 
 

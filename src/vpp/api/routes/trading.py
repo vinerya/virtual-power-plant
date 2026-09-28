@@ -21,9 +21,11 @@ import json
 from datetime import datetime
 from typing import Any, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp import audit
+from vpp.api.pagination import Page, page_params, paginate
 from vpp.auth.security import get_current_user, require_role
 from vpp.cluster.rpc import on_leader, register_handler
 from vpp.cluster.topology import LEASE_TRADING
@@ -111,6 +113,38 @@ def _username(user: UserModel) -> str | None:
     return getattr(user, "username", None)
 
 
+_list_page = page_params(default_limit=50, max_limit=200, legacy_skip=True)
+
+
+def _field(result: Any, name: str) -> Any:
+    """``name`` of a local (model) or forwarded (dict) venue result."""
+    if isinstance(result, dict):
+        return result.get(name)
+    return getattr(result, name, None)
+
+
+def _audit_trading_error(
+    session: AsyncSession,
+    request: Request,
+    user: UserModel,
+    action: str,
+    exc: HTTPException,
+    details: dict[str, Any],
+) -> None:
+    detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+    audit.record(
+        session,
+        request,
+        action,
+        actor=user,
+        target_type="order",
+        target_id=detail.get("order_id"),
+        outcome="denied" if detail.get("code") == "risk_limit_breached" else "failure",
+        details={**details, "status_code": exc.status_code, "code": detail.get("code")},
+        always=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Orders
 # ---------------------------------------------------------------------------
@@ -119,6 +153,7 @@ def _username(user: UserModel) -> str | None:
 @router.post("/orders", response_model=OrderSubmitResponse, status_code=status.HTTP_201_CREATED)
 async def submit_order(
     body: OrderCreate,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(_trader),
 ):
@@ -132,12 +167,33 @@ async def submit_order(
     ``detail.order_id``) when a risk limit would be breached.
     """
     username = _username(user)
-    return await on_leader(
-        LEASE_TRADING,
-        "submit_order",
-        {"body": body.model_dump(mode="json"), "username": username},
-        lambda: _submit_order_local(session, body, username),
+    order_details = {
+        "market": body.market,
+        "side": body.side,
+        "order_type": body.order_type,
+        "quantity": body.quantity,
+        "price": body.price,
+    }
+    try:
+        result = await on_leader(
+            LEASE_TRADING,
+            "submit_order",
+            {"body": body.model_dump(mode="json"), "username": username},
+            lambda: _submit_order_local(session, body, username),
+        )
+    except HTTPException as exc:
+        _audit_trading_error(session, request, user, "market.order_submit", exc, order_details)
+        raise
+    audit.record(
+        session,
+        request,
+        "market.order_submit",
+        actor=user,
+        target_type="order",
+        target_id=_field(result, "id"),
+        details={**order_details, "status": _field(result, "status")},
     )
+    return result
 
 
 async def _submit_order_local(
@@ -169,17 +225,20 @@ async def _submit_order_local(
 
 @router.get("/orders", response_model=list[OrderResponse])
 async def list_orders(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    response: Response,
+    page: Page = Depends(_list_page),
     market: str | None = None,
     order_status: str | None = None,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """List trading orders (newest first) with optional filters."""
-    orders = await TradingRepository.list_orders(
-        session, skip=skip, limit=limit, market=market, status=order_status
-    )
+    """List trading orders (newest first) with optional filters.
+
+    Paginated (``limit`` / ``offset``, ``skip`` is an alias); the total is in
+    ``X-Total-Count``.
+    """
+    stmt = TradingRepository.orders_query(market=market, status=order_status)
+    orders = await paginate(session, response, stmt, page)
     return [_order_response(o) for o in orders]
 
 
@@ -196,14 +255,30 @@ async def get_order(
     return _order_response(order)
 
 
-async def _cancel(order_id: str, session: AsyncSession, user: UserModel) -> Any:
+async def _cancel(order_id: str, session: AsyncSession, user: UserModel, request: Request) -> Any:
     username = _username(user)
-    return await on_leader(
-        LEASE_TRADING,
-        "cancel_order",
-        {"order_id": order_id, "username": username},
-        lambda: _cancel_local(session, order_id, username),
+    try:
+        result = await on_leader(
+            LEASE_TRADING,
+            "cancel_order",
+            {"order_id": order_id, "username": username},
+            lambda: _cancel_local(session, order_id, username),
+        )
+    except HTTPException as exc:
+        _audit_trading_error(
+            session, request, user, "market.order_cancel", exc, {"order_id": order_id}
+        )
+        raise
+    audit.record(
+        session,
+        request,
+        "market.order_cancel",
+        actor=user,
+        target_type="order",
+        target_id=order_id,
+        details={"status": _field(result, "status")},
     )
+    return result
 
 
 async def _cancel_local(
@@ -219,21 +294,23 @@ async def _cancel_local(
 @router.delete("/orders/{order_id}", response_model=OrderResponse)
 async def cancel_order(
     order_id: str,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(_trader),
 ):
     """Cancel a resting (``pending``/``partial``) order. 409 if already final."""
-    return await _cancel(order_id, session, user)
+    return await _cancel(order_id, session, user, request)
 
 
 @router.post("/orders/{order_id}/cancel", response_model=OrderResponse)
 async def cancel_order_post(
     order_id: str,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(_trader),
 ):
     """Alias of ``DELETE /orders/{order_id}`` for clients that cannot send DELETE."""
-    return await _cancel(order_id, session, user)
+    return await _cancel(order_id, session, user, request)
 
 
 # ---------------------------------------------------------------------------
@@ -243,17 +320,20 @@ async def cancel_order_post(
 
 @router.get("/trades", response_model=list[TradeResponse])
 async def list_trades(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    response: Response,
+    page: Page = Depends(_list_page),
     market: str | None = None,
     order_id: str | None = None,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(get_current_user),
 ):
-    """List persisted fills (newest first)."""
-    trades = await TradingRepository.list_trades(
-        session, skip=skip, limit=limit, market=market, order_id=order_id
-    )
+    """List persisted fills (newest first).
+
+    Paginated (``limit`` / ``offset``, ``skip`` is an alias); the total is in
+    ``X-Total-Count``.
+    """
+    stmt = TradingRepository.trades_query(market=market, order_id=order_id)
+    trades = await paginate(session, response, stmt, page)
     return [_trade_response(t) for t in trades]
 
 
@@ -348,6 +428,7 @@ async def backtest_strategy(
 async def run_strategy(
     name: str,
     body: StrategyRunRequest,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(_trader),
 ):
@@ -358,12 +439,24 @@ async def run_strategy(
     pre-trade risk checks as ``POST /orders``.
     """
     username = _username(user)
-    return await on_leader(
+    result = await on_leader(
         LEASE_TRADING,
         "run_strategy",
         {"name": name, "body": body.model_dump(mode="json"), "username": username},
         lambda: _run_strategy_local(session, name, body, username),
     )
+    if not body.dry_run:  # a dry run places no orders
+        signals = _field(result, "signals")
+        audit.record(
+            session,
+            request,
+            "market.strategy_run",
+            actor=user,
+            target_type="strategy",
+            target_id=name,
+            details={"signals": len(signals) if isinstance(signals, list) else None},
+        )
+    return result
 
 
 async def _run_strategy_local(

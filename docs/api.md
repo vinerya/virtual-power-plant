@@ -29,6 +29,32 @@ the WebSocket protocol, and conventions shared by all routes.
   worker; beyond that the API answers `429`. Behind the console or another
   proxy, the client IP comes from `X-Forwarded-For` only if the peer is in
   `VPP_TRUSTED_PROXIES`.
+- **Pagination.** List endpoints that can grow without bound -- users, API
+  keys, the audit log, resources, alerts, orders, trades, optimization runs
+  / dispatches, device commands (`/optimization/setpoints`, in `recent`),
+  DR decisions (`/dr/responses`), tariffs and customers -- take `limit`
+  (page size; each endpoint has a default and a hard maximum, a larger
+  value is `422`) and `offset` (default 0). They still return a plain JSON
+  array (`/optimization/setpoints` its usual object) and report the number
+  of matching rows before paging in the **`X-Total-Count`** response header
+  (exposed to browsers via CORS). Endpoints that already took `skip` keep
+  it as an alias of `offset`. Pages are in a stable order (newest first, or
+  by username), with the row id as tie-breaker.
+
+  | Endpoint | default `limit` | max |
+  |---|---|---|
+  | `/api/v1/users`, `/api/v1/auth/api-keys`, `/api/v1/users/{id}/api-keys`, `/api/v1/customers` | 100 | 500 |
+  | `/api/v1/audit` | 100 | 500 |
+  | `/api/v1/resources`, `/api/v1/trading/orders`, `/api/v1/trading/trades`, `/api/v1/optimization/runs` (`/history`), `/api/v1/dispatches`, `/api/v1/tariffs` | 50 | 200 |
+  | `/api/v1/optimization/setpoints` | 50 | 500 |
+  | `/api/v1/alerts` | 200 | 1000 |
+  | `/api/v1/dr/responses` | 100 | 1000 |
+
+  ```bash
+  curl -si "http://localhost:8000/api/v1/users?limit=50&offset=100" -H "Authorization: Bearer $TOKEN" \
+    | grep -i x-total-count
+  # x-total-count: 137
+  ```
 - **Units and signs.** Power in kW, energy in kWh, prices in $/kWh for
   tariffs and $/MWh on the trading venue. Dispatch targets are
   **export-positive**: a positive `target_power_kw` delivers power to the
@@ -111,7 +137,8 @@ the first 12 characters, `created_at`, `last_used_at`, updated at most once
 a minute; never the key itself); admins add `?all=true` for everyone's.
 `?include_revoked=true` includes revoked keys. `DELETE
 /api/v1/auth/api-keys/{id}` revokes a key (owner or admin; `404` for
-someone else's key). Deactivating a user revokes all of their keys.
+someone else's key). Deactivating a user revokes all of their keys;
+deleting a user deletes them.
 
 ### Passwords and user management
 
@@ -123,17 +150,41 @@ contain the username. Rejected passwords get `422` with the reason.
 | Call | Who | Effect |
 |---|---|---|
 | `POST /api/v1/auth/password` `{"current_password", "new_password"}` | any role, own account | changes the password, revokes all sessions, returns a fresh token; wrong current passwords count towards the login throttle |
+| `POST /api/v1/auth/logout` | any role, own account | records the sign-out in the audit log (`204`); the token itself stays valid until it expires -- the client discards it (the console clears its cookie) |
 | `POST /api/v1/auth/logout-all` | any role, own account | revokes all sessions (`204`) |
-| `GET /api/v1/users[?role=&is_active=]`, `GET /api/v1/users/{id}` | admin | users with `last_login_at` and active `api_key_count` |
+| `GET /api/v1/users[?role=&is_active=&limit=&offset=]`, `GET /api/v1/users/{id}` | admin | users with `last_login_at` and active `api_key_count`, by username; total in `X-Total-Count` |
 | `POST /api/v1/users` `{"username", "password", "role"}` | admin | creates a user (same as `/auth/register`) |
 | `PATCH /api/v1/users/{id}` `{"role"?, "is_active"?}` | admin | role change or deactivation revokes the user's sessions; deactivation also revokes their API keys (re-activation does not restore them) |
 | `POST /api/v1/users/{id}/password` `{"new_password"}` | admin, another user | resets the password and revokes the user's sessions |
 | `POST /api/v1/users/{id}/revoke-sessions` | admin | revokes the user's sessions |
+| `DELETE /api/v1/users/{id}` | admin, another user | deletes the account for good (`204`) with its API keys, customer profile and programme enrolments; sites it owned and config versions it saved are kept with the reference cleared; its tokens stop working at once |
 | `GET /api/v1/users/{id}/api-keys` | admin | that user's keys |
+| `GET /api/v1/audit` | admin | the audit log, see below |
 
-`PATCH` answers `409` when it would deactivate or demote your own account
-or the last active admin; admins change their own password through
-`/auth/password`.
+`PATCH` and `DELETE` answer `409` when they would deactivate, demote or
+delete your own account or the last active admin; admins change their own
+password through `/auth/password`. Deactivate instead of deleting to keep
+an account restorable.
+
+### Audit log
+
+Security-relevant actions are recorded in the `audit_log` table and read
+with `GET /api/v1/audit` (admin only; other roles get `403`). Entries are
+newest first:
+
+```json
+{"id": 812, "ts": "2026-09-28T21:14:03Z", "actor_id": "4f0c...", "actor_username": "alice",
+ "action": "user.delete", "target_type": "user", "target_id": "9b1e...",
+ "client_ip": "203.0.113.7", "outcome": "success",
+ "details": {"username": "bob", "role": "operator", "api_keys_deleted": 2}}
+```
+
+Filters: `actor` (user id or username), `action` (exact, e.g.
+`auth.login`, or a prefix ending in `.`, e.g. `user.`), `outcome`
+(`success` / `failure` / `denied`), `target_type`, `target_id`, `since` /
+`until` (ISO-8601), plus `limit` (default 100, max 500) / `offset`; the
+total is in `X-Total-Count`. The recorded actions are listed in
+[security.md](security.md#audit-log).
 
 ### Session revocation
 
@@ -272,6 +323,7 @@ socket `/ocpp/{charge_point_id}` is described in
 | GET | `/api/v1/auth/api-keys` | any role (own keys; `?all=true` admin) |
 | DELETE | `/api/v1/auth/api-keys/{key_id}` | owner or admin |
 | POST | `/api/v1/auth/password` | any role (own account) |
+| POST | `/api/v1/auth/logout` | any role (own account) |
 | POST | `/api/v1/auth/logout-all` | any role (own account) |
 | GET | `/api/v1/users` | admin |
 | POST | `/api/v1/users` | admin |
@@ -279,7 +331,9 @@ socket `/ocpp/{charge_point_id}` is described in
 | PATCH | `/api/v1/users/{user_id}` | admin |
 | POST | `/api/v1/users/{user_id}/password` | admin |
 | POST | `/api/v1/users/{user_id}/revoke-sessions` | admin |
+| DELETE | `/api/v1/users/{user_id}` | admin |
 | GET | `/api/v1/users/{user_id}/api-keys` | admin |
+| GET | `/api/v1/audit` | admin |
 | GET | `/api/v1/resources` | any operator-side role |
 | POST | `/api/v1/resources` | admin, operator |
 | GET | `/api/v1/resources/{resource_id}` | any operator-side role |

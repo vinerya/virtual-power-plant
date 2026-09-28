@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +23,8 @@ from .base import Base
 
 if TYPE_CHECKING:
     from alembic.config import Config
+
+logger = logging.getLogger(__name__)
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
@@ -135,8 +139,43 @@ async def _run_alembic_upgrade(database_url: str) -> None:
     await asyncio.get_running_loop().run_in_executor(None, run_alembic_upgrade, database_url)
 
 
+#: ``session.info`` key holding rows queued with :func:`defer_row`.
+_DEFERRED_KEY = "vpp.deferred_rows"
+
+
+def defer_row(session: AsyncSession, row: object, *, on_error: bool = False) -> None:
+    """Queue ``row`` to be inserted in its own transaction when the request ends.
+
+    Used for the audit log (:mod:`vpp.audit`). The row is written *after* the
+    request's own transaction has committed (or, with ``on_error=True``, also
+    after it has been rolled back -- e.g. a failed login that answers 401).
+    A failure to insert it is logged and swallowed, so it never turns a
+    successful request into an error or undoes the request's own changes.
+    Only sessions from :func:`get_db` honour the queue.
+    """
+    session.info.setdefault(_DEFERRED_KEY, []).append((row, on_error))
+
+
+async def _write_deferred(session: AsyncSession, *, failed: bool) -> None:
+    queued = session.info.pop(_DEFERRED_KEY, [])
+    rows = [row for row, on_error in queued if on_error or not failed]
+    if not rows:
+        return
+    try:
+        session.add_all(rows)
+        await session.commit()
+    except Exception:
+        logger.warning("Could not write %d deferred row(s) (audit log)", len(rows), exc_info=True)
+        with contextlib.suppress(Exception):
+            await session.rollback()
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields an async database session."""
+    """FastAPI dependency that yields an async database session.
+
+    Commits when the request succeeds, rolls back when it raises; rows
+    queued with :func:`defer_row` are written afterwards.
+    """
     if _session_factory is None:
         raise RuntimeError("Database not initialised. Call init_db() during application startup.")
 
@@ -146,7 +185,9 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             await session.commit()
         except Exception:
             await session.rollback()
+            await _write_deferred(session, failed=True)
             raise
+        await _write_deferred(session, failed=False)
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:

@@ -18,12 +18,14 @@ customer as a site's ``owner_id`` (``POST/PATCH /api/v1/sites``).
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
 
+from vpp import audit
+from vpp.api.pagination import Page, page_params, paginate
 from vpp.api.routes.customer import customer_payload, devices_for, raise_billing
 from vpp.auth.security import get_password_hash, require_role, require_valid_password
 from vpp.db.engine import get_db
@@ -78,6 +80,7 @@ async def _check_tariff(session: AsyncSession, tariff_id: str | None) -> None:
 )
 async def create_customer(
     body: CustomerCreate,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(_admin),
 ):
@@ -103,29 +106,32 @@ async def create_customer(
     )
     await session.flush()
     await session.refresh(user)
+    audit.record(
+        session,
+        request,
+        "user.create",
+        actor=_user,
+        target_type="user",
+        target_id=user.id,
+        details={"username": user.username, "role": user.role},
+    )
     return await customer_payload(session, user)
 
 
 @router.get("/api/v1/customers", response_model=list[CustomerResponse])
 async def list_customers(
-    skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    response: Response,
+    page: Page = Depends(page_params(default_limit=100, max_limit=500, legacy_skip=True)),
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(_staff),
 ):
-    users = (
-        (
-            await session.execute(
-                select(UserModel)
-                .where(UserModel.role == UserRole.CUSTOMER.value)
-                .order_by(UserModel.username)
-                .offset(skip)
-                .limit(limit)
-            )
-        )
-        .scalars()
-        .all()
+    """Customers by username; paginated, total in ``X-Total-Count``."""
+    stmt = (
+        select(UserModel)
+        .where(UserModel.role == UserRole.CUSTOMER.value)
+        .order_by(UserModel.username, UserModel.id)
     )
+    users = await paginate(session, response, stmt, page)
     return [await customer_payload(session, u) for u in users]
 
 

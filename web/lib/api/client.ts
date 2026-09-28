@@ -14,6 +14,7 @@ export interface ApiError extends Error {
 async function request<T>(
   path: string,
   init: RequestInit = {},
+  onResponse?: (res: Response) => void,
 ): Promise<T> {
   const url = path.startsWith("http") ? path : `${API_PREFIX}${path}`;
   const res = await fetch(url, {
@@ -37,14 +38,33 @@ async function request<T>(
     err.detail = detail;
     throw err;
   }
+  onResponse?.(res);
   if (res.status === 204) return undefined as unknown as T;
   const ct = res.headers.get("content-type") || "";
   if (!ct.includes("json")) return (await res.text()) as unknown as T;
   return (await res.json()) as T;
 }
 
+/** A page of a list endpoint plus its unpaginated total (`X-Total-Count`). */
+export interface Paged<T> {
+  items: T;
+  total: number | null;
+}
+
+async function requestPaged<T>(path: string): Promise<Paged<T>> {
+  let total: number | null = null;
+  const items = await request<T>(path, {}, (res) => {
+    const raw = res.headers.get("x-total-count");
+    const n = raw === null ? NaN : Number(raw);
+    total = Number.isFinite(n) ? n : null;
+  });
+  return { items, total };
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  /** GET a paginated list; `total` comes from the `X-Total-Count` header. */
+  getPaged: <T>(path: string) => requestPaged<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, {
       method: "POST",

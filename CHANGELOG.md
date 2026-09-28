@@ -80,6 +80,14 @@ changes** before upgrading.
   (`429`; `VPP_LOGIN_MAX_FAILURES`, `VPP_LOGIN_LOCKOUT_SECONDS`).
 - **Migration `0009_user_management`** adds `users.token_version`,
   `users.last_login_at`, `api_keys.key_prefix` and `api_keys.last_used_at`.
+- **Migration `0012_audit_log`** adds the `audit_log` table.
+- **List endpoints are capped.** `GET /api/v1/users`,
+  `/api/v1/auth/api-keys` and `/api/v1/users/{id}/api-keys` now return at
+  most 100 rows by default (`limit` up to 500; they returned everything)
+  and `/api/v1/dr/responses`, `/api/v1/alerts` and
+  `/api/v1/optimization/setpoints` accept `offset`. A `limit` above an
+  endpoint's maximum is `422`. Page with `limit` / `offset` and read the
+  total from `X-Total-Count`.
 
 ### Added
 
@@ -104,6 +112,29 @@ changes** before upgrading.
 - Console: **Settings → Account** (change password, log out everywhere,
   own API keys with show-once creation) and **Settings → Users & API keys**
   (admin).
+- **Audit log**: logins (success, failure, throttled), logouts, session
+  revocation, API-key creation/revocation, user creation / role change /
+  (de)activation / password reset / deletion, password changes, and
+  privileged control actions (device dispatch with `apply`, V2G schedules,
+  dispatches and bids, OCPP remote start/stop, OpenADR opt overrides,
+  protocol connect/disconnect, configuration changes, market orders,
+  cancellations and live strategy runs) are recorded with actor, target,
+  client IP, outcome and secret-free details. Admins read it with
+  `GET /api/v1/audit` (filters: actor, action or action prefix, outcome,
+  target, since/until; paginated) and in the console under
+  **Settings → Audit log**. A failing audit insert never fails the request.
+- `DELETE /api/v1/users/{id}` (admin): deletes a user with their API keys,
+  customer profile and programme enrolments (owned sites and saved config
+  versions are kept, unlinked). Not your own account, never the last
+  active admin. The console's Users page has a Delete action.
+- `POST /api/v1/auth/logout` records a sign-out in the audit log; the
+  console's sign-out calls it.
+- **Pagination** for list endpoints that grow without bound: users, API
+  keys, audit log, resources, alerts, orders, trades, optimization runs /
+  dispatches, device commands, DR decisions, tariffs and customers take
+  `limit` (capped per endpoint) and `offset` (`skip` stays an alias where it
+  existed), keep returning a plain array and report the unpaginated total in
+  `X-Total-Count` (exposed through CORS and the console proxy).
 
 **Optimization**
 - DB-backed dispatch: single-interval allocation LP (Pyomo + HiGHS) with
@@ -361,6 +392,9 @@ changes** before upgrading.
   accepted; responses carry `Deprecation` and `Warning` headers).
 
 ### Fixed
+
+- The console's API proxy failed on `204 No Content` answers (it built a
+  response with a body for a null-body status); it now forwards them as-is.
 
 - Python 3.10 (the declared minimum) is supported again:
   - The WebSocket loop caught the builtin `TimeoutError`, which only aliases

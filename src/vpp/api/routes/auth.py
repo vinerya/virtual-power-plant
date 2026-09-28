@@ -12,6 +12,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from vpp import audit
+from vpp.api.pagination import Page, count_rows, page_params, set_total
 from vpp.auth.security import (
     generate_api_key,
     get_current_principal,
@@ -176,6 +178,15 @@ async def login(request: Request, response: Response, session: AsyncSession = De
         )
     retry_after = login_throttle.retry_after(username)
     if retry_after is not None:
+        audit.record(
+            session,
+            request,
+            "auth.login",
+            actor_username=username,
+            outcome="denied",
+            details={"reason": "throttled"},
+            always=True,
+        )
         raise _too_many_attempts(retry_after)
 
     user = await UserRepository.get_by_username(session, username)
@@ -184,10 +195,29 @@ async def login(request: Request, response: Response, session: AsyncSession = De
     password_ok = verify_user_password(user, password)
     if user is None or not password_ok or not user.is_active:
         login_throttle.record_failure(username)
+        if user is None:
+            reason = "unknown_user"
+        elif not password_ok:
+            reason = "bad_password"
+        else:
+            reason = "inactive_account"
+        audit.record(
+            session,
+            request,
+            "auth.login",
+            actor=user,
+            actor_username=username,
+            target_type="user",
+            target_id=user.id if user is not None else None,
+            outcome="failure",
+            details={"reason": reason},
+            always=True,
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     login_throttle.record_success(username)
     user.last_login_at = datetime.now(timezone.utc)
+    audit.record(session, request, "auth.login", actor=user, target_type="user", target_id=user.id)
     return _token_response(user)
 
 
@@ -208,11 +238,22 @@ async def create_user_account(session: AsyncSession, body: UserCreate) -> UserMo
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: UserCreate,
+    request: Request,
     session: AsyncSession = Depends(get_db),
-    _admin: UserModel = Depends(require_role(UserRole.ADMIN)),
+    admin: UserModel = Depends(require_role(UserRole.ADMIN)),
 ):
     """Create a new user (admin only). Same as ``POST /api/v1/users``."""
-    return await create_user_account(session, body)
+    user = await create_user_account(session, body)
+    audit.record(
+        session,
+        request,
+        "user.create",
+        actor=admin,
+        target_type="user",
+        target_id=user.id,
+        details={"username": user.username, "role": user.role},
+    )
+    return user
 
 
 @router.get("/me", response_model=MeResponse)
@@ -240,6 +281,7 @@ async def me(user: UserModel = Depends(get_current_principal)):
 @router.post("/password", response_model=Token)
 async def change_password(
     body: PasswordChange,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     principal: UserModel = Depends(get_current_principal),
 ):
@@ -256,6 +298,17 @@ async def change_password(
         raise _too_many_attempts(retry_after)
     if not verify_user_password(user, body.current_password):
         login_throttle.record_failure(user.username)
+        audit.record(
+            session,
+            request,
+            "auth.password_change",
+            actor=user,
+            target_type="user",
+            target_id=user.id,
+            outcome="failure",
+            details={"reason": "bad_current_password"},
+            always=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect"
         )
@@ -268,11 +321,38 @@ async def change_password(
     user.hashed_password = get_password_hash(body.new_password)
     revoke_user_sessions(user)
     logger.info("User %s changed their password; sessions revoked", user.username)
+    audit.record(
+        session, request, "auth.password_change", actor=user, target_type="user", target_id=user.id
+    )
     return _token_response(user)
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    request: Request,
+    session: AsyncSession = Depends(get_db),
+    principal: UserModel = Depends(get_current_principal),
+) -> Response:
+    """Record a sign-out in the audit log.
+
+    Session tokens are stateless JWTs: the client discards its token (the
+    web console clears its cookie). To invalidate every token of the
+    account, use ``POST /api/v1/auth/logout-all``.
+    """
+    audit.record(
+        session,
+        request,
+        "auth.logout",
+        actor=principal,
+        target_type="user",
+        target_id=principal.id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_everywhere(
+    request: Request,
     session: AsyncSession = Depends(get_db),
     principal: UserModel = Depends(get_current_principal),
 ) -> Response:
@@ -284,6 +364,9 @@ async def logout_everywhere(
     user = await _reload(session, principal)
     revoke_user_sessions(user)
     logger.info("User %s logged out of all sessions", user.username)
+    audit.record(
+        session, request, "auth.logout_all", actor=user, target_type="user", target_id=user.id
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -307,9 +390,18 @@ def api_key_info(key: APIKeyModel, username: str | None = None) -> APIKeyInfo:
 
 
 async def list_api_keys_for(
-    session: AsyncSession, *, user_id: str | None, include_revoked: bool
+    session: AsyncSession,
+    *,
+    user_id: str | None,
+    include_revoked: bool,
+    page: Page | None = None,
+    response: Response | None = None,
 ) -> list[APIKeyInfo]:
-    """API keys of one user (or all users when ``user_id`` is None), newest first."""
+    """API keys of one user (or all users when ``user_id`` is None), newest first.
+
+    With ``page`` only that page is returned; with ``response`` the total
+    goes into ``X-Total-Count``.
+    """
     stmt = (
         select(APIKeyModel, UserModel.username)
         .join(UserModel, UserModel.id == APIKeyModel.user_id)
@@ -319,8 +411,16 @@ async def list_api_keys_for(
         stmt = stmt.where(APIKeyModel.user_id == user_id)
     if not include_revoked:
         stmt = stmt.where(APIKeyModel.is_active.is_(True))
+    if response is not None:
+        set_total(response, await count_rows(session, stmt))
+    if page is not None:
+        stmt = stmt.offset(page.offset).limit(page.limit)
     rows = (await session.execute(stmt)).all()
     return [api_key_info(key, username) for key, username in rows]
+
+
+#: Pagination of the API-key listings.
+api_key_page = page_params(default_limit=100, max_limit=500)
 
 
 @router.post("/api-key", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
@@ -332,6 +432,7 @@ async def list_api_keys_for(
 )
 async def create_api_key(
     body: APIKeyCreate,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(get_current_user),
 ):
@@ -342,6 +443,15 @@ async def create_api_key(
     returned only in this response.
     """
     if user.role != UserRole.ADMIN.value and body.role.value != user.role:
+        audit.record(
+            session,
+            request,
+            "api_key.create",
+            actor=user,
+            outcome="denied",
+            details={"name": body.name, "role": body.role.value, "reason": "role_escalation"},
+            always=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot create an API key with a role higher than your own",
@@ -356,6 +466,15 @@ async def create_api_key(
         role=body.role.value,
         key_prefix=raw_key[:12],
     )
+    audit.record(
+        session,
+        request,
+        "api_key.create",
+        actor=user,
+        target_type="api_key",
+        target_id=key_obj.id,
+        details={"name": key_obj.name, "role": key_obj.role, "prefix": key_obj.key_prefix},
+    )
     return APIKeyResponse(
         id=key_obj.id,
         name=key_obj.name,
@@ -368,24 +487,34 @@ async def create_api_key(
 
 @router.get("/api-keys", response_model=list[APIKeyInfo])
 async def list_api_keys(
+    response: Response,
     all_users: bool = Query(False, alias="all", description="Admins only: every user's keys"),
     include_revoked: bool = Query(False, description="Also list revoked keys"),
+    page: Page = Depends(api_key_page),
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(get_current_principal),
 ):
-    """List your API keys (never the keys themselves); ``?all=true`` for admins."""
+    """List your API keys (never the keys themselves); ``?all=true`` for admins.
+
+    Paginated (``limit`` / ``offset``); the total is in ``X-Total-Count``.
+    """
     if all_users and user.role != UserRole.ADMIN.value:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Only admins can list all API keys"
         )
     return await list_api_keys_for(
-        session, user_id=None if all_users else user.id, include_revoked=include_revoked
+        session,
+        user_id=None if all_users else user.id,
+        include_revoked=include_revoked,
+        page=page,
+        response=response,
     )
 
 
 @router.delete("/api-keys/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def revoke_api_key(
     key_id: str,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     user: UserModel = Depends(get_current_principal),
 ) -> Response:
@@ -400,4 +529,13 @@ async def revoke_api_key(
     if key.is_active:
         key.is_active = False
         logger.info("API key %s (%s) revoked by %s", key.id, key.name, user.username)
+        audit.record(
+            session,
+            request,
+            "api_key.revoke",
+            actor=user,
+            target_type="api_key",
+            target_id=key.id,
+            details={"name": key.name, "owner_id": key.user_id},
+        )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

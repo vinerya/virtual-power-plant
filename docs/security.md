@@ -57,9 +57,10 @@ issue.
   `ver`: they are accepted until they expire only while the user's version
   is still 0, so the first revocation event for a user kills them too.
   Rotating `VPP_SECRET_KEY` still invalidates everything at once.
-- **Account safety.** Admins cannot deactivate or demote themselves, the
-  last active admin cannot be deactivated or demoted (row-locked on
-  PostgreSQL against concurrent demotions), and admins reset their own
+- **Account safety.** Admins cannot deactivate, demote or delete
+  themselves, the last active admin cannot be deactivated, demoted or
+  deleted (row-locked on PostgreSQL against concurrent changes), and
+  admins reset their own
   password only through the self-service route, which requires the current
   password. `vpp users set-password` recovers a locked-out installation from
   the host.
@@ -74,7 +75,9 @@ issue.
   a higher role. Keys show a 12-character prefix and a last-used time
   (updated at most once a minute); owners and admins revoke them with
   `DELETE /api/v1/auth/api-keys/{id}`. Deactivating a user revokes all of
-  their keys (re-activation does not restore them). Password changes and
+  their keys (re-activation does not restore them); deleting a user
+  (`DELETE /api/v1/users/{id}`) deletes their keys, and their tokens stop
+  working because the account no longer exists. Password changes and
   session revocation do **not** affect API keys.
 - **WebSocket.** Handshakes require a token by default
   (`VPP_WS_AUTH_REQUIRED`). Browsers should use the 60-second socket-only
@@ -176,10 +179,54 @@ enabled) and the V2G/OCPP routes send setpoints to equipment.
   (`dr_event_responses`), alerts, and every applied platform configuration
   document are persisted.
 - Every HTTP request is logged once (`vpp.access`) with its request id.
-- User-management actions (user created, role/activation changed,
-  password changed or reset, sessions revoked, API key revoked) are logged
-  with the acting admin's username. There is no persisted audit log of *who*
-  changed users, tariffs or resources.
+- Security-relevant actions are persisted in the **audit log** (below).
+  Tariff and resource edits are not audited individually; configuration
+  changes are (and every configuration document is kept).
+
+### Audit log
+
+Table `audit_log` (migration `0012_audit_log`), read by admins with
+`GET /api/v1/audit` (filters and pagination in
+[api.md](api.md#audit-log)); the console shows it under
+**Settings → Audit log**. Each entry has the time, the actor's user id
+and username (both empty for anonymous callers; for a failed login the
+*attempted* username), the action, its target, the client IP, the outcome
+(`success`, `failure` or `denied`) and small JSON details.
+
+| Action | Recorded when |
+|---|---|
+| `auth.login` | every login attempt: `success`, `failure` (details `reason`: `unknown_user`, `bad_password`, `inactive_account`) or `denied` (`throttled`) |
+| `auth.logout`, `auth.logout_all` | sign-out (`POST /auth/logout`, called by the console) / "log out everywhere" |
+| `auth.password_change` | own password changed, or a wrong current password (`failure`) |
+| `api_key.create`, `api_key.revoke` | key created (name, role, 12-character prefix), refused role escalation (`denied`), key revoked |
+| `user.create`, `user.role_change`, `user.deactivate`, `user.activate`, `user.password_reset`, `user.sessions_revoke`, `user.delete` | admin user management, incl. customer onboarding; refusals for your own account or the last admin are `denied` |
+| `control.dispatch` | `POST /optimization/dispatch` with `"apply": true` (device setpoints), or its refusal for read-only roles |
+| `control.v2g_schedule`, `control.v2g_dispatch`, `control.v2g_bid` | V2G schedules / dispatches pushed to chargers, flexibility bids |
+| `control.ocpp_remote_start`, `control.ocpp_remote_stop` | OCPP remote start/stop (`failure` when the charger rejects it) |
+| `control.dr_opt` | OpenADR opt-in/out override |
+| `control.protocol_connect`, `control.protocol_disconnect` | protocol adapters connected/disconnected (only option *names* are recorded) |
+| `config.update` | a new platform configuration version applied |
+| `market.order_submit`, `market.order_cancel`, `market.strategy_run` | orders placed / cancelled on the venue (risk rejections are `denied`), live (non-dry-run) strategy runs |
+
+Guarantees and limits:
+
+- **No secrets.** Passwords, tokens and API keys are never passed to the
+  audit log; as a second line of defence, detail keys that look like
+  credentials (`password`, `token`, `secret`, `key`, `authorization`, ...)
+  are dropped and details are capped at 2 KB.
+- **Client IP** is resolved like the rate limiter's: `X-Forwarded-For` /
+  `X-Real-IP` count only when the peer is in `VPP_TRUSTED_PROXIES`.
+- **Consistency.** An entry for a successful action is written in its own
+  transaction right after the action's changes committed, so a rolled-back
+  action is not logged as done. Failures and refusals are written even
+  though the request fails. If the audit insert itself fails, the request
+  still succeeds and a warning is logged (`vpp.db.engine`).
+- Actor columns are plain copies, not foreign keys: entries survive user
+  deletion.
+- The table is append-only from the API; nothing prunes it. Archive or
+  delete old rows with SQL according to your retention policy.
+- Pure RBAC refusals (`403` from a role check, `401`) are not recorded,
+  except the ones listed above.
 
 ## Supply chain
 
