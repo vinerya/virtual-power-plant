@@ -393,6 +393,10 @@ def create_app(
     )
 
     # -- Middleware ----------------------------------------------------------
+    # Innermost: serve ``/x`` and ``/x/`` alike instead of 307-redirecting.
+    from vpp.api.middleware import TrailingSlashMiddleware
+
+    app.add_middleware(TrailingSlashMiddleware, router=app.router)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
