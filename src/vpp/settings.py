@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     api_key_header: str = "X-API-Key"
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = 120
+    # WebSocket (/ws, /api/v1/ws). When true (default) a socket must present
+    # a valid JWT (``token`` query param, ``bearer, <jwt>`` subprotocol pair,
+    # or Authorization header) or it is refused with close code 1008.
+    ws_auth_required: bool = True
+    # Lifetime of the short-lived tokens minted by POST /api/v1/ws/token.
+    ws_token_expire_seconds: int = 60
 
     # Database
     database_url: str = "sqlite+aiosqlite:///./vpp.db"

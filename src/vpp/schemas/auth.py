@@ -53,6 +53,9 @@ class TokenPayload(BaseModel):
     username: str
     role: UserRole
     exp: int  # expiration timestamp
+    # Token type. None for regular access tokens; "ws" for the short-lived
+    # WebSocket handshake tokens, which the HTTP API must refuse.
+    typ: Optional[str] = None
 
 
 class APIKeyCreate(BaseModel):
