@@ -13,13 +13,16 @@ export function ErrorState({
   error,
   onRetry,
   className,
+  message,
 }: {
   title: string;
   error?: unknown;
   onRetry?: () => void;
   className?: string;
+  /** Server-provided explanation; replaces the generic HTTP-status text. */
+  message?: string | null;
 }) {
-  const detail = describeError(error);
+  const detail = message || describeError(error);
   return (
     <div
       role="alert"

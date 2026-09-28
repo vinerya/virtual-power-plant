@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { BillBreakdown } from "@/components/tariffs/bill-breakdown";
 import { getMyBill } from "@/lib/api/customer";
 import { ErrorState } from "@/components/ui/error-state";
+import { BillUnavailable, isBillUnavailable } from "@/components/customer/bill-unavailable";
 
 export default function CustomerBillPage() {
   const q = useQuery({
@@ -23,6 +24,8 @@ export default function CustomerBillPage() {
 
       {q.isLoading ? (
         <Skeleton className="h-72 w-full" />
+      ) : isBillUnavailable(q.error) ? (
+        <BillUnavailable error={q.error} />
       ) : q.isError || !q.data ? (
         <ErrorState
           title="Failed to load your bill."

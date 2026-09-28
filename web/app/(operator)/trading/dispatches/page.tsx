@@ -1,4 +1,7 @@
+import { Suspense } from "react";
 import { DispatchesView } from "@/components/dispatch/dispatches-view";
+import { TradingNav } from "@/components/trading/trading-nav";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function DispatchesPage() {
   return (
@@ -10,7 +13,11 @@ export default function DispatchesPage() {
           diagnostics.
         </p>
       </div>
-      <DispatchesView />
+      <TradingNav />
+      {/* useSearchParams (the ?run= deep link) needs a Suspense boundary. */}
+      <Suspense fallback={<Skeleton className="h-64 w-full" />}>
+        <DispatchesView />
+      </Suspense>
     </div>
   );
 }

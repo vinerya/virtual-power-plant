@@ -25,3 +25,8 @@ export function listDispatches(
     `/api/v1/optimization/history${qs ? `?${qs}` : ""}`,
   );
 }
+
+/** One persisted run (used to deep-link `/trading/dispatches?run=<id>`). */
+export function getDispatch(runId: string): Promise<DispatchRun> {
+  return api.get<DispatchRun>(`/api/v1/dispatches/${encodeURIComponent(runId)}`);
+}

@@ -41,6 +41,37 @@ export function formatRelativeTime(
   return `${day}d ago`;
 }
 
+/** `$1,234.56` style money (sign preserved). `—` for non-finite values. */
+export function formatMoney(v: number | null | undefined, currency = "USD"): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 2,
+  }).format(v);
+}
+
+/** Fixed-decimals number with thousands separators; `—` for null/NaN. */
+export function formatNumber(v: number | null | undefined, digits = 2): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  return v.toLocaleString(undefined, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+}
+
+/**
+ * Parse a backend datetime. FastAPI emits naive datetimes (no offset) for
+ * UTC columns; treat those as UTC rather than local time.
+ */
+export function parseApiDate(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
+  const hasZone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(iso);
+  const d = new Date(hasZone ? iso : `${iso}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   if (typeof navigator !== "undefined" && navigator.clipboard) {
     await navigator.clipboard.writeText(text);
