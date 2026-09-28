@@ -274,11 +274,11 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         use_alembic=settings.use_alembic,
     )
 
-    # Re-apply the newest stored config document (PUT /api/v1/config); never
-    # blocks startup -- an empty/missing table keeps the defaults.
+    # Re-apply the newest stored config document (PUT /api/v1/config). With
+    # none stored, VPP_CONFIG_PATH (if set) is loaded instead, else defaults.
     from vpp.api.routes.config import apply_stored_config
 
-    await apply_stored_config(get_session_factory())
+    await apply_stored_config(get_session_factory(), settings.config_file_path)
 
     event_bridge_sub_id = subscribe_event_bus_to_websocket(get_event_bus(), websocket_manager)
     observability = await start_observability(settings, get_event_bus())

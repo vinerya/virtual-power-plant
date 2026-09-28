@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import bcrypt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,28 @@ from vpp.schemas.auth import (
 from vpp.settings import Settings, get_settings
 
 _bearer_scheme = HTTPBearer(auto_error=False)
-_api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+class _ConfiguredAPIKeyHeader(APIKeyHeader):
+    """``APIKeyHeader`` whose header name comes from ``VPP_API_KEY_HEADER``.
+
+    The name is read from the settings on every request (so it follows
+    ``get_settings.cache_clear()`` in tests); the OpenAPI security scheme
+    uses the name configured when this module is imported.
+    """
+
+    def __init__(self) -> None:
+        try:
+            name = get_settings().api_key_header
+        except ValueError:  # invalid settings surface later, in create_app
+            name = str(Settings.model_fields["api_key_header"].default)
+        super().__init__(name=name, auto_error=False)
+
+    async def __call__(self, request: Request) -> str | None:
+        return request.headers.get(get_settings().api_key_header) or None
+
+
+_api_key_header = _ConfiguredAPIKeyHeader()
 
 
 # ---------------------------------------------------------------------------

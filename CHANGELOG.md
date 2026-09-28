@@ -273,6 +273,11 @@ changes** before upgrading.
 
 ### Fixed
 
+- `VPP_API_KEY_HEADER` now sets the header API keys are read from (it was
+  ignored in favour of a hard-coded `X-API-Key`).
+- `VPP_CONFIG_PATH` is now loaded at startup when no configuration document
+  has been stored; a stored document still wins, and a missing or invalid
+  file fails startup. A test fails if a new setting is never read.
 - EventBus publishes now reach connected WebSocket clients (previously two
   disconnected pub/sub systems), and non-alert events no longer land on the
   `alerts` channel.
@@ -317,6 +322,8 @@ changes** before upgrading.
 ### Removed
 
 - Redis setting and compose service.
+- `VPP_METRICS_PREFIX`: it was never read (metric names are fixed to
+  `vpp_*`, which the Grafana dashboards rely on). Setting it is harmless.
 - Dead modules shadowed by packages: `vpp/models.py`, and the flat
   `analysis.py`, `config.py`, `events.py`, `optimization.py`,
   `simulation.py`, `visualization.py`.

@@ -56,7 +56,6 @@ class Settings(BaseSettings):
 
     # Monitoring
     metrics_enabled: bool = True
-    metrics_prefix: str = "vpp"
     # When set, GET /metrics requires "Authorization: Bearer <token>".
     metrics_bearer_token: str | None = None
     # Structured logging: JSON lines (None -> JSON only when env=production)
@@ -165,7 +164,8 @@ class Settings(BaseSettings):
     trading_market_data_enabled: bool = True
     trading_market_data_interval_seconds: float = 5.0
 
-    # VPP Config
+    # Platform configuration document loaded at startup when none has been
+    # stored with PUT /api/v1/config yet (a stored document always wins).
     config_path: str | None = None
     default_timezone: str = "UTC"
 

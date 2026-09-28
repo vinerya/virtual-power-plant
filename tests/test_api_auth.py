@@ -163,3 +163,33 @@ def test_effective_api_key_role_takes_the_lesser_privilege():
     assert effective_api_key_role("admin", "customer") == "customer"
     assert effective_api_key_role("researcher", "admin") == "researcher"
     assert effective_api_key_role("bogus", "admin") == "bogus"  # unknown ranks lowest
+
+
+@pytest.mark.asyncio
+async def test_api_key_header_name_follows_setting(
+    client: AsyncClient, auth_headers: dict, monkeypatch
+):
+    """``VPP_API_KEY_HEADER`` renames the header API keys are read from."""
+    from vpp.settings import get_settings
+
+    minted = await client.post(
+        "/api/v1/auth/api-key",
+        json={"name": "custom-header-key", "role": "viewer"},
+        headers=auth_headers,
+    )
+    assert minted.status_code == 201
+    key = minted.json()["key"]
+
+    monkeypatch.setenv("VPP_API_KEY_HEADER", "X-VPP-Key")
+    get_settings.cache_clear()
+    try:
+        custom = await client.get("/api/v1/auth/me", headers={"X-VPP-Key": key})
+        assert custom.status_code == 200
+        # The default header name is no longer consulted.
+        default = await client.get("/api/v1/auth/me", headers={"X-API-Key": key})
+        assert default.status_code == 401
+    finally:
+        monkeypatch.delenv("VPP_API_KEY_HEADER")
+        get_settings.cache_clear()
+    restored = await client.get("/api/v1/auth/me", headers={"X-API-Key": key})
+    assert restored.status_code == 200

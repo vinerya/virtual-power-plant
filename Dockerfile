@@ -51,7 +51,7 @@ WORKDIR /app
 COPY --from=builder /wheels /wheels
 RUN pip install /wheels/*.whl && rm -rf /wheels
 
-# Sample configuration files (e.g. for VPP_CONFIG_PATH).
+# Sample configuration files (library examples).
 COPY configs/ configs/
 
 # Non-root user. /app/data is a writable place for a SQLite database

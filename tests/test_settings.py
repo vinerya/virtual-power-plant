@@ -40,3 +40,40 @@ def test_removed_redis_url_is_ignored(monkeypatch):
     monkeypatch.setenv("VPP_REDIS_URL", "redis://localhost:6379/0")
     s = Settings(secret_key="x")
     assert not hasattr(s, "redis_url")
+
+
+# Settings that are intentionally not read from src/vpp. Keep this empty
+# unless there is a documented reason; an unread VPP_* variable misleads
+# operators into thinking it does something.
+_UNREFERENCED_SETTINGS_ALLOWLIST: dict[str, str] = {
+    # Consumed by the process launcher (`vpp serve` / uvicorn workers), which
+    # is being wired separately.
+    "api_workers": "process launcher",
+}
+
+
+def test_every_setting_is_read_somewhere():
+    """Guard against dead settings: each field must be referenced in src/vpp.
+
+    A reference is the field name as a word in any module other than
+    settings.py, or ``self.<field>`` inside settings.py (validators and
+    properties such as ``config_file_path``).
+    """
+    import re
+    from pathlib import Path
+
+    import vpp
+
+    pkg = Path(vpp.__file__).parent
+    settings_src = (pkg / "settings.py").read_text(encoding="utf-8")
+    other_src = "\n".join(
+        p.read_text(encoding="utf-8") for p in pkg.rglob("*.py") if p.name != "settings.py"
+    )
+    unread = [
+        name
+        for name in Settings.model_fields
+        if name not in _UNREFERENCED_SETTINGS_ALLOWLIST
+        and not re.search(rf"\b{name}\b", other_src)
+        and not re.search(rf"\bself\.{name}\b", settings_src)
+    ]
+    assert not unread, f"Settings never read in src/vpp (remove them or use them): {unread}"

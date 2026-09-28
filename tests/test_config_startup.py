@@ -103,3 +103,46 @@ async def test_lifespan_applies_stored_config(monkeypatch, preserve_db_globals):
         fastapi_app = app_module.create_app()
         async with fastapi_app.router.lifespan_context(fastapi_app):
             assert get_live_config().name == "Lifespan VPP"
+
+
+@pytest.mark.asyncio
+async def test_config_path_used_when_nothing_stored(tmp_path):
+    cfg = tmp_path / "vpp.yaml"
+    cfg.write_text(_doc(name="File VPP"))
+    async with _db() as (_path, factory):
+        assert await apply_stored_config(factory, cfg) is None
+    assert get_live_config().name == "File VPP"
+
+
+@pytest.mark.asyncio
+async def test_stored_document_wins_over_config_path(tmp_path):
+    cfg = tmp_path / "vpp.yaml"
+    cfg.write_text(_doc(name="File VPP"))
+    async with _db() as (_path, factory):
+        await _store(factory, _doc(name="Stored VPP"))
+        assert await apply_stored_config(factory, cfg) == 1
+    assert get_live_config().name == "Stored VPP"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [None, "name: [unclosed", "bogus_key: 1\n"])
+async def test_bad_config_path_fails_startup(tmp_path, content):
+    cfg = tmp_path / "vpp.yaml"
+    if content is not None:
+        cfg.write_text(content)
+    async with _db() as (_path, factory):
+        with pytest.raises(ValueError, match="VPP_CONFIG_PATH"):
+            await apply_stored_config(factory, cfg)
+    assert get_live_config().name == VPPConfig().name
+
+
+@pytest.mark.asyncio
+async def test_lifespan_loads_config_path(monkeypatch, preserve_db_globals, tmp_path):
+    cfg = tmp_path / "vpp.yaml"
+    cfg.write_text(_doc(name="Env File VPP"))
+    async with _db() as (path, _factory):
+        settings = Settings(database_url=f"sqlite+aiosqlite:///./{path}", config_path=str(cfg))
+        monkeypatch.setattr(app_module, "get_settings", lambda: settings)
+        fastapi_app = app_module.create_app()
+        async with fastapi_app.router.lifespan_context(fastapi_app):
+            assert get_live_config().name == "Env File VPP"
