@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from vpp.api.optimization_support import (
+    execute_dispatch,
     finish_run,
     load_fleet_assets,
     run_to_dict,
@@ -40,7 +41,6 @@ from vpp.db.models import UserModel
 from vpp.db.repositories import OptimizationRepository, TariffRepository
 from vpp.optimization.planning import (
     FleetAsset,
-    allocate_power,
     explain_schedule,
     plan_schedule,
     run_closed_loop_backtest,
@@ -137,39 +137,43 @@ async def dispatch(
     energy limits over the interval, prices battery throughput with an
     SOH-aware wear cost, and prefers renewables; falls back to a
     headroom-proportional split when the solver is unavailable or fails.
+
+    With ``apply=true`` the stationary allocations are also written to the
+    devices that opted in (``metadata.modbus.control``, see
+    :mod:`vpp.control.actuator`), valid for ``interval_minutes``; the
+    per-resource outcome is returned in ``device_deliveries``. Applying
+    requires the ``admin`` or ``operator`` role.
     """
+    if body.apply and _user.role not in ("admin", "operator"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Role '{_user.role}' may not apply setpoints to devices",
+        )
     assets, missing = await load_fleet_assets(session, body.resource_ids)
     if missing:
         raise HTTPException(
             status_code=404, detail={"message": "unknown resource ids", "missing": missing}
         )
 
-    dt_hours = body.interval_minutes / 60.0
-    inputs = {
-        "target_power_kw": body.target_power_kw,
-        "interval_minutes": body.interval_minutes,
-        "resource_ids": [a.id for a in assets],
-        "resource_constraints": body.resource_constraints,
-        "wear_cost": body.wear_cost,
-        "replacement_cost_per_kwh": body.replacement_cost_per_kwh,
-        "force_fallback": body.force_fallback,
-        "resources": [a.summary() for a in assets],
-    }
-    run_id, result, solve_ms = await _run_tracked(
+    result = await execute_dispatch(
         session,
-        "dispatch",
-        inputs,
-        lambda: allocate_power(
-            assets,
-            body.target_power_kw,
-            dt_hours=dt_hours,
-            constraints=body.resource_constraints,
-            timeout_ms=body.timeout_ms,
-            force_fallback=body.force_fallback,
-            wear_cost=body.wear_cost,
-            replacement_cost_per_kwh=body.replacement_cost_per_kwh,
-        ),
+        assets,
+        body.target_power_kw,
+        interval_minutes=body.interval_minutes,
+        constraints=body.resource_constraints,
+        problem_type="dispatch",
+        timeout_ms=body.timeout_ms,
+        force_fallback=body.force_fallback,
+        wear_cost=body.wear_cost,
+        replacement_cost_per_kwh=body.replacement_cost_per_kwh,
+        apply=body.apply,
+        source="api.optimization.dispatch",
     )
+    if result.get("error"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"optimization failed: {result['error']}",
+        )
 
     by_id = {a.id: a for a in assets}
     allocations: list[ResourceAllocation] = []
@@ -193,54 +197,55 @@ async def dispatch(
             )
         )
 
-    shortfall = float(result["shortfall_kw"])
-    solved = result["status"] in ("success", "fallback_used")
-    success = solved and abs(shortfall) <= _SHORTFALL_TOL_KW
-    if not solved:
-        run_status = "failed"
-    elif not success:
-        run_status = "shortfall"
-    else:
-        run_status = result["status"]
-    message = result.get("message") or ""
-    if solved and not success:
-        message = (
-            f"target not reachable with the available resources; "
-            f"delivered {result['delivered_kw']:.3f} kW, shortfall {shortfall:.3f} kW"
-        )
-
-    await finish_run(
-        session,
-        run_id,
-        problem_type="dispatch",
-        status=run_status,
-        objective_value=result["objective_value"],
-        solve_time_ms=solve_ms,
-        solver=result["method"],
-        fallback_used=result["fallback_used"],
-        solution={
-            "allocations": result["allocations"],
-            "delivered_kw": result["delivered_kw"],
-            "shortfall_kw": shortfall,
-            "bounds": result["bounds"],
-            "method": result["method"],
-        },
-        metadata={"message": message, "total_cost": result["objective_value"]},
-    )
     return DispatchResponse(
-        success=success,
+        success=result["success"],
         target_power_kw=body.target_power_kw,
         actual_power_kw=round(float(result["delivered_kw"]), 6),
         allocations=allocations,
-        solve_time_ms=round(solve_ms, 3),
+        solve_time_ms=round(float(result["solve_time_ms"]), 3),
         fallback_used=result["fallback_used"],
-        message=message,
-        run_id=run_id,
-        status=run_status,
+        message=result["message"],
+        run_id=result["run_id"],
+        status=result["status"],
         method=result["method"],
-        shortfall_kw=round(shortfall, 6),
-        objective_value=result["objective_value"],
+        shortfall_kw=round(float(result["shortfall_kw"]), 6),
+        objective_value=_finite_or_zero(result["objective_value"]),
+        applied=bool(body.apply),
+        device_deliveries=result["device_deliveries"],
     )
+
+
+@router.get("/setpoints")
+async def device_setpoints(
+    resource_id: str | None = Query(None, description="Only commands for this resource"),
+    limit: int = Query(50, ge=1, le=500),
+    session: AsyncSession = Depends(get_db),
+    _user: UserModel = Depends(get_current_user),
+):
+    """Setpoint actuator state (kill switch, active setpoints) and recent device commands."""
+    from vpp.control.actuator import EVENT_LOG_TYPE, get_setpoint_actuator
+    from vpp.db.repositories import EventLogRepository
+
+    rows = await EventLogRepository.query(
+        session, event_type=EVENT_LOG_TYPE, resource_id=resource_id, limit=limit
+    )
+    recent = []
+    for row in rows:
+        try:
+            details = json.loads(row.details_json or "{}")
+        except ValueError:
+            details = {}
+        created = _utc(row.created_at)
+        recent.append(
+            {
+                **(details if isinstance(details, dict) else {}),
+                "id": row.id,
+                "resource_id": row.resource_id,
+                "severity": row.severity,
+                "created_at": created.isoformat() if created else None,
+            }
+        )
+    return {**get_setpoint_actuator().status(), "recent": recent}
 
 
 # ---------------------------------------------------------------------------

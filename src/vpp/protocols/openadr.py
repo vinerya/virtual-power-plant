@@ -328,6 +328,17 @@ class OpenADRAdapter(ProtocolAdapter):
         except asyncio.QueueEmpty:
             return None
 
+    def _enqueue(self, msg: ProtocolMessage) -> None:
+        """Buffer *msg* for :meth:`receive`, dropping the oldest when full.
+
+        Nothing is required to drain this queue (subscribers get every
+        message via ``_dispatch``), so a full buffer is not an error.
+        """
+        if self._message_queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._message_queue.get_nowait()
+        self._message_queue.put_nowait(msg)
+
     # -- DR event management -------------------------------------------------
 
     def register_event_handler(self, handler: DREventHandler) -> None:
@@ -359,10 +370,7 @@ class OpenADRAdapter(ProtocolAdapter):
             source="openadr",
         )
         await self._dispatch(msg)
-        try:
-            self._message_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            self._metrics.errors += 1
+        self._enqueue(msg)
 
         # Run handlers
         for handler in self._event_handlers:

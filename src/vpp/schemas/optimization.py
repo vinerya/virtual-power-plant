@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Payload bounds. Schedules are persisted with every run and returned by the
 # history endpoints, so their size is capped: 288 steps = 3 days at 15 min or
@@ -58,6 +58,34 @@ class DispatchRequest(BaseModel):
     replacement_cost_per_kwh: float = Field(250.0, gt=0, le=10_000)
     timeout_ms: int = Field(5000, gt=0, le=60_000, description="Solver timeout in ms")
     force_fallback: bool = Field(False, description="Force rule-based fallback")
+    apply: bool = Field(
+        False,
+        description=(
+            "Write the stationary allocations to opted-in devices (metadata.modbus.control) "
+            "for the interval. Requires VPP_CONTROL_ENABLED; default false = plan only"
+        ),
+    )
+
+
+class DeviceDelivery(BaseModel):
+    """Outcome of writing one resource's setpoint (``apply=true``)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    resource_id: str
+    resource_name: str | None = None
+    status: str = Field(
+        ...,
+        description=(
+            "accepted | unchanged | deferred | simulated | failed | offline | disabled | "
+            "not_configured"
+        ),
+    )
+    requested_kw: float | None = None
+    setpoint_kw: float | None = None
+    clamped: bool = False
+    verified: bool | None = None
+    reason: str = ""
 
 
 class ResourceAllocation(BaseModel):
@@ -98,6 +126,11 @@ class DispatchResponse(BaseModel):
     shortfall_kw: float = 0.0
     objective_value: float = Field(
         0.0, description="Linear marginal cost of the allocation over the interval"
+    )
+    applied: bool = False
+    device_deliveries: list[DeviceDelivery] = Field(
+        default_factory=list,
+        description="Per-resource setpoint delivery (only when the request set apply=true)",
     )
 
 

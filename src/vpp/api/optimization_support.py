@@ -328,30 +328,50 @@ async def execute_dispatch(
     extra_inputs: dict[str, Any] | None = None,
     timeout_ms: int = 5000,
     force_fallback: bool = False,
+    wear_cost: bool = True,
+    replacement_cost_per_kwh: float | None = None,
+    apply: bool = False,
+    actuator: Any = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """Split *target_power_kw* (export-positive) across *assets* and record the run.
 
-    The same allocation (Pyomo/HiGHS LP with rule-based fallback via
-    :func:`vpp.optimization.planning.allocate_power`) and the same run
-    bookkeeping (``optimization_runs`` row + ``OPTIMIZATION_*`` events) as
-    ``POST /api/v1/optimization/dispatch``, callable in-process. Per-resource
-    power and energy limits are hard bounds of the allocation, so the result
-    never exceeds a resource's limits; an unreachable target is reported as
-    ``status="shortfall"``. Never raises for solver errors: a failed solve
-    is recorded and returned with ``status="failed"``.
+    The single implementation behind ``POST /api/v1/optimization/dispatch``
+    and the DR orchestrator: the allocation (Pyomo/HiGHS LP with rule-based
+    fallback via :func:`vpp.optimization.planning.allocate_power`) and the
+    run bookkeeping (``optimization_runs`` row + ``OPTIMIZATION_*`` events).
+    Per-resource power and energy limits are hard bounds of the allocation,
+    so the result never exceeds a resource's limits; an unreachable target
+    is reported as ``status="shortfall"``. Never raises for solver errors: a
+    failed solve is recorded and returned with ``status="failed"`` and an
+    ``error`` message.
+
+    With ``apply=True`` the stationary allocations are handed to the
+    setpoint actuator (:mod:`vpp.control.actuator`) for the dispatch
+    interval; its per-resource results are returned as
+    ``device_deliveries`` and stored in the run's metadata.
     """
     import time
 
     from starlette.concurrency import run_in_threadpool
 
-    from vpp.optimization.planning import allocate_power
+    from vpp.optimization.planning import DEFAULT_REPLACEMENT_COST_PER_KWH, allocate_power
 
+    replacement = (
+        DEFAULT_REPLACEMENT_COST_PER_KWH
+        if replacement_cost_per_kwh is None
+        else float(replacement_cost_per_kwh)
+    )
     dt_hours = max(1, int(interval_minutes)) / 60.0
     inputs = {
         "target_power_kw": target_power_kw,
         "interval_minutes": interval_minutes,
         "resource_ids": [a.id for a in assets],
         "resource_constraints": constraints or {},
+        "wear_cost": wear_cost,
+        "replacement_cost_per_kwh": replacement,
+        "force_fallback": force_fallback,
+        "apply": apply,
         "resources": [a.summary() for a in assets],
         **(extra_inputs or {}),
     }
@@ -366,6 +386,8 @@ async def execute_dispatch(
                 constraints=constraints,
                 timeout_ms=timeout_ms,
                 force_fallback=force_fallback,
+                wear_cost=wear_cost,
+                replacement_cost_per_kwh=replacement,
             )
         )
     except Exception as exc:
@@ -390,7 +412,10 @@ async def execute_dispatch(
             "delivered_kw": 0.0,
             "shortfall_kw": float(target_power_kw),
             "message": message,
+            "error": message,
             "solve_time_ms": solve_ms,
+            "objective_value": None,
+            "device_deliveries": [],
         }
     solve_ms = (time.perf_counter() - t0) * 1000
 
@@ -409,6 +434,22 @@ async def execute_dispatch(
             f"target not reachable with the available resources; "
             f"delivered {result['delivered_kw']:.3f} kW, shortfall {shortfall:.3f} kW"
         )
+    deliveries: list[dict[str, Any]] = []
+    run_metadata: dict[str, Any] = {"message": message, "total_cost": result["objective_value"]}
+    if apply and solved:
+        if actuator is None:
+            from vpp.control.actuator import get_setpoint_actuator
+
+            actuator = get_setpoint_actuator()
+        deliveries = await actuator.apply(
+            assets,
+            dict(result["allocations"]),
+            source=source or problem_type,
+            run_id=run.id,
+            ttl_s=max(1, int(interval_minutes)) * 60.0,
+            session=session,
+        )
+        run_metadata["device_deliveries"] = deliveries
     await finish_run(
         session,
         run.id,
@@ -425,7 +466,7 @@ async def execute_dispatch(
             "bounds": result["bounds"],
             "method": result["method"],
         },
-        metadata={"message": message, "total_cost": result["objective_value"]},
+        metadata=run_metadata,
     )
     return {
         "run_id": run.id,
@@ -439,6 +480,8 @@ async def execute_dispatch(
         "shortfall_kw": shortfall,
         "message": message,
         "solve_time_ms": solve_ms,
+        "objective_value": result["objective_value"],
+        "device_deliveries": deliveries,
     }
 
 

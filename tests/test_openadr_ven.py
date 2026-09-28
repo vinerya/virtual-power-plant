@@ -659,3 +659,15 @@ def test_simulated_event_state_advances():
     adapter._events["S"] = evt
     adapter._advance_event_states()
     assert evt.status == DREventStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_full_buffer_drops_oldest_instead_of_counting_errors():
+    adapter = OpenADRAdapter()
+    adapter.configure(role="ven", poll_interval_s=0)
+    await adapter.connect()
+    for i in range(510):
+        await adapter.handle_incoming_event(DREvent(event_id=f"E{i}", start_time=time.time()))
+    assert adapter.metrics.errors == 0
+    oldest = await adapter.receive()
+    assert oldest is not None and oldest.payload["event_id"] == "E10"

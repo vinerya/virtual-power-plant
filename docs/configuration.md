@@ -162,6 +162,17 @@ OpenADR or IEEE 2030.5 is enabled.
 | `VPP_DR_INCLUDE_V2G` | `true` | Include plugged-in, V2G-capable vehicles (setpoints sent via OCPP). |
 | `VPP_DR_IEEE2030_5_SET_MAX_W` | unset | `setMaxW` used for percentage controls (`opModFixedW`, `opModMaxLimW`); unset = the fleet's current export capability. |
 
+## Device control (setpoint actuator)
+
+See [protocols.md](protocols.md#device-control-setpoint-actuator). Per-device
+settings live in each resource's `metadata.modbus.control`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VPP_CONTROL_ENABLED` | `false` | Global kill switch. While false nothing is written to any device (dispatch reports `disabled`). |
+| `VPP_CONTROL_WATCHDOG_INTERVAL_S` | `5.0` | How often expiry, deferred writes and keep-alives are checked. |
+| `VPP_CONTROL_EXPIRY_GRACE_S` | `30.0` | A setpoint lives for its dispatch interval plus this, then falls back to `safe_setpoint_kw` or is released. |
+
 ## Simulated trading venue
 
 | Variable | Default | Meaning |

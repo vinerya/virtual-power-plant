@@ -159,6 +159,15 @@ class Settings(BaseSettings):
     dr_ieee2030_5_set_max_w: float | None = None  # setMaxW for %-controls (default: fleet)
     v2g_max_profile_periods: int = 48  # ChargingScheduleMaxPeriods budget per profile
 
+    # Device control (vpp.control.actuator): write dispatch setpoints to
+    # batteries/inverters that opted in via metadata.modbus.control. Global
+    # kill switch, off by default: nothing is written while false.
+    control_enabled: bool = False
+    control_watchdog_interval_s: float = 5.0  # expiry / deferred-write / keepalive check
+    control_expiry_grace_s: float = (
+        30.0  # setpoint lives dispatch interval + this, then falls back
+    )
+
     # Simulated trading venue: periodically advance simulated prices, match
     # resting orders, and publish `market_data` events. Everything it emits
     # is labelled source="simulated"; no orders leave the process.

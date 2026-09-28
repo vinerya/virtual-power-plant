@@ -32,6 +32,7 @@ class EventType(str, Enum):
     OPTIMIZATION_COMPLETED = "optimization_completed"
     OPTIMIZATION_FAILED = "optimization_failed"
     DISPATCH_EXECUTED = "dispatch_executed"
+    DEVICE_SETPOINT = "device_setpoint"  # setpoint written to / released on a device
 
     # Trading
     ORDER_SUBMITTED = "order_submitted"

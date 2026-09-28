@@ -252,12 +252,13 @@ async def test_dispatch_skips_offline_and_404s_unknown(client, auth_headers, db_
 async def test_dispatch_solver_crash_marks_run_failed(
     client, auth_headers, captured_events, monkeypatch
 ):
-    from vpp.api.routes import optimization as opt_routes
+    from vpp.optimization import planning
 
     def _boom(*_a, **_k):
         raise RuntimeError("solver exploded")
 
-    monkeypatch.setattr(opt_routes, "allocate_power", _boom)
+    # The route delegates to execute_dispatch, which resolves the solver here.
+    monkeypatch.setattr(planning, "allocate_power", _boom)
     b = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=400, soc=0.5)
     resp = await client.post(
         "/api/v1/optimization/dispatch",

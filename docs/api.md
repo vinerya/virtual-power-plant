@@ -219,7 +219,8 @@ socket `/ocpp/{charge_point_id}` is described in
 | GET | `/api/v1/resources/{resource_id}` | any operator-side role |
 | PUT | `/api/v1/resources/{resource_id}` | admin, operator |
 | DELETE | `/api/v1/resources/{resource_id}` | admin, operator |
-| POST | `/api/v1/optimization/dispatch` | any operator-side role |
+| POST | `/api/v1/optimization/dispatch` | any operator-side role; `"apply": true` (write device setpoints) needs admin, operator |
+| GET | `/api/v1/optimization/setpoints` | any operator-side role |
 | POST | `/api/v1/optimization/stochastic` | any operator-side role |
 | POST | `/api/v1/optimization/realtime` | any operator-side role |
 | POST | `/api/v1/optimization/distributed` | any operator-side role |

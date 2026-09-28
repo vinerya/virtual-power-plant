@@ -22,8 +22,16 @@ Modes (see :class:`~vpp.protocols.base.ProtocolMode`):
 The client identifies its own EndDevice by LFDI/SFDI (configured, or
 derived from the client certificate per IEEE 2030.5 section 6.3.4).
 
-Not implemented yet: posting DERStatus/DERCapability/Response resources
-back to the server, subscription/notification, and DERCurve parsing.
+Responses (live mode): for a server DERControl with a ``replyTo`` link, the
+client POSTs ``DERControlResponse`` resources back to the server, once per
+status, driven by the control's ``responseRequired`` bitmap -- bit 0
+(message received): status 1 *Event Received*; bit 1 (specific response):
+2 *Event Started* when the control becomes active, 3 *Event Completed*
+once its interval has passed, 6 *Event Cancelled* / 7 *Event Superseded*
+when the server marks it so. A failed POST is retried on the next poll.
+
+Not implemented yet: posting DERStatus/DERCapability, subscription/
+notification, and DERCurve parsing.
 """
 
 from __future__ import annotations
@@ -90,6 +98,21 @@ class EventStatusCode:
     CANCELLED = 2
     CANCELLED_WITH_RANDOMIZATION = 3
     SUPERSEDED = 4
+
+
+class ResponseStatus:
+    """``Response.status`` values posted for event-driven controls."""
+
+    EVENT_RECEIVED = 1
+    EVENT_STARTED = 2
+    EVENT_COMPLETED = 3
+    EVENT_CANCELLED = 6
+    EVENT_SUPERSEDED = 7
+
+
+# responseRequired bitmap (hexBinary8)
+RESPONSE_REQUIRED_RECEIVED = 0x01  # end device shall indicate the message was received
+RESPONSE_REQUIRED_SPECIFIC = 0x02  # end device shall indicate a specific response
 
 
 @dataclass
@@ -441,6 +464,10 @@ class IEEE2030_5Adapter(ProtocolAdapter):
         self._clock_offset_s = 0.0
         self._announced_active: set[str] = set()
         self._consecutive_failures = 0
+        # control mRID -> statuses already posted, and the last copy of the control
+        self._responses_posted: dict[str, set[int]] = {}
+        self._response_controls: dict[str, DERControl] = {}
+        self.responses_sent: list[dict[str, Any]] = []  # most recent last (bounded)
         self.end_device_href: str | None = None
         self.lfdi: str | None = None
 
@@ -608,10 +635,18 @@ class IEEE2030_5Adapter(ProtocolAdapter):
             source="ieee2030_5",
         )
         await self._dispatch(msg)
-        try:
-            self._message_queue.put_nowait(msg)
-        except asyncio.QueueFull:
-            self._metrics.errors += 1
+        self._enqueue(msg)
+
+    def _enqueue(self, msg: ProtocolMessage) -> None:
+        """Buffer *msg* for :meth:`receive`, dropping the oldest when full.
+
+        Nothing is required to drain this queue (subscribers get every
+        message via ``_dispatch``), so a full buffer is not an error.
+        """
+        if self._message_queue.full():
+            with contextlib.suppress(asyncio.QueueEmpty):
+                self._message_queue.get_nowait()
+        self._message_queue.put_nowait(msg)
 
     # -- HTTP transport ------------------------------------------------------
 
@@ -657,6 +692,23 @@ class IEEE2030_5Adapter(ProtocolAdapter):
         self._metrics.messages_received += 1
         return parse_sep_xml(response.content)
 
+    async def _post(self, href: str, body: bytes) -> int:
+        import httpx
+
+        if self._client is None:
+            raise ProtocolTransportError("IEEE 2030.5 HTTP client not started")
+        try:
+            response = await self._client.post(
+                self._url(href), content=body, headers={"Content-Type": SEP_CONTENT_TYPE}
+            )
+        except httpx.HTTPError as exc:
+            raise ProtocolTransportError(f"POST {href} failed: {exc}") from exc
+        self._metrics.messages_sent += 1
+        self._metrics.last_message_at = time.time()
+        if response.status_code >= 400:
+            raise ProtocolTransportError(f"POST {href} returned HTTP {response.status_code}")
+        return int(response.status_code)
+
     async def _get_list(self, href: str, item_tag: str) -> tuple[Any, list[Any]]:
         """Fetch every item of a 2030.5 list resource, following s/l paging."""
         page = int(self._config.get("list_page_size", 255))
@@ -694,8 +746,10 @@ class IEEE2030_5Adapter(ProtocolAdapter):
             if lfdi and (_text(dev, "lFDI") or "").upper() == lfdi:
                 return dev
             if sfdi and _text(dev, "sFDI") == sfdi:
+                self.lfdi = self.lfdi or (_text(dev, "lFDI") or "").upper() or None
                 return dev
         if len(devices) == 1 and not (lfdi or sfdi):
+            self.lfdi = (_text(devices[0], "lFDI") or "").upper() or None
             return devices[0]
         if not devices:
             raise ProtocolTransportError("IEEE 2030.5 server lists no EndDevice for this client")
@@ -742,6 +796,7 @@ class IEEE2030_5Adapter(ProtocolAdapter):
 
         self._server_programs = programs
         await self._announce_changes()
+        await self._post_responses()
         return list(programs.values())
 
     async def _load_program(self, derp: Any) -> DERProgram:
@@ -773,6 +828,96 @@ class IEEE2030_5Adapter(ProtocolAdapter):
             if key not in self._announced_active:
                 await self._announce_control(str(control.program_id), control)
         self._announced_active = active_now
+
+    # -- Responses (live mode) -------------------------------------------------
+
+    @staticmethod
+    def response_xml(control_mrid: str, status: int, lfdi: str, created: int) -> bytes:
+        """A ``DERControlResponse`` document (element order per the 2030.5 schema)."""
+        from xml.sax.saxutils import escape
+
+        return (
+            f'<DERControlResponse xmlns="{SEP_NS}">'
+            f"<createdDateTime>{int(created)}</createdDateTime>"
+            f"<endDeviceLFDI>{escape(lfdi)}</endDeviceLFDI>"
+            f"<status>{int(status)}</status>"
+            f"<subject>{escape(control_mrid)}</subject>"
+            "</DERControlResponse>"
+        ).encode()
+
+    async def post_response(self, control: DERControl, status: int) -> bool:
+        """POST one Response for *control* (once per status). Never raises."""
+        mrid = str(control.control_id)
+        posted = self._responses_posted.setdefault(mrid, set())
+        if status in posted:
+            return True
+        if not control.reply_to or self._client is None or not self.lfdi:
+            return False
+        body = self.response_xml(mrid, status, self.lfdi, int(self.server_now()))
+        try:
+            await self._post(control.reply_to, body)
+        except Exception as exc:
+            self._metrics.errors += 1
+            logger.warning("IEEE 2030.5 Response %s for %s failed: %s", status, mrid, exc)
+            return False
+        posted.add(status)
+        self.responses_sent.append({"control_id": mrid, "status": status, "at": time.time()})
+        del self.responses_sent[:-200]
+        return True
+
+    async def _post_responses(self) -> None:
+        """Post received/started/completed (cancelled/superseded) responses."""
+        if self._client is None:
+            return
+        now = self.server_now()
+        current: dict[str, DERControl] = {}
+        for program in self._server_programs.values():
+            for c in program.active_controls:
+                if not c.reply_to or not c.response_required:
+                    continue
+                mrid = str(c.control_id)
+                current[mrid] = c
+                self._response_controls[mrid] = c
+                if c.response_required & RESPONSE_REQUIRED_RECEIVED:
+                    await self.post_response(c, ResponseStatus.EVENT_RECEIVED)
+                if not c.response_required & RESPONSE_REQUIRED_SPECIFIC:
+                    continue
+                posted = self._responses_posted.get(mrid, set())
+                if c.event_status in (
+                    EventStatusCode.CANCELLED,
+                    EventStatusCode.CANCELLED_WITH_RANDOMIZATION,
+                ):
+                    await self.post_response(c, ResponseStatus.EVENT_CANCELLED)
+                elif c.event_status == EventStatusCode.SUPERSEDED:
+                    await self.post_response(c, ResponseStatus.EVENT_SUPERSEDED)
+                elif c.is_active_at(now):
+                    await self.post_response(c, ResponseStatus.EVENT_STARTED)
+                elif (
+                    ResponseStatus.EVENT_STARTED in posted
+                    and c.duration_seconds
+                    and now >= c.end_time
+                ):
+                    await self.post_response(c, ResponseStatus.EVENT_COMPLETED)
+        # Controls the server dropped from its list after they ran.
+        for mrid, c in list(self._response_controls.items()):
+            if mrid in current:
+                continue
+            posted = self._responses_posted.get(mrid, set())
+            terminal = {
+                ResponseStatus.EVENT_COMPLETED,
+                ResponseStatus.EVENT_CANCELLED,
+                ResponseStatus.EVENT_SUPERSEDED,
+            }
+            if (
+                c.response_required & RESPONSE_REQUIRED_SPECIFIC
+                and ResponseStatus.EVENT_STARTED in posted
+                and not posted & terminal
+                and now >= c.end_time
+                and not await self.post_response(c, ResponseStatus.EVENT_COMPLETED)
+            ):
+                continue  # retry next poll
+            self._response_controls.pop(mrid, None)
+            self._responses_posted.pop(mrid, None)
 
     # -- Polling -------------------------------------------------------------
 

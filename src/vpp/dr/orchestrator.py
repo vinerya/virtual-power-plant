@@ -31,9 +31,15 @@ Rules
   export when V2G-capable, plugged in and flexible w.r.t. their departure
   target; an unreachable target is reported as a shortfall, not forced.
 
-Delivery honesty: stationary resources receive their allocation through the
-``DISPATCH_EXECUTED`` event (device drivers subscribe to it); EV setpoints are
-sent to chargers and each charger's answer is recorded.
+* An IEEE 2030.5 program's ``DefaultDERControl`` applies while none of the
+  server's event controls is active: its limits always clamp, and its
+  target is dispatched unless an OpenADR event supplies one.
+
+Delivery honesty: stationary resources get their allocation through the
+setpoint actuator (:mod:`vpp.control.actuator`: Modbus writes to devices that
+opted in, behind the ``VPP_CONTROL_ENABLED`` kill switch, with a watchdog that
+falls back when the dispatch expires); EV setpoints are sent to chargers over
+OCPP. Each device's / charger's outcome is recorded with the dispatch.
 """
 
 from __future__ import annotations
@@ -109,8 +115,10 @@ class DROrchestrator:
         | Callable[[], async_sessionmaker[AsyncSession]]
         | None = None,
         clock: Callable[[], float] = time.time,
+        actuator: Any = None,
     ) -> None:
         self.policy = policy
+        self._actuator = actuator
         self.registry = registry
         self._factory = session_factory
         self._clock = clock
@@ -145,6 +153,14 @@ class DROrchestrator:
 
         a = self.registry.get("ieee2030_5")
         return a if isinstance(a, IEEE2030_5Adapter) and a.is_operational else None
+
+    def actuator(self) -> Any:
+        """The setpoint actuator for stationary devices (process-wide by default)."""
+        if self._actuator is not None:
+            return self._actuator
+        from vpp.control.actuator import get_setpoint_actuator
+
+        return get_setpoint_actuator()
 
     def attach_openadr(self, adapter: Any) -> None:
         adapter.register_event_handler(self.on_openadr_event)
@@ -438,6 +454,11 @@ class DROrchestrator:
     async def _tick(self, now: float) -> dict[str, Any] | None:
         ieee = self._ieee()
         controls = ieee.get_active_controls() if ieee is not None else []
+        # DefaultDERControl applies only while no event control is active.
+        is_default = False
+        if not controls and ieee is not None:
+            controls = ieee.get_default_controls()
+            is_default = bool(controls)
         openadr = self._openadr()
         has_openadr_window = openadr is not None and any(
             e.start_time <= now < e.end_time for e in openadr.list_events()
@@ -451,14 +472,27 @@ class DROrchestrator:
         window = self.policy.redispatch_interval_s
         cap = self.capability(assets, constraints, window, len(vehicles))
         ieee_directive = translate_ieee2030_5(controls, cap, self.policy)
+        if ieee_directive is not None and is_default:
+            ieee_directive.reasons.insert(0, "DefaultDERControl (no event control active)")
+            for src in ieee_directive.sources:
+                src["default"] = True
         await self._observe_ieee(controls, ieee_directive)
 
         if not self.policy.auto_response:
             return None
 
-        effective = combine(
-            ieee_directive, self._openadr_candidate(now, cap) if openadr else None, self.policy
-        )
+        openadr_directive = self._openadr_candidate(now, cap) if openadr else None
+        if (
+            is_default
+            and ieee_directive is not None
+            and openadr_directive is not None
+            and openadr_directive.target_kw is not None
+            and ieee_directive.target_kw is not None
+        ):
+            # An OpenADR event beats a standing default target; default limits still clamp.
+            ieee_directive.target_kw = None
+            ieee_directive.reasons.append("default target superseded by the OpenADR event")
+        effective = combine(ieee_directive, openadr_directive, self.policy)
         if effective is None:
             if self._active is not None:
                 return await self._release("no active DR signal")
@@ -494,7 +528,11 @@ class DROrchestrator:
                 constraints=constraints,
                 problem_type="dr_dispatch",
                 extra_inputs={"dr": directive.to_dict()},
+                apply=True,
+                actuator=self.actuator(),
+                source="dr",
             )
+            device_deliveries = result.get("device_deliveries") or []
             ev_alloc = {
                 rid[len(EV_ASSET_PREFIX) :]: float(kw)
                 for rid, kw in result["allocations"].items()
@@ -541,6 +579,7 @@ class DROrchestrator:
                     "shortfall_kw": result["shortfall_kw"],
                     "allocations": result["allocations"],
                     "ev_deliveries": deliveries,
+                    "device_deliveries": device_deliveries,
                 },
             )
             await session.commit()
@@ -553,6 +592,11 @@ class DROrchestrator:
             "run_id": result["run_id"],
             "record_id": row.id,
             "ev_ids": [v.id for v in participants],
+            "resource_ids": [
+                d["resource_id"]
+                for d in device_deliveries
+                if d["status"] in ("accepted", "unchanged", "deferred", "simulated")
+            ],
             "target_kw": target,
             "delivered_kw": result["delivered_kw"],
             "status": result["status"],
@@ -572,6 +616,7 @@ class DROrchestrator:
             "interval_minutes": interval_min,
             "allocations": result["allocations"],
             "ev_deliveries": summarize_deliveries(deliveries),
+            "device_deliveries": summarize_deliveries(device_deliveries),
             "redispatch": redispatch,
             "reason": directive.reason,
         }
@@ -607,7 +652,15 @@ class DROrchestrator:
         if active is None:
             return {"action": "noop"}
         cleared: list[dict[str, Any]] = []
+        released: list[dict[str, Any]] = []
         adapter = ocpp_adapter_from(self.registry.get("ocpp"))
+        if active.get("resource_ids"):
+            try:
+                released = await self.actuator().release(
+                    active["resource_ids"], reason=reason, source="dr", run_id=active["run_id"]
+                )
+            except Exception:
+                logger.exception("failed to release device setpoints")
         try:
             async with self._sessions()() as session:
                 vehicles = []
@@ -636,7 +689,7 @@ class DROrchestrator:
                     window_end=ts_to_dt(self._clock()),
                     run_id=active["run_id"],
                     reason=reason,
-                    details={"cleared_ev_profiles": cleared},
+                    details={"cleared_ev_profiles": cleared, "device_releases": released},
                 )
                 await session.commit()
         except Exception:
@@ -649,8 +702,9 @@ class DROrchestrator:
             "run_id": active["run_id"],
             "reason": reason,
             "cleared_ev_profiles": cleared,
+            "device_releases": summarize_deliveries(released),
         }
-        await publish(EventType.DISPATCH_EXECUTED, summary, _SOURCE)
+        await publish(EventType.DISPATCH_EXECUTED, _clean(summary), _SOURCE)
         return summary
 
     async def run_forever(self) -> None:
@@ -678,6 +732,7 @@ class DROrchestrator:
                     "ieee2030_5": self._ieee() is not None,
                     "ocpp": ocpp_adapter_from(self.registry.get("ocpp")) is not None,
                 },
+                "device_control_enabled": bool(getattr(self.actuator(), "enabled", False)),
             }
         )
         return out
