@@ -6,7 +6,10 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  Cable,
+  CandlestickChart,
   Cog,
+  Gauge,
   Layers,
   LineChart,
   MapPin,
@@ -18,14 +21,24 @@ const NAV = [
   { href: "/", label: "Fleet", icon: BarChart3, enabled: true },
   { href: "/assets", label: "Assets", icon: Layers, enabled: true },
   { href: "/sites", label: "Sites", icon: MapPin, enabled: true },
+  { href: "/trading", label: "Trading", icon: CandlestickChart, enabled: true },
+  { href: "/optimization", label: "Optimization", icon: Gauge, enabled: true },
   { href: "/trading/dispatches", label: "Dispatches", icon: LineChart, enabled: true },
   { href: "/tariffs", label: "Tariffs", icon: Receipt, enabled: true },
+  { href: "/protocols", label: "Protocols", icon: Cable, enabled: true },
   { href: "/alerts", label: "Alerts", icon: AlertTriangle, enabled: true },
   { href: "/settings", label: "Settings", icon: Cog, enabled: true },
 ] as const;
 
 export function Sidebar() {
   const pathname = usePathname();
+  // Most specific match wins (/trading/dispatches → "Dispatches", not "Trading").
+  const activeHref = NAV.map((i) => i.href as string)
+    .filter(
+      (href) =>
+        pathname === href || (href !== "/" && pathname?.startsWith(href + "/")),
+    )
+    .sort((a, b) => b.length - a.length)[0];
   return (
     <aside className="hidden w-56 flex-shrink-0 border-r bg-card md:block">
       <div className="flex h-14 items-center border-b px-4">
@@ -34,9 +47,7 @@ export function Sidebar() {
       </div>
       <nav aria-label="Primary" className="space-y-1 p-2">
         {NAV.map((item) => {
-          const active =
-            pathname === item.href ||
-            (item.href !== "/" && pathname?.startsWith(item.href + "/"));
+          const active = item.href === activeHref;
           const Icon = item.icon;
           return (
             <Link

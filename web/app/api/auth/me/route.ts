@@ -4,6 +4,7 @@ import { AUTH_COOKIE_NAME, serverFetch } from "@/lib/api/client";
 
 interface MeResponse {
   username?: string;
+  role?: string;
   audience?: "operator" | "customer" | string;
   scopes?: string[];
 }
@@ -27,6 +28,9 @@ export async function GET() {
       authenticated: true,
       audience: me.audience ?? "operator",
       username: me.username,
+      // Used for role-aware UI (e.g. hiding the order ticket from viewers);
+      // the backend still enforces every permission.
+      role: me.role,
       scopes: me.scopes,
     });
   } catch (err) {
