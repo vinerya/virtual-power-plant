@@ -2,13 +2,25 @@
 
 Supports predefined register maps for common inverters (SMA, Fronius,
 SolarEdge) and a generic mode for custom register definitions.
+
+Registers are **read-only unless flagged** ``writable=True``: the setpoint
+writer (:mod:`vpp.protocols.modbus_control`) refuses to write a named
+register that is not flagged. The writable definitions shipped here are the
+SunSpec *model-relative* control blocks built by
+:func:`sunspec_model_123_registers` (Immediate Controls, ``WMaxLimPct``) and
+:func:`sunspec_model_124_registers` (Storage, generic/unverified). SunSpec
+models sit at a device-specific address (after the preceding models in the
+chain), so these take the address of the model's ``ID`` register instead of
+guessing a vendor's absolute addresses.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
+import struct
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -46,6 +58,7 @@ class RegisterDefinition:
     unit: str = ""
     scale: float = 1.0
     data_type: str = "uint16"  # uint16, int16, uint32, int32, float32
+    writable: bool = False  # only flagged registers may be written by the setpoint writer
 
 
 @dataclass
@@ -142,6 +155,111 @@ INVERTER_MAPS: dict[str, RegisterMap] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# SunSpec control blocks (model-relative; offsets include the ID and L registers)
+# ---------------------------------------------------------------------------
+
+
+def sunspec_model_123_registers(base: int) -> dict[str, RegisterDefinition]:
+    """SunSpec model 123 *Immediate Controls* at *base* (address of its ``ID``).
+
+    Offsets per the SunSpec inverter controls model 123 (``ID``=123, ``L``=24):
+    ``WMaxLimPct`` (+5, uint16, % of WMax scaled by ``WMaxLimPct_SF``),
+    ``WMaxLimPct_RvrtTms`` (+7, uint16 s, device-side revert timeout),
+    ``WMaxLim_Ena`` (+9, enum16: 0 disabled / 1 enabled) and
+    ``WMaxLimPct_SF`` (+23, sunssf int16 power-of-ten exponent).
+    """
+    h = RegisterType.HOLDING
+    return {
+        "sunspec_123_id": RegisterDefinition(base, 1, h, "Model ID (123)", "", 1.0, "uint16"),
+        "wmax_lim_pct": RegisterDefinition(
+            base + 5, 1, h, "WMaxLimPct", "%", 1.0, "uint16", writable=True
+        ),
+        "wmax_lim_pct_rvrt_tms": RegisterDefinition(
+            base + 7, 1, h, "WMaxLimPct_RvrtTms", "s", 1.0, "uint16", writable=True
+        ),
+        "wmax_lim_ena": RegisterDefinition(
+            base + 9, 1, h, "WMaxLim_Ena", "", 1.0, "uint16", writable=True
+        ),
+        "wmax_lim_pct_sf": RegisterDefinition(base + 23, 1, h, "WMaxLimPct_SF", "", 1.0, "int16"),
+    }
+
+
+def sunspec_model_124_registers(base: int) -> dict[str, RegisterDefinition]:
+    """SunSpec model 124 *Storage* at *base* (address of its ``ID``).
+
+    **Generic/unverified**: the offsets follow the published model 124
+    layout (``ID``=124, ``L``=24), but how devices interpret forced
+    charge/discharge (negative ``InWRte``/``OutWRte``) differs between
+    vendors and has not been verified against hardware. ``StorCtl_Mod``
+    (+5, bitfield16: bit0 charge limit, bit1 discharge limit active),
+    ``OutWRte`` (+12, int16 % of max discharge rate), ``InWRte`` (+13, int16 %
+    of max charge rate), ``InOutWRte_RvrtTms`` (+15, uint16 s) and
+    ``InOutWRte_SF`` (+25, sunssf).
+    """
+    h = RegisterType.HOLDING
+    return {
+        "sunspec_124_id": RegisterDefinition(base, 1, h, "Model ID (124)", "", 1.0, "uint16"),
+        "stor_ctl_mod": RegisterDefinition(
+            base + 5, 1, h, "StorCtl_Mod", "", 1.0, "uint16", writable=True
+        ),
+        "out_w_rte": RegisterDefinition(
+            base + 12, 1, h, "OutWRte", "%", 1.0, "int16", writable=True
+        ),
+        "in_w_rte": RegisterDefinition(
+            base + 13, 1, h, "InWRte", "%", 1.0, "int16", writable=True
+        ),
+        "in_out_w_rte_rvrt_tms": RegisterDefinition(
+            base + 15, 1, h, "InOutWRte_RvrtTms", "s", 1.0, "uint16", writable=True
+        ),
+        "in_out_w_rte_sf": RegisterDefinition(base + 25, 1, h, "InOutWRte_SF", "", 1.0, "int16"),
+    }
+
+
+class ModbusWriteError(RuntimeError):
+    """A Modbus write or read was rejected by the device."""
+
+
+def _unit_kwarg(method: Any) -> str:
+    """pymodbus renamed the unit-id keyword ``slave`` -> ``device_id`` (3.10)."""
+    try:
+        params = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return "device_id"
+    return "slave" if "slave" in params and "device_id" not in params else "device_id"
+
+
+_INT_RANGES: dict[str, tuple[int, int, int]] = {
+    "uint16": (0, 0xFFFF, 1),
+    "int16": (-0x8000, 0x7FFF, 1),
+    "uint32": (0, 0xFFFFFFFF, 2),
+    "int32": (-0x80000000, 0x7FFFFFFF, 2),
+}
+
+
+def encode_value(value: float, data_type: str) -> list[int]:
+    """Encode an (already scaled) raw value into big-endian 16-bit registers.
+
+    Raises ``ValueError`` when the value does not fit the type (never wraps).
+    """
+    if data_type == "float32":
+        hi, lo = struct.unpack(">HH", struct.pack(">f", float(value)))
+        return [hi, lo]
+    if data_type not in _INT_RANGES:
+        raise ValueError(f"cannot encode data_type {data_type!r}")
+    lo_lim, hi_lim, words = _INT_RANGES[data_type]
+    raw = round(float(value))
+    if not lo_lim <= raw <= hi_lim:
+        raise ValueError(f"value {raw} out of range for {data_type}")
+    raw &= (1 << (16 * words)) - 1
+    return [(raw >> (16 * (words - 1 - i))) & 0xFFFF for i in range(words)]
+
+
+def register_words(data_type: str) -> int:
+    """Number of 16-bit registers a value of *data_type* occupies."""
+    return 2 if data_type in ("uint32", "int32", "float32") else 1
+
+
 class ModbusAdapter(ProtocolAdapter):
     """Modbus TCP/RTU adapter implementing the VPP ``ProtocolAdapter`` ABC.
 
@@ -191,7 +309,9 @@ class ModbusAdapter(ProtocolAdapter):
         # Load register map
         profile = self._config.get("device_profile", "generic_meter")
         if profile in INVERTER_MAPS:
-            self._register_map = INVERTER_MAPS[profile]
+            # Copy: custom registers / unit id must not leak into the shared profile.
+            base = INVERTER_MAPS[profile]
+            self._register_map = RegisterMap(base.name, dict(base.registers), base.unit_id)
         else:
             self._register_map = RegisterMap(name="custom", registers={})
 
@@ -236,9 +356,60 @@ class ModbusAdapter(ProtocolAdapter):
         if address is None or value is None:
             raise ValueError("Modbus send requires 'address' and 'value' in payload")
 
-        await self._client.write_register(address, int(value), slave=unit)
+        await self.write_registers(int(address), [int(value)], unit=unit)
+
+    # -- Register I/O (used by the setpoint writer) --------------------------
+
+    def register(self, name: str) -> RegisterDefinition | None:
+        """The named register of the loaded map (``None`` before connect)."""
+        return self._register_map.registers.get(name) if self._register_map else None
+
+    def _unit(self, unit: int | None) -> int:
+        if unit is not None:
+            return int(unit)
+        return self._register_map.unit_id if self._register_map else 1
+
+    async def write_registers(
+        self, address: int, values: list[int], *, unit: int | None = None
+    ) -> None:
+        """Write raw 16-bit *values* starting at holding register *address*."""
+        if not self.is_connected or self._client is None:
+            raise ConnectionError("Modbus not connected")
+        method: Any
+        if len(values) == 1:
+            method = self._client.write_register
+            args: tuple[Any, ...] = (address, int(values[0]))
+        else:
+            method = self._client.write_registers
+            args = (address, [int(v) for v in values])
+        try:
+            result = await method(*args, **{_unit_kwarg(method): self._unit(unit)})
+        except Exception:
+            self._metrics.errors += 1
+            raise
+        if result is not None and hasattr(result, "isError") and result.isError():
+            self._metrics.errors += 1
+            raise ModbusWriteError(f"write to register {address} rejected: {result}")
         self._metrics.messages_sent += 1
         self._metrics.last_message_at = time.time()
+
+    async def read_holding(
+        self, address: int, count: int = 1, *, unit: int | None = None
+    ) -> list[int]:
+        """Read *count* raw holding registers starting at *address*."""
+        if not self.is_connected or self._client is None:
+            raise ConnectionError("Modbus not connected")
+        method = self._client.read_holding_registers
+        try:
+            result = await method(address, count=count, **{_unit_kwarg(method): self._unit(unit)})
+        except Exception:
+            self._metrics.errors += 1
+            raise
+        if result.isError():
+            self._metrics.errors += 1
+            raise ModbusWriteError(f"read of register {address} rejected: {result}")
+        self._metrics.messages_received += 1
+        return list(result.registers)
 
     async def receive(self) -> ProtocolMessage | None:
         """Return the latest polled values as a message."""
@@ -262,20 +433,14 @@ class ModbusAdapter(ProtocolAdapter):
 
         for name, reg in self._register_map.registers.items():
             try:
+                method: Any
                 if reg.register_type == RegisterType.HOLDING:
-                    result = await self._client.read_holding_registers(
-                        reg.address,
-                        reg.count,
-                        slave=unit,
-                    )
+                    method = self._client.read_holding_registers
                 elif reg.register_type == RegisterType.INPUT:
-                    result = await self._client.read_input_registers(
-                        reg.address,
-                        reg.count,
-                        slave=unit,
-                    )
+                    method = self._client.read_input_registers
                 else:
                     continue
+                result = await method(reg.address, count=reg.count, **{_unit_kwarg(method): unit})
 
                 if result.isError():
                     logger.warning("Modbus read error for %s: %s", name, result)
@@ -333,8 +498,6 @@ class ModbusAdapter(ProtocolAdapter):
                 val -= 0x100000000
             return float(val)
         elif defn.data_type == "float32":
-            import struct
-
             raw = struct.pack(">HH", regs[0], regs[1] if len(regs) > 1 else 0)
             return float(struct.unpack(">f", raw)[0])
         return float(regs[0])

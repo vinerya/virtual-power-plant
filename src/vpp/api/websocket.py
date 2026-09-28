@@ -140,6 +140,7 @@ _EVENT_CHANNEL_MAP: dict[EventType, str] = {
     EventType.OPTIMIZATION_COMPLETED: "optimization_events",
     EventType.OPTIMIZATION_FAILED: "optimization_events",
     EventType.DISPATCH_EXECUTED: "optimization_events",
+    EventType.DEVICE_SETPOINT: "optimization_events",
     EventType.ORDER_SUBMITTED: "market_data",
     EventType.ORDER_FILLED: "market_data",
     EventType.ORDER_CANCELLED: "market_data",

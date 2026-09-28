@@ -320,6 +320,11 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     protocol_tasks = start_protocol_adapters(settings, get_registry())
     app.state.protocol_tasks = protocol_tasks
 
+    # Device setpoint actuator + watchdog (VPP_CONTROL_ENABLED, default off).
+    from vpp.control.actuator import start_control, stop_control
+
+    control_task = start_control(settings)
+
     trading_task: asyncio.Task | None = None
     if settings.trading_market_data_enabled:
         from vpp.trading.service import run_market_data_loop
@@ -333,6 +338,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
+        # First, while Modbus connections are still up: release active setpoints.
+        await stop_control(control_task)
         await stop_protocol_adapters(protocol_tasks)
 
         if trading_task is not None:
