@@ -423,6 +423,7 @@ def create_app(
                 if rate_limit_requests_per_minute is not None
                 else settings.rate_limit_requests_per_minute
             ),
+            trusted_proxies=settings.trusted_proxies,
         )
 
     # Request-id, access log, Prometheus middleware (outermost), plus the

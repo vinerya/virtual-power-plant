@@ -33,7 +33,8 @@ Compose variables:
 | `VPP_API_PORT` | `8000` | host port for the API |
 | `VPP_WEB_PORT` | `3000` | host port for the console |
 | `VPP_WS_PUBLIC_URL` | `ws://localhost:8000/api/v1/ws` | WebSocket URL the **browser** dials; set to `wss://<host>/api/v1/ws` behind TLS |
-| `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `600` | see [rate limiting](#rate-limiting-behind-the-console) |
+| `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | per client; see [rate limiting](#rate-limiting-behind-the-console) |
+| `VPP_WEB_IPV4`, `VPP_NETWORK_SUBNET`, `VPP_NETWORK_IP_RANGE` | `172.29.0.10`, `172.29.0.0/24`, `172.29.0.128/25` | fixed console address the API trusts for forwarded client IPs; change together if the subnet collides with a local network |
 | `VPP_LOG_LEVEL` | `INFO` | |
 | `OPENEI_API_KEY` | empty | enables URDB tariff import |
 
@@ -224,11 +225,28 @@ the console must be served over HTTPS (browsers make an exception only for
 
 ## Rate limiting behind the console
 
-The rate limiter is keyed by client IP and the console calls the API from
-its own server, so every console user shares one bucket. The compose file
-sets `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE=600`; size it for your team (each
-open console page polls every few seconds), or set
-`VPP_RATE_LIMIT_ENABLED=false` and rate-limit at the proxy instead.
+The rate limiter is keyed by client IP. The console calls the API from its
+own server and forwards the user's address in `X-Forwarded-For` /
+`X-Real-IP`; the API honours those headers only from addresses in
+`VPP_TRUSTED_PROXIES` (default: none, so every console user would share the
+console server's bucket). The compose file gives `vpp-web` a fixed address
+on its own subnet, trusts exactly that address, and keeps the per-client
+limit at 120 requests per minute.
+
+For other deployments set `VPP_TRUSTED_PROXIES` to the console server's
+address as the API sees it (plus any reverse proxy in front of the API).
+Trust only addresses that cannot be reached by clients directly, e.g. not a
+Docker bridge gateway that published ports are forwarded through.
+
+The console takes the client address from the `X-Forwarded-For` it receives
+(Next.js fills it from the connection when absent). If the console is
+exposed without a reverse proxy, a client can put an arbitrary address in
+that header and be rate-limited under it; to prevent that, put a proxy in
+front that overwrites the header (nginx:
+`proxy_set_header X-Forwarded-For $remote_addr;`), or leave
+`VPP_TRUSTED_PROXIES` empty and raise the limit. uvicorn's own
+`FORWARDED_ALLOW_IPS` (default `127.0.0.1`) also rewrites the client address
+before the rate limiter sees it.
 
 ## Monitoring
 

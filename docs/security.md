@@ -116,9 +116,11 @@ enabled) and the V2G/OCPP routes send setpoints to equipment.
 - Do not publish PostgreSQL. The compose file keeps it on the internal
   network.
 - Set `VPP_CORS_ORIGINS` to the exact console origin(s).
-- Set uvicorn's `FORWARDED_ALLOW_IPS` to your proxy's address so client IPs
-  (used by the rate limiter and logs) are taken from `X-Forwarded-For` only
-  when the proxy set it.
+- Set `VPP_TRUSTED_PROXIES` (and/or uvicorn's `FORWARDED_ALLOW_IPS`) to
+  your proxies' and the console server's addresses only, so the rate
+  limiter takes client IPs from `X-Forwarded-For` / `X-Real-IP` only when a
+  trusted hop set them; forged headers from other peers are ignored. See
+  [deployment](deployment.md#rate-limiting-behind-the-console).
 
 ## Outbound integrations
 

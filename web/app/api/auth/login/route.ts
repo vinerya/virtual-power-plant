@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AUTH_COOKIE_NAME, serverFetch } from "@/lib/api/client";
+import { forwardedClientHeaders } from "@/lib/api/forwarded";
 import type { Token } from "@/lib/api/types";
 
 const bodySchema = z.object({
@@ -27,7 +28,10 @@ export async function POST(request: Request) {
   try {
     const token = await serverFetch<Token>("/api/v1/auth/token", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        ...forwardedClientHeaders(request.headers),
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
       body: form.toString(),
     });
     const res = NextResponse.json({ ok: true });

@@ -273,6 +273,13 @@ changes** before upgrading.
 
 ### Fixed
 
+- Per-user rate limiting behind the console: the Next.js proxy and auth
+  routes forward the client address (`X-Forwarded-For` / `X-Real-IP`), and
+  the API honours those headers only from `VPP_TRUSTED_PROXIES` (new, empty
+  by default), walking `X-Forwarded-For` from the right so forged entries
+  are ignored. Compose pins `vpp-web` to a fixed address on its own subnet,
+  trusts only it, and sets the per-client limit back to 120/min (was 600
+  shared by every console user).
 - NEM 3.0 avoided cost supports full-year vectors: 24 (hour of day),
   12 x 24 (month x hour, nested or flat), 8760 and 8784 (hour of year,
   leap-day aware), indexed by local time in both the bill credit and the
