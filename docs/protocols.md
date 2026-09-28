@@ -128,6 +128,11 @@ Data and actions: `GET /api/v1/protocols/openadr/events[/{id}]`;
 `POST /api/v1/protocols/openadr/events/{id}/opt` overrides the opt-in/out
 decision (admin, operator).
 
+With several API workers the VEN runs on the `protocol-adapters` lease
+holder; the OpenADR, IEEE 2030.5 and `/api/v1/dr/status` endpoints are
+answered by it whichever worker receives the request (forwarded through
+the database), or `503 leader_unavailable` if it does not answer within 3 s.
+
 ## IEEE 2030.5 client
 
 **Maturity: beta.** An HTTPS client with mutual TLS (the device

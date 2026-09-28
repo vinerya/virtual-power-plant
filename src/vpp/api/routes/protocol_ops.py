@@ -5,6 +5,10 @@ accounts are refused); actions (remote start/stop, opt-in/out override)
 require the ``admin`` or ``operator`` role. Every response carries the
 adapter's ``mode`` so a simulated adapter is never mistaken for real
 hardware / a real utility connection.
+
+The OpenADR / IEEE 2030.5 / DR-orchestrator views read state held by the
+``protocol-adapters`` lease holder; other API workers forward them there
+(see ``PROTOCOL_READ_TIMEOUT_S``).
 """
 
 from __future__ import annotations
@@ -17,8 +21,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from vpp.api.routes.protocols import get_registry
+from vpp.api.routes.protocols import PROTOCOL_READ_TIMEOUT_S, get_registry
 from vpp.auth.security import get_current_user, require_role
+from vpp.cluster.rpc import on_leader, register_handler
+from vpp.cluster.topology import LEASE_PROTOCOLS
 from vpp.db.engine import get_db
 from vpp.db.models import DREventResponseModel
 from vpp.dr.orchestrator import DROrchestrator, get_dr_orchestrator, response_to_dict
@@ -206,12 +212,17 @@ def _event_dict(adapter: OpenADRAdapter, event: Any, now: float) -> dict[str, An
     return out
 
 
-@router.get("/openadr/events")
-async def list_openadr_events(
-    _user=Depends(get_current_user),
-    registry: ProtocolRegistry = Depends(get_registry),
-):
-    """DR events known to the VEN with their signals and opt state."""
+# The OpenADR VEN, the IEEE 2030.5 client and the DR orchestrator run on the
+# ``protocol-adapters`` lease holder (one process per deployment). With
+# several API workers, a request that lands elsewhere is forwarded to the
+# holder through ``cluster_calls`` (``on_leader``); in a single process (or
+# on the holder) the handler runs directly, with no database round trip.
+# Reads fail fast: if the holder does not answer within
+# ``PROTOCOL_READ_TIMEOUT_S`` (capped by VPP_CLUSTER_CALL_TIMEOUT_SECONDS) the
+# client gets ``503 leader_unavailable``.
+
+
+async def _openadr_events_local(registry: ProtocolRegistry) -> dict[str, Any]:
     adapter = _adapter(registry, "openadr", OpenADRAdapter)
     now = time.time()
     return {
@@ -223,12 +234,7 @@ async def list_openadr_events(
     }
 
 
-@router.get("/openadr/events/{event_id}")
-async def get_openadr_event(
-    event_id: str,
-    _user=Depends(get_current_user),
-    registry: ProtocolRegistry = Depends(get_registry),
-):
+async def _openadr_event_local(registry: ProtocolRegistry, event_id: str) -> dict[str, Any]:
     adapter = _adapter(registry, "openadr", OpenADRAdapter)
     event = adapter.get_event(event_id)
     if event is None:
@@ -236,9 +242,57 @@ async def get_openadr_event(
     return {**_header(adapter), **_event_dict(adapter, event, time.time())}
 
 
+@router.get("/openadr/events")
+async def list_openadr_events(
+    _user=Depends(get_current_user),
+    registry: ProtocolRegistry = Depends(get_registry),
+):
+    """DR events known to the VEN with their signals and opt state."""
+    return await on_leader(
+        LEASE_PROTOCOLS,
+        "openadr_events",
+        {},
+        lambda: _openadr_events_local(registry),
+        timeout_s=PROTOCOL_READ_TIMEOUT_S,
+    )
+
+
+@router.get("/openadr/events/{event_id}")
+async def get_openadr_event(
+    event_id: str,
+    _user=Depends(get_current_user),
+    registry: ProtocolRegistry = Depends(get_registry),
+):
+    return await on_leader(
+        LEASE_PROTOCOLS,
+        "openadr_event",
+        {"event_id": event_id},
+        lambda: _openadr_event_local(registry, event_id),
+        timeout_s=PROTOCOL_READ_TIMEOUT_S,
+    )
+
+
 class OptRequest(BaseModel):
     opt_type: Literal["optIn", "optOut"]
     reason: str = Field("", max_length=500)
+
+
+async def _override_opt_local(
+    registry: ProtocolRegistry, event_id: str, body: OptRequest, username: str | None
+) -> dict[str, Any]:
+    adapter = _adapter(registry, "openadr", OpenADRAdapter)
+    if adapter.get_event(event_id) is None:
+        raise HTTPException(status_code=404, detail=f"DR event {event_id} not found")
+    orchestrator = get_dr_orchestrator() or DROrchestrator(
+        DRPolicy.from_settings(get_settings()), registry
+    )
+    try:
+        result = await orchestrator.override_opt(
+            event_id, body.opt_type, user=username, reason=body.reason
+        )
+    except Exception as exc:  # VTN unreachable / rejected the response
+        raise HTTPException(status_code=502, detail=f"opt response failed: {exc}") from exc
+    return {**_header(adapter), **result}
 
 
 @router.post("/openadr/events/{event_id}/opt")
@@ -254,19 +308,13 @@ async def override_opt(
     is live (``sent_to_vtn``); opting out also stops an ongoing automatic
     dispatch for the event.
     """
-    adapter = _adapter(registry, "openadr", OpenADRAdapter)
-    if adapter.get_event(event_id) is None:
-        raise HTTPException(status_code=404, detail=f"DR event {event_id} not found")
-    orchestrator = get_dr_orchestrator() or DROrchestrator(
-        DRPolicy.from_settings(get_settings()), registry
+    username = getattr(user, "username", None)
+    return await on_leader(
+        LEASE_PROTOCOLS,
+        "openadr_opt",
+        {"event_id": event_id, "body": body.model_dump(mode="json"), "username": username},
+        lambda: _override_opt_local(registry, event_id, body, username),
     )
-    try:
-        result = await orchestrator.override_opt(
-            event_id, body.opt_type, user=getattr(user, "username", None), reason=body.reason
-        )
-    except Exception as exc:  # VTN unreachable / rejected the response
-        raise HTTPException(status_code=502, detail=f"opt response failed: {exc}") from exc
-    return {**_header(adapter), **result}
 
 
 # ---------------------------------------------------------------------------
@@ -274,12 +322,7 @@ async def override_opt(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/ieee2030_5/controls")
-async def list_ieee2030_5_controls(
-    _user=Depends(get_current_user),
-    registry: ProtocolRegistry = Depends(get_registry),
-):
-    """Active DER controls (highest priority first), programs and defaults."""
+async def _ieee2030_5_controls_local(registry: ProtocolRegistry) -> dict[str, Any]:
     adapter = _adapter(registry, "ieee2030_5", IEEE2030_5Adapter)
     return {
         **_header(adapter),
@@ -300,14 +343,27 @@ async def list_ieee2030_5_controls(
     }
 
 
+@router.get("/ieee2030_5/controls")
+async def list_ieee2030_5_controls(
+    _user=Depends(get_current_user),
+    registry: ProtocolRegistry = Depends(get_registry),
+):
+    """Active DER controls (highest priority first), programs and defaults."""
+    return await on_leader(
+        LEASE_PROTOCOLS,
+        "ieee2030_5_controls",
+        {},
+        lambda: _ieee2030_5_controls_local(registry),
+        timeout_s=PROTOCOL_READ_TIMEOUT_S,
+    )
+
+
 # ---------------------------------------------------------------------------
 # DR orchestrator
 # ---------------------------------------------------------------------------
 
 
-@dr_router.get("/status")
-async def dr_status(_user=Depends(get_current_user)):
-    """Whether automatic DR response is running, its rules and the active dispatch."""
+async def _dr_status_local() -> dict[str, Any]:
     orchestrator = get_dr_orchestrator()
     if orchestrator is None:
         policy = DRPolicy.from_settings(get_settings())
@@ -319,6 +375,54 @@ async def dr_status(_user=Depends(get_current_user)):
             "detail": "no OpenADR / IEEE 2030.5 adapter enabled",
         }
     return orchestrator.status()
+
+
+@dr_router.get("/status")
+async def dr_status(_user=Depends(get_current_user)):
+    """Whether automatic DR response is running, its rules and the active dispatch."""
+    return await on_leader(
+        LEASE_PROTOCOLS,
+        "dr_status",
+        {},
+        _dr_status_local,
+        timeout_s=PROTOCOL_READ_TIMEOUT_S,
+    )
+
+
+# Handlers the protocol-adapters holder runs for calls forwarded by other workers.
+
+
+async def _h_openadr_events(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _openadr_events_local(get_registry())
+
+
+async def _h_openadr_event(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _openadr_event_local(get_registry(), str(payload["event_id"]))
+
+
+async def _h_openadr_opt(payload: dict[str, Any], session: AsyncSession) -> Any:
+    body = OptRequest.model_validate(payload["body"])
+    return await _override_opt_local(
+        get_registry(), str(payload["event_id"]), body, payload.get("username")
+    )
+
+
+async def _h_ieee2030_5_controls(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _ieee2030_5_controls_local(get_registry())
+
+
+async def _h_dr_status(payload: dict[str, Any], session: AsyncSession) -> Any:
+    return await _dr_status_local()
+
+
+for _method, _handler in (
+    ("openadr_events", _h_openadr_events),
+    ("openadr_event", _h_openadr_event),
+    ("openadr_opt", _h_openadr_opt),
+    ("ieee2030_5_controls", _h_ieee2030_5_controls),
+    ("dr_status", _h_dr_status),
+):
+    register_handler(LEASE_PROTOCOLS, _method, _handler)
 
 
 @dr_router.get("/responses")

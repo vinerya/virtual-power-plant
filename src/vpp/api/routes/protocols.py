@@ -1,11 +1,23 @@
-"""Protocol management API endpoints."""
+"""Protocol management API endpoints.
+
+OCPP / OpenADR / IEEE 2030.5 adapters run on the ``protocol-adapters`` lease
+holder. With several API workers, a request for one of them that lands on
+another worker is forwarded to the holder (``cluster_calls``), and the
+adapter list merges the holder's adapters in; in a single process everything
+is answered locally, as before.
+"""
 
 from __future__ import annotations
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from vpp.auth.security import get_current_user, require_role
+from vpp.cluster.lease import is_local
+from vpp.cluster.rpc import on_leader, register_handler
+from vpp.cluster.topology import LEASE_PROTOCOLS
 from vpp.protocols.base import ProtocolMode, ProtocolRegistry
 
 router = APIRouter(prefix="/api/v1/protocols", tags=["protocols"])
@@ -23,6 +35,21 @@ def get_registry() -> ProtocolRegistry:
 def set_registry(registry: ProtocolRegistry) -> None:
     global _registry
     _registry = registry
+
+
+# Adapters started by the protocol-adapters lease holder (vpp.protocols.bootstrap).
+LEASE_BOUND_ADAPTERS = frozenset({"ocpp", "openadr", "ieee2030_5"})
+# Reads forwarded to the holder give up after this long (503 leader_unavailable).
+PROTOCOL_READ_TIMEOUT_S = 3.0
+
+
+def _forwards(name: str, registry: ProtocolRegistry) -> bool:
+    """Whether a request for adapter *name* must go to the protocol-adapters holder."""
+    return (
+        name in LEASE_BOUND_ADAPTERS
+        and registry.get(name) is None
+        and not is_local(LEASE_PROTOCOLS)
+    )
 
 
 # -- Schemas -----------------------------------------------------------------
@@ -55,25 +82,49 @@ class ConnectResponse(BaseModel):
 # -- Endpoints ---------------------------------------------------------------
 
 
+def _info(a: Any) -> ProtocolInfo:
+    return ProtocolInfo(
+        name=a.name,
+        version=a.version,
+        status=a.status.value,
+        mode=a.mode.value,
+        simulated=a.mode == ProtocolMode.SIMULATED,
+        messages_sent=a.metrics.messages_sent,
+        messages_received=a.metrics.messages_received,
+        errors=a.metrics.errors,
+        uptime_seconds=a.metrics.uptime_seconds,
+    )
+
+
 @router.get("/", response_model=list[ProtocolInfo])
 async def list_protocols(
     _user=Depends(get_current_user),
     registry: ProtocolRegistry = Depends(get_registry),
 ):
-    """List all registered protocol adapters and their status."""
-    return [
-        ProtocolInfo(
-            name=a.name,
-            version=a.version,
-            status=a.status.value,
-            mode=a.mode.value,
-            simulated=a.mode == ProtocolMode.SIMULATED,
-            messages_sent=a.metrics.messages_sent,
-            messages_received=a.metrics.messages_received,
-            errors=a.metrics.errors,
-            uptime_seconds=a.metrics.uptime_seconds,
+    """List all registered protocol adapters and their status.
+
+    On a worker that does not hold the protocol-adapters lease, the holder's
+    OCPP / OpenADR / IEEE 2030.5 adapters are included (forwarded read).
+    """
+    infos = [_info(a) for a in registry.list_adapters()]
+    if not is_local(LEASE_PROTOCOLS):
+        remote = await on_leader(
+            LEASE_PROTOCOLS,
+            "list_adapters",
+            {},
+            _list_lease_bound_local,
+            timeout_s=PROTOCOL_READ_TIMEOUT_S,
         )
-        for a in registry.list_adapters()
+        seen = {i.name for i in infos}
+        infos.extend(ProtocolInfo.model_validate(r) for r in remote if r["name"] not in seen)
+    return infos
+
+
+async def _list_lease_bound_local() -> list[dict[str, Any]]:
+    return [
+        _info(a).model_dump()
+        for a in get_registry().list_adapters()
+        if a.name in LEASE_BOUND_ADAPTERS
     ]
 
 
@@ -85,6 +136,20 @@ async def connect_protocol(
     registry: ProtocolRegistry = Depends(get_registry),
 ):
     """Connect a protocol adapter."""
+    config = body.config if body else {}
+    if _forwards(name, registry):
+        return await on_leader(
+            LEASE_PROTOCOLS,
+            "connect",
+            {"name": name, "config": config},
+            lambda: _connect_local(registry, name, config),
+        )
+    return await _connect_local(registry, name, config)
+
+
+async def _connect_local(
+    registry: ProtocolRegistry, name: str, config: dict[str, Any]
+) -> dict[str, Any]:
     adapter = registry.get(name)
     if adapter is None:
         raise HTTPException(
@@ -96,10 +161,10 @@ async def connect_protocol(
             name=name,
             status=adapter.status.value,
             message="Already running (simulated)" if adapter.is_simulated else "Already connected",
-        )
+        ).model_dump()
 
-    if body and body.config:
-        adapter.configure(**body.config)
+    if config:
+        adapter.configure(**config)
 
     try:
         await adapter.connect()
@@ -114,8 +179,10 @@ async def connect_protocol(
             name=name,
             status=adapter.status.value,
             message="Running in simulated mode: no real endpoint configured",
-        )
-    return ConnectResponse(name=name, status=adapter.status.value, message="Connected")
+        ).model_dump()
+    return ConnectResponse(
+        name=name, status=adapter.status.value, message="Connected"
+    ).model_dump()
 
 
 @router.post("/{name}/disconnect", response_model=ConnectResponse)
@@ -125,6 +192,17 @@ async def disconnect_protocol(
     registry: ProtocolRegistry = Depends(get_registry),
 ):
     """Disconnect a protocol adapter."""
+    if _forwards(name, registry):
+        return await on_leader(
+            LEASE_PROTOCOLS,
+            "disconnect",
+            {"name": name},
+            lambda: _disconnect_local(registry, name),
+        )
+    return await _disconnect_local(registry, name)
+
+
+async def _disconnect_local(registry: ProtocolRegistry, name: str) -> dict[str, Any]:
     adapter = registry.get(name)
     if adapter is None:
         raise HTTPException(
@@ -132,7 +210,9 @@ async def disconnect_protocol(
         )
 
     await adapter.disconnect()
-    return ConnectResponse(name=name, status=adapter.status.value, message="Disconnected")
+    return ConnectResponse(
+        name=name, status=adapter.status.value, message="Disconnected"
+    ).model_dump()
 
 
 @router.get("/{name}/metrics")
@@ -142,6 +222,18 @@ async def protocol_metrics(
     registry: ProtocolRegistry = Depends(get_registry),
 ):
     """Get detailed metrics for a protocol adapter."""
+    if _forwards(name, registry):
+        return await on_leader(
+            LEASE_PROTOCOLS,
+            "metrics",
+            {"name": name},
+            lambda: _metrics_local(registry, name),
+            timeout_s=PROTOCOL_READ_TIMEOUT_S,
+        )
+    return await _metrics_local(registry, name)
+
+
+async def _metrics_local(registry: ProtocolRegistry, name: str) -> dict[str, Any]:
     adapter = registry.get(name)
     if adapter is None:
         raise HTTPException(
@@ -161,3 +253,33 @@ async def protocol_metrics(
         "last_message_at": m.last_message_at,
         "reconnect_count": m.reconnect_count,
     }
+
+
+# Handlers the protocol-adapters holder runs for calls forwarded by other workers.
+
+
+async def _h_list_adapters(payload: dict[str, Any], session: Any) -> Any:
+    return await _list_lease_bound_local()
+
+
+async def _h_connect(payload: dict[str, Any], session: Any) -> Any:
+    return await _connect_local(
+        get_registry(), str(payload["name"]), dict(payload.get("config") or {})
+    )
+
+
+async def _h_disconnect(payload: dict[str, Any], session: Any) -> Any:
+    return await _disconnect_local(get_registry(), str(payload["name"]))
+
+
+async def _h_metrics(payload: dict[str, Any], session: Any) -> Any:
+    return await _metrics_local(get_registry(), str(payload["name"]))
+
+
+for _method, _handler in (
+    ("list_adapters", _h_list_adapters),
+    ("connect", _h_connect),
+    ("disconnect", _h_disconnect),
+    ("metrics", _h_metrics),
+):
+    register_handler(LEASE_PROTOCOLS, _method, _handler)

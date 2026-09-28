@@ -169,7 +169,14 @@ one. Coordination goes through the database (`vpp.cluster`):
   claims a call within `VPP_CLUSTER_CALL_TIMEOUT_SECONDS` it is cancelled
   (never executed) and the client gets `503 leader_unavailable`; a claimed
   call that does not finish in time gives `504 leader_timeout` with the
-  call id. Telemetry events that arrive on a follower (e.g.
+  call id. OpenADR / IEEE 2030.5 / DR orchestrator requests
+  (`/api/v1/protocols/openadr/*`, `/ieee2030_5/*`, `/api/v1/dr/status`,
+  and the `openadr` / `ieee2030_5` entries of `/api/v1/protocols/`) are
+  forwarded the same way to the `protocol-adapters` holder, whose adapters
+  hold the VEN's events, programs, DERControls and poll state; reads give
+  up after at most 3 s with `503 leader_unavailable`. In a single process
+  (or on the holder) they are answered directly, with no database round
+  trip. Telemetry events that arrive on a follower (e.g.
   `POST /resources/{id}/telemetry`) are forwarded the same way, without
   waiting, to the `alert-evaluator` holder; so are alert-rule reloads.
   A worker that takes over the venue rebuilds its books and portfolio from
@@ -197,11 +204,6 @@ Still per process:
   `VPP_CONTROL_ENABLED=true` with `VPP_API_WORKERS > 1` is refused at
   startup for the same reason: two workers could send conflicting commands
   to one device.
-- OpenADR / IEEE 2030.5 views (`/api/v1/protocols/openadr/*`,
-  `/ieee2030_5/*`, `/api/v1/dr/status`) read the adapters' in-memory state
-  and are only complete on the `protocol-adapters` holder; other workers
-  answer 404 "not running". The DR decisions themselves are persisted
-  (`/api/v1/dr/responses`) and readable everywhere.
 
 Each worker logs the effective topology at startup (`API topology: ...`)
 and warns about the per-process limits above.

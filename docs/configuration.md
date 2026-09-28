@@ -37,7 +37,7 @@ defined in code.
 | `VPP_API_PORT` | `8000` | Bind port for `vpp serve` (`--port` overrides), as above. |
 | `VPP_API_WORKERS` | `1` | Worker processes started by `vpp serve` (overridden by `--workers`). With more than one, singleton work runs on DB-lease holders and WebSocket broadcasts are relayed between workers; see [architecture](architecture.md#process-model). Refused together with `VPP_OCPP_ENABLED`. If you start uvicorn/gunicorn with several workers yourself, set this to the same number. |
 | `VPP_CLUSTER_LEASE_TTL_SECONDS` | `15` | Leadership lease lifetime (renewed every third of it). A crashed leader's work moves to another worker within about this long (at once on the same host). Host clocks must agree to well within it. |
-| `VPP_CLUSTER_CALL_TIMEOUT_SECONDS` | `10` | How long a worker waits for the lease holder to answer a forwarded trading call before returning `503 leader_unavailable` (not executed) or `504 leader_timeout` (outcome unknown). |
+| `VPP_CLUSTER_CALL_TIMEOUT_SECONDS` | `10` | How long a worker waits for the lease holder to answer a forwarded call (trading; OpenADR / IEEE 2030.5 / DR views, which also cap it at 3 s) before returning `503 leader_unavailable` (not executed) or `504 leader_timeout` (outcome unknown). |
 | `VPP_CLUSTER_POLL_INTERVAL_SECONDS` | `0.25` | How often lease holders poll for forwarded calls and workers poll the WebSocket relay. |
 | `VPP_CORS_ORIGINS` | `["http://localhost:3000"]` | Allowed browser origins (credentials allowed). The web console calls the API server-side, so this only matters for browsers calling the API directly. |
 

@@ -436,10 +436,14 @@ async def on_leader(
     method: str,
     payload: dict[str, Any],
     local: Callable[[], Awaitable[Any]],
+    *,
+    timeout_s: float | None = None,
 ) -> Any:
     """Run *local* here when this process leads *target*, else forward ``method``.
 
     For API routes: a forwarding failure is raised as ``HTTPException``.
+    *timeout_s* caps ``VPP_CLUSTER_CALL_TIMEOUT_SECONDS`` for this call (reads
+    that should fail fast when the leader is gone).
     """
     from vpp.cluster.lease import is_local
 
@@ -448,12 +452,15 @@ async def on_leader(
     from vpp.settings import get_settings
 
     settings = get_settings()
+    wait_s = float(settings.cluster_call_timeout_seconds)
+    if timeout_s is not None:
+        wait_s = min(wait_s, timeout_s)
     try:
         return await call(
             target,
             method,
             payload,
-            timeout_s=settings.cluster_call_timeout_seconds,
+            timeout_s=wait_s,
             poll_s=settings.cluster_poll_interval_seconds,
         )
     except ClusterCallError as exc:

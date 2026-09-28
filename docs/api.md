@@ -20,7 +20,9 @@ the WebSocket protocol, and conventions shared by all routes.
   a trading risk rejection:
   `422 {"detail": {"code": "risk_limit_breached", "message": "...", "reasons": [...], "order_id": "..."}}`.
   With several API workers, trading venue calls (orders, cancel, portfolio,
-  markets, tick, strategy runs) may also answer
+  markets, tick, strategy runs) and the OpenADR / IEEE 2030.5 / DR views and
+  actions (`/api/v1/protocols/openadr/*`, `/ieee2030_5/*`, `/api/v1/dr/status`)
+  may also answer
   `503 {"detail": {"code": "leader_unavailable", ...}}` (with `Retry-After`;
   nothing was executed) or `504 {"detail": {"code": "leader_timeout", "call_id": ...}}`
   (accepted, outcome unknown: check `GET /api/v1/trading/orders`).

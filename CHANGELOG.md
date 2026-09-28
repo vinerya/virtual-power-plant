@@ -301,6 +301,15 @@ changes** before upgrading.
   answered with the holder's result, or `503 leader_unavailable` /
   `504 leader_timeout`. Follower telemetry is forwarded to the alert
   evaluator.
+- OpenADR / IEEE 2030.5 / DR views are complete on every worker: events,
+  opt state, DERControls, programs, adapter metrics and `/api/v1/dr/status`
+  (and the opt-in/out override, connect/disconnect) received by a worker
+  that does not hold the `protocol-adapters` lease are forwarded to the
+  holder through `cluster_calls`; `/api/v1/protocols/` includes the holder's
+  adapters. Reads wait at most 3 s and answer `503 leader_unavailable` when
+  the holder does not respond (they previously answered `404` "not
+  running"). A single worker still answers them directly, with no database
+  round trip.
 - WebSocket broadcasts are relayed between workers (`cluster_events`).
 - Settings `VPP_CLUSTER_LEASE_TTL_SECONDS`,
   `VPP_CLUSTER_CALL_TIMEOUT_SECONDS`, `VPP_CLUSTER_POLL_INTERVAL_SECONDS`.

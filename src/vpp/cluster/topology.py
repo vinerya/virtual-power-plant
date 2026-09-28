@@ -22,7 +22,8 @@ LEADER_ONLY = {
     LEASE_ALERTS: "alert evaluation; other workers forward telemetry to it",
     LEASE_MQTT: "MQTT telemetry ingestion",
     LEASE_MODBUS: "Modbus telemetry ingestion",
-    LEASE_PROTOCOLS: "protocol adapters (OCPP / OpenADR / IEEE 2030.5) and the DR orchestrator",
+    LEASE_PROTOCOLS: "protocol adapters (OCPP / OpenADR / IEEE 2030.5) and the DR orchestrator; "
+    "other workers forward OpenADR / IEEE 2030.5 / DR views and actions to it",
 }
 
 PER_PROCESS = (
@@ -79,10 +80,11 @@ def log_topology(settings: Any, leadership: dict[str, bool]) -> None:
         if getattr(settings, "openadr_enabled", False) or getattr(
             settings, "ieee2030_5_enabled", False
         ):
-            logger.warning(
+            logger.info(
                 "Multi-worker deployment: OpenADR / IEEE 2030.5 run on the protocol-adapters "
-                "lease holder only; their live views (/api/v1/protocols/openadr, "
-                "/ieee2030_5, /api/v1/dr/status) answer 404 on other workers."
+                "lease holder; other workers forward their views and actions "
+                "(/api/v1/protocols/openadr, /ieee2030_5, /api/v1/dr/status) to it and "
+                "answer 503 leader_unavailable if it does not respond."
             )
         if getattr(settings, "database_is_sqlite", False):
             logger.warning(
