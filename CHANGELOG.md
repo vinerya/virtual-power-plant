@@ -131,6 +131,26 @@ changes** before upgrading.
   audit in `dr_event_responses`. **Auto-response off by default**
   (`VPP_DR_AUTO_RESPONSE_ENABLED`); caps `VPP_DR_MAX_EXPORT_KW` /
   `VPP_DR_MAX_IMPORT_KW`.
+- **Device control (setpoint actuator, `vpp.control`).** Dispatch
+  allocations are written to stationary devices that opt in via
+  `metadata["modbus"]["control"]`: generic signed-register profile, SunSpec
+  model 123 (`WMaxLimPct` / `WMaxLim_Ena` / revert timer) and SunSpec model
+  124 storage (**generic/unverified**). Safety: global kill switch
+  `VPP_CONTROL_ENABLED` (default off), clamp to resource and per-device
+  limits, deadband, rate limit with deferred writes, read-back verification,
+  writable-register guard, never writes offline resources, watchdog fallback
+  (`safe_setpoint_kw` or release) when a setpoint expires
+  (`VPP_CONTROL_WATCHDOG_INTERVAL_S`, `VPP_CONTROL_EXPIRY_GRACE_S`) and
+  release on shutdown. Commands are logged in `event_log`
+  (`device_setpoint`) and published as `DEVICE_SETPOINT`. Used by
+  `POST /api/v1/optimization/dispatch` with `"apply": true` (default false;
+  admin/operator only; per-resource `device_deliveries`) and the DR
+  orchestrator; `GET /api/v1/optimization/setpoints` shows state and recent
+  commands.
+- IEEE 2030.5: `DefaultDERControl` applies while no event control is active
+  (its limits clamp; an OpenADR event target beats its target), and the
+  client POSTs `DERControlResponse` resources (received / started /
+  completed / cancelled / superseded) per `responseRequired`.
 - Protocol data API: OCPP charge points and transactions, remote start/stop,
   OpenADR events and opt override, IEEE 2030.5 controls, `/api/v1/dr/status`,
   `/api/v1/dr/responses`.
@@ -247,8 +267,11 @@ changes** before upgrading.
   `vpp_info` use it.
 - `AlertManager` keeps per-source rule state, supports per-rule resource
   scoping and splits `check()` / `dispatch()`.
-- The OCPP adapter's receive buffer drops the oldest message on overflow
-  instead of counting each overflow as an error.
+- The OCPP, OpenADR and IEEE 2030.5 adapters' receive buffers drop the
+  oldest message on overflow instead of counting each overflow as an error.
+- `POST /api/v1/optimization/dispatch` and the DR orchestrator share one
+  implementation (`execute_dispatch`); the route no longer duplicates the
+  run/status bookkeeping.
 - The console login sends a form body; mock fallbacks and silent 404
   handling were removed from sites, alerts and the portal.
 - API Docker image installs the `protocols`, `solver` and `degradation`
@@ -292,6 +315,9 @@ changes** before upgrading.
   disabled every app logger when migrations ran in-process; timestamp
   columns tightened to `NOT NULL` to match the ORM.
 - `vpp migrate` was a stub.
+- Modbus reads/writes failed on pymodbus >= 3.10 (`slave=` renamed to
+  `device_id=`, `count` keyword-only); the adapter now adapts to either.
+  Custom registers no longer leak into the shared vendor register maps.
 - Protocols demo no longer depends on a current event loop and no longer
   calls the OpenADR handler twice.
 - Console: WebSocket client dialled a proxy path that could never upgrade;

@@ -75,6 +75,7 @@ per-process (see [Process model](#process-model)).
 | `protocols/` | adapters (OCPP 1.6-J, OpenADR 2.0b, IEEE 2030.5, MQTT, Modbus), OCPP-J framing, bootstrap/supervision, telemetry ingestion |
 | `v2g/` | EV and fleet models, scheduler, aggregator, persistent store, OCPP bridge |
 | `dr/` | DR translation rules and orchestrator |
+| `control/` | setpoint actuator: dispatch allocations -> device setpoints (Modbus writer in `protocols/modbus_control.py`), safety rules, fallback watchdog |
 | `portal/` | sites aggregation, customer access scoping, customer billing, telemetry history |
 | `grid/` | grid-forming inverter and microgrid models (simulation) |
 | `research/` | forecasting, anomaly detection, experiment runner (not used by the API) |
@@ -105,8 +106,11 @@ charge/discharge limits, and solves a single-interval allocation LP with
 Pyomo + HiGHS (battery wear cost from persisted SOH, renewables first). If
 the solver is unavailable or fails, a headroom-proportional rule splits the
 target. The run is stored in `optimization_runs` and
-`OPTIMIZATION_*` events are published. The API call **computes and
-records**; it does not send setpoints to devices.
+`OPTIMIZATION_*` events are published. By default the call **computes
+and records**; with `"apply": true` the setpoint actuator (`control/`) writes
+the stationary allocations to devices that opted in via
+`metadata.modbus.control`, behind the `VPP_CONTROL_ENABLED` kill switch and a
+fallback watchdog (see [protocols.md](protocols.md#device-control-setpoint-actuator)).
 
 `POST /api/v1/optimization/schedule` plans a horizon (MPC) from prices or a
 stored tariff; `POST /api/v1/optimization/backtest` replays MPC closed-loop
@@ -118,8 +122,8 @@ explained (`/runs/{id}/explain`).
 The DR orchestrator watches OpenADR events and IEEE 2030.5 controls,
 translates them into a fleet target with limits, and (only when
 `VPP_DR_AUTO_RESPONSE_ENABLED`) runs the same DB-backed dispatch over
-resources plus plugged-in V2G vehicles, pushes EV setpoints through OCPP
-and records the decision. See [protocols.md](protocols.md).
+resources plus plugged-in V2G vehicles, pushes EV setpoints through OCPP,
+hands stationary setpoints to the actuator and records the decision. See [protocols.md](protocols.md).
 
 ### Trading
 

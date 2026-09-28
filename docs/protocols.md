@@ -138,8 +138,16 @@ DERControlList (+ DefaultDERControl), handles the server `Time` offset and
 derived from the certificate), re-polls on the server `pollRate`, and
 exposes the active DER controls ordered by program primacy.
 
-Not implemented: posting DERStatus / DERCapability / Response resources
-back to the server, subscription/notification, DERCurve parsing.
+Responses: for server controls with a `replyTo` link the client POSTs
+`DERControlResponse` resources, once per status, per the control's
+`responseRequired` bitmap — bit 0: `1` *Event Received*; bit 1: `2` *Event
+Started* when the control becomes active, `3` *Event Completed* after its
+interval (also when the server has dropped it from its list), `6` *Event
+Cancelled* / `7` *Event Superseded*. A failed POST is retried on the next
+poll. Simulated mode posts nothing.
+
+Not implemented: posting DERStatus / DERCapability, subscription/
+notification, DERCurve parsing.
 
 ```bash
 VPP_IEEE2030_5_ENABLED=true
@@ -163,8 +171,10 @@ VTN event / utility DERControl
   -> DB-backed dispatch (same LP + fallback as POST /api/v1/optimization/dispatch,
      over persisted resources + plugged-in V2G vehicles; recorded as an optimization run)
   -> EV setpoints pushed to chargers via OCPP SetChargingProfile
+  -> stationary setpoints written by the setpoint actuator (Modbus; see
+     "Device control" below; VPP_CONTROL_ENABLED kill switch)
   -> audit row in dr_event_responses + DR_EVENT_RECEIVED / DR_RESPONSE_SENT /
-     DISPATCH_EXECUTED / V2G_DISPATCH events
+     DISPATCH_EXECUTED / V2G_DISPATCH / DEVICE_SETPOINT events
 ```
 
 Status and history: `GET /api/v1/dr/status`, `GET /api/v1/dr/responses`.
@@ -181,8 +191,12 @@ Status and history: `GET /api/v1/dr/status`, `GET /api/v1/dr/responses`.
   dispatched.
 - During an event the effective target is dispatched and re-planned when
   the target changes or every `VPP_DR_REDISPATCH_INTERVAL_S` (fresh SOC
-  each time). When no signal is active any more, EV DR profiles are cleared
-  and a release is recorded.
+  each time). When no signal is active any more, EV DR profiles are cleared,
+  device setpoints are released and a release is recorded.
+- An IEEE 2030.5 program's **DefaultDERControl** applies while no event
+  control is active: its limits always clamp, and its target is dispatched
+  unless an OpenADR event supplies one (the event wins; the default's limits
+  still apply).
 - **IEEE 2030.5 limits always clamp** (they are utility grid-safety
   constraints), and the operator caps `VPP_DR_MAX_EXPORT_KW` /
   `VPP_DR_MAX_IMPORT_KW` are applied last.
@@ -226,9 +240,78 @@ target wins over an OpenADR one.
 
 ### What "dispatch" reaches
 
-EV setpoints are sent to chargers and each charger's answer is recorded.
-**Stationary resources** (batteries, PV, wind) receive their allocation
-only as a `DISPATCH_EXECUTED` event on the event bus. The platform does not
-ship a driver that writes those setpoints to devices (Modbus is used for
-reading telemetry); connect your own device integration to that event
-before enabling auto-response for stationary assets.
+EV setpoints are sent to chargers over OCPP and each charger's answer is
+recorded. **Stationary resources** (batteries, PV inverters) get their
+allocation through the setpoint actuator described next: only resources that
+opted in are written, and only while `VPP_CONTROL_ENABLED=true`. Every other
+resource is reported as `not_configured` / `disabled` in the dispatch record
+(`device_deliveries`) and receives nothing.
+
+## Device control (setpoint actuator)
+
+**Maturity: beta; off by default.** `src/vpp/control/actuator.py` consumes
+dispatch allocations and writes a power setpoint to each opted-in device;
+`src/vpp/protocols/modbus_control.py` is the Modbus writer. Users:
+
+- `POST /api/v1/optimization/dispatch` with `"apply": true` (default `false`
+  plans only), valid for `interval_minutes`;
+- the DR orchestrator (OpenADR events, IEEE 2030.5 event and default
+  controls), valid until the next re-dispatch, released when the signal ends.
+
+`GET /api/v1/optimization/setpoints[?resource_id=]` shows the kill switch,
+active setpoints and the latest commands.
+
+### Opting a resource in
+
+Add a `control` block to the resource's existing `metadata.modbus` config
+(the same block Modbus ingestion reads). Addresses are the 0-based values
+sent on the wire; vendor tables often list 1-based register numbers.
+
+```json
+{"modbus": {"mode": "tcp", "host": "192.168.1.50", "port": 502, "unit_id": 1,
+  "control": {"enabled": true, "profile": "sunspec_123", "model_base": 40236,
+              "revert_timeout_s": 900, "max_kw": 8, "deadband_kw": 0.2,
+              "min_interval_s": 10}}}
+```
+
+| Profile | Writes | Release | Status |
+|---|---|---|---|
+| `register` (default) | one signed setpoint register: `register` (a map/custom register flagged `"writable": true`) or `address` + `data_type`; `unit` `W` / `kW` / `pct` (of `reference_kw`, default rated power); `scale` (value of one count) or `scale_factor_register` (SunSpec-style int16 exponent); `sign` `export_positive` (default) / `import_positive`; optional `enable_register` (+`enable_value`, `disable_value`) | `disable_value` to `enable_register`, else `release_value` (default 100 for `pct`, 0 otherwise) | generic |
+| `sunspec_123` | SunSpec model 123 Immediate Controls at `model_base` (address of the model `ID`): `WMaxLimPct` (+5, scaled by `WMaxLimPct_SF` at +23) = setpoint / `reference_kw`, clamped to 0–100 %; `WMaxLim_Ena` (+9) = 1; optional `WMaxLimPct_RvrtTms` (+7) = `revert_timeout_s` | `WMaxLim_Ena` = 0 | offsets per the SunSpec model definition |
+| `sunspec_124` | SunSpec model 124 Storage: `OutWRte` (+12) / `InWRte` (+13) as % of `reference_kw` (discharge: `OutWRte`=p, `InWRte`=−p; charge the reverse), `StorCtl_Mod` (+5) = 3 | `StorCtl_Mod` = 0 | **generic/unverified** — vendors interpret forced charge/discharge differently; validate on your device |
+
+No vendor-specific absolute addresses are shipped: SunSpec models sit at a
+device-specific address, so find `model_base` in your device's register map
+(for example, Fronius documents model 123 starting at register 40237 in
+"int + SF" mode, i.e. address 40236 — unverified here, check your firmware).
+`"simulate": true` runs the whole pipeline without device I/O.
+
+### Safety rules
+
+1. `VPP_CONTROL_ENABLED=false` (default) writes nothing (`disabled`);
+   `control.enabled` must also be true.
+2. Offline resources are never written (`offline`), including by the
+   watchdog.
+3. Setpoints are clamped to the resource limits (battery: −charge ..
+   +discharge limit; others: 0 .. rated power) and `min_kw` / `max_kw`.
+4. Deadband (`deadband_kw`, default 0.1): a near-identical setpoint is not
+   rewritten (`unchanged`); rate limit (`min_interval_s`, default 5 s): a
+   newer setpoint is held and written by the watchdog (`deferred`).
+5. Read-back verification (`verify`, default true): a register that does not
+   read back as written is a failure. A write never exceeds the register's
+   type (no wrap-around), and only registers flagged writable are written.
+6. Watchdog (`VPP_CONTROL_WATCHDOG_INTERVAL_S`): a setpoint expires at the
+   end of its dispatch interval plus `VPP_CONTROL_EXPIRY_GRACE_S`; the device
+   then goes to `safe_setpoint_kw` if configured, else control is released.
+   On API shutdown every active setpoint is released. With
+   `revert_timeout_s` the device reverts on its own if the process dies;
+   the watchdog refreshes the setpoint every `keepalive_s` (default half the
+   revert timeout). A failed release is retried three times.
+
+Every command is recorded in the `event_log` table (`event_type =
+device_setpoint`), stored with the dispatch (`device_deliveries` in the run
+metadata / DR response details) and published as a `DEVICE_SETPOINT` event
+(WebSocket channel `optimization_events`). Delivery statuses: `accepted`,
+`unchanged`, `deferred`, `simulated`, `failed`, `offline`, `disabled`,
+`not_configured`.
+

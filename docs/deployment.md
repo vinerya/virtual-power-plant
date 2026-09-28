@@ -267,6 +267,7 @@ Recommended order for a new site:
    `GET /api/v1/dr/status` and `/api/v1/dr/responses` with auto-response
    **off**.
 4. Only then consider `VPP_DR_AUTO_RESPONSE_ENABLED=true`, with
-   `VPP_DR_MAX_EXPORT_KW` / `VPP_DR_MAX_IMPORT_KW` caps, and after wiring
-   stationary-asset setpoints (see
-   [protocols.md](protocols.md#what-dispatch-reaches)).
+   `VPP_DR_MAX_EXPORT_KW` / `VPP_DR_MAX_IMPORT_KW` caps. Stationary
+   assets are only driven once `VPP_CONTROL_ENABLED=true` and each device has
+   a `metadata.modbus.control` block — try `"simulate": true` first (see
+   [protocols.md](protocols.md#device-control-setpoint-actuator)).
