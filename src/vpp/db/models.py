@@ -11,8 +11,10 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -58,6 +60,12 @@ class ResourceModel(TimestampMixin, Base):
     # DegradationUpdater falls back to a documented C/4 heuristic
     # (rated_power * 4.0).  Migration: 0003_add_nominal_energy.py.
     nominal_energy_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Site membership (sites/customer portal). NULL = not assigned to any
+    # site. Ownership is derived through the site (``sites.owner_id``).
+    site_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("sites.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Relationships
     battery_states: Mapped[list["BatteryStateModel"]] = relationship(
@@ -246,3 +254,128 @@ class EventLogModel(TimestampMixin, Base):
     resource_id: Mapped[str] = mapped_column(String(36), nullable=True, index=True)
     details_json: Mapped[str] = mapped_column(Text, default="{}")
     severity: Mapped[str] = mapped_column(String(20), default="info")
+
+
+# ---------------------------------------------------------------------------
+# Sites, customers, metering (sites map + customer portal)
+# ---------------------------------------------------------------------------
+
+class SiteModel(TimestampMixin, Base):
+    """A physical premise grouping resources, optionally owned by a customer."""
+
+    __tablename__ = "sites"
+
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    lat: Mapped[float] = mapped_column(Float)
+    lon: Mapped[float] = mapped_column(Float)
+    region: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # IANA zone used for billing-period boundaries and TOU classification.
+    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    owner_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class CustomerProfileModel(TimestampMixin, Base):
+    """Portal profile for a ``customer``-role user (1:1 with ``users``)."""
+
+    __tablename__ = "customer_profiles"
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    tariff_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    baseline_kwh_per_month: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class DRProgramModel(TimestampMixin, Base):
+    """A demand-response program customers can enroll in."""
+
+    __tablename__ = "dr_programs"
+
+    name: Mapped[str] = mapped_column(String(255), unique=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    utility: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    incentive_per_event: Mapped[float | None] = mapped_column(Float, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ProgramEnrollmentModel(TimestampMixin, Base):
+    """A customer's enrollment in a DR program (consent is recorded)."""
+
+    __tablename__ = "program_enrollments"
+    __table_args__ = (
+        UniqueConstraint("user_id", "program_id", name="uq_program_enrollment_user_program"),
+    )
+
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    program_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("dr_programs.id", ondelete="CASCADE"), index=True
+    )
+    acknowledged_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MeterReadingModel(TimestampMixin, Base):
+    """Revenue-meter interval data for a site (grid import/export kWh)."""
+
+    __tablename__ = "meter_readings"
+    __table_args__ = (
+        UniqueConstraint("site_id", "timestamp", name="uq_meter_readings_site_ts"),
+        Index("ix_meter_readings_site_ts", "site_id", "timestamp"),
+    )
+
+    site_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sites.id", ondelete="CASCADE"), index=True
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # interval start, UTC
+    interval_minutes: Mapped[int] = mapped_column(Integer)
+    import_kwh: Mapped[float] = mapped_column(Float, default=0.0)
+    export_kwh: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class ResourceTelemetryModel(TimestampMixin, Base):
+    """Generic per-resource telemetry samples (power, optional SOC).
+
+    Complements ``battery_states`` (MQTT battery telemetry) for resources
+    whose live state arrives another way (Modbus polling, the telemetry
+    ingest endpoint). Power sign convention matches ``Battery``: positive =
+    consuming / charging, negative = discharging; generators report
+    positive output.
+    """
+
+    __tablename__ = "resource_telemetry"
+    __table_args__ = (
+        Index("ix_resource_telemetry_resource_ts", "resource_id", "timestamp"),
+    )
+
+    resource_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), index=True
+    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))  # UTC
+    power_kw: Mapped[float] = mapped_column(Float)
+    state_of_charge: Mapped[float | None] = mapped_column(Float, nullable=True)  # 0-1
+    source: Mapped[str] = mapped_column(String(64), default="api")
+
+
+class ConfigDocumentModel(TimestampMixin, Base):
+    """Versioned VPPConfig documents applied via ``PUT /api/v1/config``.
+
+    Append-only: the newest row is the live configuration, older rows are
+    the audit trail.
+    """
+
+    __tablename__ = "config_documents"
+
+    version: Mapped[int] = mapped_column(Integer, unique=True, index=True)  # 1, 2, 3, ...
+    yaml: Mapped[str] = mapped_column(Text)
+    hash: Mapped[str] = mapped_column(String(64))
+    updated_by: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )

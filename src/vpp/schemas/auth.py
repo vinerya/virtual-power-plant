@@ -16,6 +16,23 @@ class UserRole(str, Enum):
     OPERATOR = "operator"
     VIEWER = "viewer"
     RESEARCHER = "researcher"
+    #: End customer (household / C&I site owner) using the member portal.
+    #: Customers are denied on every operator endpoint by default (see
+    #: :func:`vpp.auth.security.get_current_user`) and may only reach
+    #: routes that explicitly opt in and scope data to their own sites.
+    CUSTOMER = "customer"
+
+
+#: JWT ``aud`` claim values. The web console's middleware routes on this
+#: claim (``customer`` -> member portal, anything else -> operator console);
+#: the backend re-checks it against the user's current role on every request.
+AUDIENCE_OPERATOR = "operator"
+AUDIENCE_CUSTOMER = "customer"
+
+
+def audience_for_role(role: str) -> str:
+    """Return the JWT audience a user with ``role`` is issued."""
+    return AUDIENCE_CUSTOMER if role == UserRole.CUSTOMER.value else AUDIENCE_OPERATOR
 
 
 class UserCreate(BaseModel):
@@ -38,6 +55,12 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class MeResponse(UserResponse):
+    """``GET /api/v1/auth/me`` payload: the user plus the console audience."""
+
+    audience: str = Field(description="'customer' for member-portal users, else 'operator'")
+
+
 class Token(BaseModel):
     """JWT access token response."""
 
@@ -53,6 +76,7 @@ class TokenPayload(BaseModel):
     username: str
     role: UserRole
     exp: int  # expiration timestamp
+    aud: str | None = None  # "operator" | "customer"; absent on legacy tokens
 
 
 class APIKeyCreate(BaseModel):
