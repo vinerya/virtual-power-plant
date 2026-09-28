@@ -616,6 +616,16 @@ class MultiResourceMPCController:
                         "converged": result["converged"],
                         "primal_residual": result["primal_residual"],
                         "dual_residual": result["dual_residual"],
+                        # Full-horizon plan (diagnostics / schedule APIs).
+                        "plan": {
+                            rid: {
+                                "p_charge": list(sol["p_charge"]),
+                                "p_discharge": list(sol["p_discharge"]),
+                                "soc": list(sol.get("soc", [])),
+                            }
+                            for rid, sol in result["per_battery_solutions"].items()
+                        },
+                        "aggregate_plan": list(result["aggregate"]),
                     },
                 )
             except Exception as e:
@@ -678,6 +688,17 @@ class MultiResourceMPCController:
             }
         aggregate0 = float(pyo.value(model.p_aggregate[0]))
         obj = float(pyo.value(model.cost))
+        # Full-horizon plan, kept alongside the binding first-step decision so
+        # schedule/diagnostic callers don't need to rebuild the model.
+        plan = {
+            b.id: {
+                "p_charge": [float(pyo.value(model.p_charge[b.id, t])) for t in range(H)],
+                "p_discharge": [float(pyo.value(model.p_discharge[b.id, t])) for t in range(H)],
+                "soc": [float(pyo.value(model.soc[b.id, t])) for t in range(H)],
+            }
+            for b in batts
+        }
+        aggregate_plan = [float(pyo.value(model.p_aggregate[t])) for t in range(H)]
 
         return MultiResourceMPCDecision(
             timestamp=step_input.timestamp,
@@ -687,7 +708,12 @@ class MultiResourceMPCController:
             solve_time_ms=(time.time() - t_start) * 1000.0,
             method="monolithic",
             fallback_used=False,
-            metadata={"horizon": H, "resources": len(batts)},
+            metadata={
+                "horizon": H,
+                "resources": len(batts),
+                "plan": plan,
+                "aggregate_plan": aggregate_plan,
+            },
         )
 
     def _fallback_decision(

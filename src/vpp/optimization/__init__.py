@@ -50,7 +50,13 @@ from .distributed import (
 # M1: deterministic battery dispatch via Pyomo + HiGHS.
 # Imported lazily-friendly: the module guards optional deps internally so
 # importing it never crashes when pyomo/highspy are missing.
-from .solvers import PyomoPlugin, SimpleBatteryDispatchRules, StochasticCVaRPlugin
+from .solvers import (
+    PowerAllocationPlugin,
+    ProportionalAllocationRules,
+    PyomoPlugin,
+    SimpleBatteryDispatchRules,
+    StochasticCVaRPlugin,
+)
 
 # Package metadata (the version lives in vpp.__version__ only)
 __author__ = "VPP Development Team"
@@ -92,6 +98,8 @@ __all__ = [
     "PyomoPlugin",
     "SimpleBatteryDispatchRules",
     "StochasticCVaRPlugin",
+    "PowerAllocationPlugin",
+    "ProportionalAllocationRules",
 ]
 
 
@@ -188,7 +196,8 @@ def create_distributed_problem(sites_data: list, coordination_targets: dict = No
 # Convenience functions for common use cases
 def solve_with_fallback(problem: OptimizationProblem, 
                        plugin: OptimizationPlugin = None,
-                       timeout_ms: int = 5000) -> OptimizationResult:
+                       timeout_ms: int = 5000,
+                       force_fallback: bool = False) -> OptimizationResult:
     """
     Solve optimization problem with automatic fallback to rules.
     
@@ -196,6 +205,8 @@ def solve_with_fallback(problem: OptimizationProblem,
         problem: Optimization problem to solve
         plugin: Expert plugin to try first (optional)
         timeout_ms: Maximum solve time in milliseconds
+        force_fallback: Skip the expert plugin and use the rule-based
+            fallback registered for the problem type.
         
     Returns:
         OptimizationResult with solution or fallback result
@@ -237,8 +248,17 @@ def solve_with_fallback(problem: OptimizationProblem,
                 engine.register_fallback(SimpleStochasticRules(), "stochastic_dispatch")
             except Exception:
                 pass
+        elif ptype == "power_allocation":
+            # Single-interval fleet allocation LP with proportional fallback.
+            try:
+                alloc_plugin = PowerAllocationPlugin()
+                if alloc_plugin.is_available():
+                    engine.register_plugin(alloc_plugin)
+            except Exception:
+                pass
+            engine.register_fallback(ProportionalAllocationRules(), "power_allocation")
 
-    return engine.solve(problem, timeout_ms=timeout_ms)
+    return engine.solve(problem, timeout_ms=timeout_ms, force_fallback=force_fallback)
 
 
 def validate_optimization_config(config: dict) -> list:
