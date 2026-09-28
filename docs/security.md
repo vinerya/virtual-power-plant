@@ -15,20 +15,54 @@ issue.
 |---|---|---|
 | Control of physical devices (chargers via OCPP, DR dispatch) | unauthorised commands; spoofed grid signals; runaway automation | role checks on every write; DR auto-response **off** by default; operator caps (`VPP_DR_MAX_*_KW`) and utility limits clamp every DR target; per-resource limits are hard bounds; OCPP allow-list + Basic auth; OpenADR / IEEE 2030.5 over verified TLS with client certificates |
 | Fleet and customer data | cross-tenant reads by customer accounts; token theft | deny-by-default for the `customer` role; customer routes scope every query to the caller (foreign ids → `404`); httpOnly session cookie; short-lived socket tokens |
-| Credentials | password / key disclosure | bcrypt password hashes; API keys stored as SHA-256; credentials accepted in request bodies (query-string login is deprecated and flagged) |
+| Credentials | password / key disclosure; guessing; stolen sessions | bcrypt password hashes; password policy; per-username login throttle; API keys stored as SHA-256, listable and revocable; server-side session revocation; credentials accepted in request bodies (query-string login is deprecated and flagged) |
 | Platform availability | request floods; slow external peers | per-IP rate limit; external peers (VTN, utility server, brokers, devices) run in supervised tasks with backoff and never block startup |
 | Server host | file writes through configuration; XML attacks | `PUT /api/v1/config` refuses `monitoring.log_file`; OpenADR and IEEE 2030.5 XML is parsed with entity resolution and network access disabled |
 
 ## Authentication
 
 - **Passwords** are hashed with bcrypt. There is no self-registration: only
-  admins create users (`POST /api/v1/auth/register`).
+  admins create users (`POST /api/v1/users`); the first admin comes from
+  `vpp users create-admin` or the first-boot bootstrap
+  (`VPP_BOOTSTRAP_ADMIN_USERNAME` + `VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE`,
+  only while no user exists; the password is read from a file and never
+  logged).
+- **Password policy** (`vpp.auth.passwords`, applied to every way a
+  password is set): at least `VPP_PASSWORD_MIN_LENGTH` (12) characters, at
+  most 72 bytes (bcrypt's limit), at least 5 distinct characters, not a
+  well-known password (also with digits/symbols appended or simple
+  character substitutions), not containing the username. No composition
+  rules, following NIST SP 800-63B.
+- **Login hardening.** Unknown users, inactive users and wrong passwords
+  get the same `401`, and a bcrypt comparison (against a dummy hash for
+  unknown users) runs in every case, so timing does not reveal which
+  usernames exist. After `VPP_LOGIN_MAX_FAILURES` (5) failures a username
+  is locked for `VPP_LOGIN_LOCKOUT_SECONDS` (300 s, `429` + `Retry-After`),
+  unknown usernames included. The throttle is **in memory and per process**:
+  with N workers or replicas an attacker gets N times the attempts, and a
+  restart clears it. Anyone who knows a username can keep it locked; keep
+  the lockout short, and rely on the per-IP rate limiter and a proxy/WAF
+  for volumetric attacks. `0` disables the throttle.
 - **JWTs** are HS256, signed with `VPP_SECRET_KEY`, and expire after
-  `VPP_JWT_EXPIRE_MINUTES` (default 60). Every request re-loads the user, so
-  deactivating a user (`users.is_active`; there is no API for it yet) takes
-  effect immediately. There are no refresh
-  tokens and no server-side revocation list: to invalidate all sessions,
-  rotate `VPP_SECRET_KEY`.
+  `VPP_JWT_EXPIRE_MINUTES` (default 60). There are no refresh tokens.
+  Every request re-loads the user, so deactivation takes effect
+  immediately.
+- **Session revocation.** Each user has a `token_version`, embedded in every
+  JWT and socket token as `ver` and compared on every request and WebSocket
+  handshake; open sockets re-check it every 30 s and are closed (`4001`)
+  once it changes. It is incremented by a password change or admin reset,
+  a role change, deactivation, `POST /api/v1/auth/logout-all` and
+  `POST /api/v1/users/{id}/revoke-sessions`, which revokes every token
+  issued before. Tokens minted before this mechanism existed carry no
+  `ver`: they are accepted until they expire only while the user's version
+  is still 0, so the first revocation event for a user kills them too.
+  Rotating `VPP_SECRET_KEY` still invalidates everything at once.
+- **Account safety.** Admins cannot deactivate or demote themselves, the
+  last active admin cannot be deactivated or demoted (row-locked on
+  PostgreSQL against concurrent demotions), and admins reset their own
+  password only through the self-service route, which requires the current
+  password. `vpp users set-password` recovers a locked-out installation from
+  the host.
 - **Audience.** Tokens carry `aud` = `operator` or `customer`, re-checked
   against the user's current role on every request.
 - **API keys** (`X-API-Key`) are random 32-byte URL-safe strings with a
@@ -37,8 +71,11 @@ issue.
   the key's `role` and that user's current role: an admin can mint a
   `viewer` key that carries only viewer rights, and demoting a user
   immediately narrows all of their keys. Non-admins cannot mint a key for
-  a higher role. There is no key listing/revocation endpoint yet;
-  deactivating the user disables all of their keys.
+  a higher role. Keys show a 12-character prefix and a last-used time
+  (updated at most once a minute); owners and admins revoke them with
+  `DELETE /api/v1/auth/api-keys/{id}`. Deactivating a user revokes all of
+  their keys (re-activation does not restore them). Password changes and
+  session revocation do **not** affect API keys.
 - **WebSocket.** Handshakes require a token by default
   (`VPP_WS_AUTH_REQUIRED`). Browsers should use the 60-second socket-only
   token from `POST /api/v1/ws/token`, sent as a `Sec-WebSocket-Protocol`
@@ -47,8 +84,8 @@ issue.
   (`4001`) when the session behind them expires. Customer accounts cannot
   open the fleet WebSocket.
 
-Not implemented: MFA, password reset, account lockout after failed logins
-(the rate limiter is the only brake), SSO/OIDC.
+Not implemented: MFA, self-service password reset by e-mail, SSO/OIDC, a
+shared (cross-process) login throttle.
 
 ## Authorization (RBAC)
 
@@ -137,8 +174,10 @@ enabled) and the V2G/OCPP routes send setpoints to equipment.
   (`dr_event_responses`), alerts, and every applied platform configuration
   document are persisted.
 - Every HTTP request is logged once (`vpp.access`) with its request id.
-- There is no general audit log of *who* changed users, tariffs or
-  resources.
+- User-management actions (user created, role/activation changed,
+  password changed or reset, sessions revoked, API key revoked) are logged
+  with the acting admin's username. There is no persisted audit log of *who*
+  changed users, tariffs or resources.
 
 ## Supply chain
 

@@ -67,7 +67,7 @@ Maturity labels used below:
 |---|---|---|
 | Database & migrations | SQLAlchemy 2.0 async, PostgreSQL/SQLite, alembic migrations 0001-0007, model/migration drift test | production-grade |
 | Observability | `/metrics` (Prometheus), request ids, structured JSON logs, provisioned Grafana dashboards | production-grade |
-| Auth & RBAC | JWT with `aud` claim, API keys, roles admin/operator/viewer/researcher/customer, deny-by-default for customers, authenticated WebSocket | beta — no user-management endpoints beyond register (see [security](docs/security.md)) |
+| Auth & RBAC | JWT with `aud` claim, API keys, roles admin/operator/viewer/researcher/customer, deny-by-default for customers, authenticated WebSocket | beta — user management, password change, key listing/revocation and session revocation; no MFA/SSO (see [security](docs/security.md)) |
 | Resources, sites, telemetry | typed battery/solar/wind resources, sites with live aggregates, telemetry and meter-reading ingest, time-bucketed history | beta |
 | Dispatch optimization | single-interval allocation LP (Pyomo + HiGHS) over DB resources with SOC/energy limits and SOH-aware wear cost; proportional fallback; run history + explainer | beta — computes and records; does not command devices by itself |
 | MPC schedule & backtest | horizon MPC from prices or a stored tariff; closed-loop backtest vs idle / rule-based / perfect foresight | beta |
@@ -150,10 +150,17 @@ docker compose up -d --build
 ```
 
 The API runs migrations on start. Create the first admin (there is no
-self-registration) with the snippet in
-[docs/deployment.md](docs/deployment.md#create-the-first-admin), then open
+self-registration; you are prompted for a password):
+
+```bash
+docker compose exec vpp-api vpp users create-admin admin
+```
+
+or let the API bootstrap it on first boot from a password file, see
+[docs/deployment.md](docs/deployment.md#create-the-first-admin). Then open
 the console at <http://localhost:3000> and the API docs at
-<http://localhost:8000/docs>.
+<http://localhost:8000/docs>. Further users and API keys are managed under
+**Settings → Users & API keys**.
 
 Add Prometheus (:9090) and Grafana (:3001):
 
@@ -169,7 +176,8 @@ pip install -e ".[api,db,protocols,solver,degradation,monitoring,cli,dev]"
 
 export VPP_SECRET_KEY=dev-only-secret      # SQLite ./vpp.db by default
 vpp migrate                                # from the repository root
-# create the first admin: docs/deployment.md#create-the-first-admin
+export VPP_ADMIN_PASSWORD='pick-a-long-passphrase'   # used by the next line and "Try it"
+vpp users create-admin admin
 uvicorn vpp.api.app:create_app --factory --reload
 ```
 
@@ -177,7 +185,7 @@ Try it:
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token \
-  -d username=admin -d password='change-me-now' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+  -d username=admin -d password="$VPP_ADMIN_PASSWORD" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 
 curl -s -X POST localhost:8000/api/v1/resources -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
@@ -232,7 +240,8 @@ required roles: [docs/api.md](docs/api.md#routes).
 | Group | Routes |
 |---|---|
 | Health | `GET /health`, `/ready`, `/version`; `GET /metrics` |
-| Auth | `POST /api/v1/auth/token` (form or JSON body), `POST /api/v1/auth/register` (admin), `GET /api/v1/auth/me`, `POST /api/v1/auth/api-key` |
+| Auth | `POST /api/v1/auth/token` (form or JSON body), `GET /api/v1/auth/me`, `POST /api/v1/auth/password`, `POST /api/v1/auth/logout-all`, `POST/GET /api/v1/auth/api-keys`, `DELETE /api/v1/auth/api-keys/{id}` |
+| Users (admin) | `GET/POST /api/v1/users`, `GET/PATCH /api/v1/users/{id}`, `POST /api/v1/users/{id}/password`, `POST /api/v1/users/{id}/revoke-sessions`, `GET /api/v1/users/{id}/api-keys` |
 | Resources | `GET/POST /api/v1/resources`, `GET/PUT/DELETE /api/v1/resources/{id}`, `GET .../{id}/metrics`, `POST .../{id}/telemetry` |
 | Sites | `GET/POST /api/v1/sites`, `GET/PATCH/DELETE /api/v1/sites/{id}`, `GET/POST .../{id}/meter-readings` |
 | Customers | portal `GET /api/v1/customer/me`, `/me/bill`, `/me/devices`, `/programs`, `POST/DELETE /enrollments`; staff `/api/v1/customers`, `/api/v1/programs` |
@@ -280,6 +289,8 @@ fresh token.
 | `/tariffs`, `/tariffs/[id]` | tariff browser, TOU heatmaps, bill simulator, URDB import |
 | `/protocols` | adapters with LIVE / SIMULATED badges, connect/disconnect |
 | `/settings` | platform config YAML editor with schema validation |
+| `/settings/account` | change password, log out everywhere, your API keys |
+| `/settings/users` | admin: users (role, activation, password reset, sessions) and every API key |
 | `/portal/*` | customer portal: overview, bill, devices, program enrollment |
 
 Viewers get read-only pages; the backend enforces every permission
@@ -295,8 +306,12 @@ regardless of what the UI shows.
 - **JWT**: HS256 signed with `VPP_SECRET_KEY`, `aud` = `operator` or
   `customer`, re-checked against the user's current role on each request.
   Credentials go in the request body (query-string login is deprecated).
-- **API keys**: `X-API-Key`, stored hashed. A key currently acts with its
-  creator's full role — give integrations their own low-privilege users.
+- **API keys**: `X-API-Key`, stored hashed. A key acts with the lesser of
+  its own role and its creator's current role; keys can be listed (with
+  last use) and revoked.
+- **Sessions**: a password change, role change, deactivation or "log out
+  everywhere" revokes every existing JWT and closes open sockets. Logins
+  are throttled per username; weak passwords are refused.
 - **WebSocket**: authentication required by default; browsers use a 60 s
   socket-only token passed as a subprotocol, and sockets close with `4001`
   when the session expires.

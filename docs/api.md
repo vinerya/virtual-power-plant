@@ -41,8 +41,9 @@ the WebSocket protocol, and conventions shared by all routes.
 
 "Operator-side" below means any role except `customer`.
 
-There is no self-registration. `POST /api/v1/auth/register` is admin-only,
-so the first admin is created out of band, see
+There is no self-registration. Admins create users (`POST /api/v1/users`
+or `POST /api/v1/auth/register`); the first admin is created with
+`vpp users create-admin` or the first-boot bootstrap, see
 [deployment.md](deployment.md#create-the-first-admin).
 
 ### Access tokens (JWT)
@@ -50,11 +51,11 @@ so the first admin is created out of band, see
 ```bash
 # OAuth2 password grant (form body) ...
 curl -s -X POST http://localhost:8000/api/v1/auth/token \
-  -d username=admin -d password='change-me-now'
+  -d username=admin -d password="$VPP_ADMIN_PASSWORD"
 # ... or JSON
 curl -s -X POST http://localhost:8000/api/v1/auth/token \
   -H 'Content-Type: application/json' \
-  -d '{"username": "admin", "password": "change-me-now"}'
+  -d '{"username": "admin", "password": "<your password>"}'
 # -> {"access_token": "eyJ...", "token_type": "bearer", "expires_in": 3600}
 ```
 
@@ -62,12 +63,20 @@ Send it as `Authorization: Bearer <access_token>`. Tokens are HS256 JWTs
 signed with `VPP_SECRET_KEY` and expire after `VPP_JWT_EXPIRE_MINUTES`.
 There are no refresh tokens: log in again.
 
-Claims: `sub` (user id), `username`, `role`, `exp`, and `aud` —
+Claims: `sub` (user id), `username`, `role`, `exp`, `ver` (the user's
+session version, see [revocation](#session-revocation)) and `aud` —
 `"customer"` for customer accounts, `"operator"` for everyone else. The web
 console's middleware routes on `aud`; the API re-checks it against the
 user's *current* role on every request, so a token minted before a role
 change that moves the user between consoles is rejected (`401`). Inactive
 users cannot log in and their existing tokens stop working.
+
+After `VPP_LOGIN_MAX_FAILURES` (default 5) failed logins for a username
+within `VPP_LOGIN_LOCKOUT_SECONDS` (default 300), that username gets `429`
+with `Retry-After` for the same period, even with the right password. The
+counter is in memory, per API process; unknown usernames are treated the
+same way, so neither the status nor the timing reveals whether an account
+exists.
 
 Passing `username`/`password` as query parameters still works but is
 **deprecated** (credentials end up in access logs): the response carries
@@ -88,8 +97,47 @@ curl -s http://localhost:8000/api/v1/resources -H "X-API-Key: vpp_..."
 A non-admin can only mint a key with their own role. Requests made with a
 key act as the user who created it, limited to the lesser of the key's
 `role` and that user's current role, so an admin can hand an integration
-a `viewer` key without giving away admin rights. There is no endpoint to list or revoke keys yet; setting the
-user inactive (`users.is_active`, database only) disables all of them.
+a `viewer` key without giving away admin rights.
+
+`GET /api/v1/auth/api-keys` lists your keys (name, role, `key_prefix` —
+the first 12 characters, `created_at`, `last_used_at`, updated at most once
+a minute; never the key itself); admins add `?all=true` for everyone's.
+`?include_revoked=true` includes revoked keys. `DELETE
+/api/v1/auth/api-keys/{id}` revokes a key (owner or admin; `404` for
+someone else's key). Deactivating a user revokes all of their keys.
+
+### Passwords and user management
+
+Passwords must be at least `VPP_PASSWORD_MIN_LENGTH` (default 12)
+characters and at most 72 bytes, contain at least 5 different characters,
+not be a well-known password (also with digits/symbols appended) and not
+contain the username. Rejected passwords get `422` with the reason.
+
+| Call | Who | Effect |
+|---|---|---|
+| `POST /api/v1/auth/password` `{"current_password", "new_password"}` | any role, own account | changes the password, revokes all sessions, returns a fresh token; wrong current passwords count towards the login throttle |
+| `POST /api/v1/auth/logout-all` | any role, own account | revokes all sessions (`204`) |
+| `GET /api/v1/users[?role=&is_active=]`, `GET /api/v1/users/{id}` | admin | users with `last_login_at` and active `api_key_count` |
+| `POST /api/v1/users` `{"username", "password", "role"}` | admin | creates a user (same as `/auth/register`) |
+| `PATCH /api/v1/users/{id}` `{"role"?, "is_active"?}` | admin | role change or deactivation revokes the user's sessions; deactivation also revokes their API keys (re-activation does not restore them) |
+| `POST /api/v1/users/{id}/password` `{"new_password"}` | admin, another user | resets the password and revokes the user's sessions |
+| `POST /api/v1/users/{id}/revoke-sessions` | admin | revokes the user's sessions |
+| `GET /api/v1/users/{id}/api-keys` | admin | that user's keys |
+
+`PATCH` answers `409` when it would deactivate or demote your own account
+or the last active admin; admins change their own password through
+`/auth/password`.
+
+### Session revocation
+
+Every user has a `token_version`, embedded in each JWT and socket token as
+`ver`. A password change, admin reset, role change, deactivation or
+"log out everywhere" increments it, so every token issued before is
+refused (`401 Session has been revoked`), open WebSockets are closed with
+`4001` within 30 s, and new socket tokens cannot be minted. Tokens issued
+before this mechanism existed have no `ver`; they keep working until they
+expire *unless* the user's version has been bumped, which revokes them too.
+API keys are not sessions: revoke them individually.
 
 ### Metrics
 
@@ -214,6 +262,17 @@ socket `/ocpp/{charge_point_id}` is described in
 | POST | `/api/v1/auth/register` | admin |
 | GET | `/api/v1/auth/me` | any role (customers: own data only) |
 | POST | `/api/v1/auth/api-key` | any operator-side role |
+| GET | `/api/v1/auth/api-keys` | any role (own keys; `?all=true` admin) |
+| DELETE | `/api/v1/auth/api-keys/{key_id}` | owner or admin |
+| POST | `/api/v1/auth/password` | any role (own account) |
+| POST | `/api/v1/auth/logout-all` | any role (own account) |
+| GET | `/api/v1/users` | admin |
+| POST | `/api/v1/users` | admin |
+| GET | `/api/v1/users/{user_id}` | admin |
+| PATCH | `/api/v1/users/{user_id}` | admin |
+| POST | `/api/v1/users/{user_id}/password` | admin |
+| POST | `/api/v1/users/{user_id}/revoke-sessions` | admin |
+| GET | `/api/v1/users/{user_id}/api-keys` | admin |
 | GET | `/api/v1/resources` | any operator-side role |
 | POST | `/api/v1/resources` | admin, operator |
 | GET | `/api/v1/resources/{resource_id}` | any operator-side role |

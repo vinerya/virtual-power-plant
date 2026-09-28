@@ -458,9 +458,17 @@ class UserRepository:
 
     @staticmethod
     async def create_api_key(
-        session: AsyncSession, *, user_id: str, name: str, hashed_key: str, role: str = "viewer"
+        session: AsyncSession,
+        *,
+        user_id: str,
+        name: str,
+        hashed_key: str,
+        role: str = "viewer",
+        key_prefix: str | None = None,
     ) -> APIKeyModel:
-        obj = APIKeyModel(user_id=user_id, name=name, hashed_key=hashed_key, role=role)
+        obj = APIKeyModel(
+            user_id=user_id, name=name, hashed_key=hashed_key, role=role, key_prefix=key_prefix
+        )
         session.add(obj)
         await session.flush()
         return obj

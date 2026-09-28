@@ -54,6 +54,35 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
+class UserDetail(UserResponse):
+    """Admin view of a user (``/api/v1/users``)."""
+
+    last_login_at: datetime | None = None
+    api_key_count: int = Field(0, description="Active API keys owned by the user")
+
+
+class UserUpdate(BaseModel):
+    """``PATCH /api/v1/users/{id}``: change role and/or activation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: UserRole | None = None
+    is_active: bool | None = None
+
+
+class PasswordChange(BaseModel):
+    """``POST /api/v1/auth/password``: self-service password change."""
+
+    current_password: str = Field(..., min_length=1, max_length=256)
+    new_password: str = Field(..., min_length=1, max_length=256)
+
+
+class PasswordReset(BaseModel):
+    """``POST /api/v1/users/{id}/password``: admin password reset."""
+
+    new_password: str = Field(..., min_length=1, max_length=256)
+
+
 class MeResponse(UserResponse):
     """``GET /api/v1/auth/me`` payload: the user plus the console audience."""
 
@@ -82,6 +111,10 @@ class TokenPayload(BaseModel):
     # WebSocket tokens only: expiry (epoch seconds) of the session credential
     # the token was minted from. An open socket is closed at this time.
     sexp: int | None = None
+    # The user's ``token_version`` when the token was issued. Absent on
+    # tokens minted before 0009, which are then accepted only while the
+    # user's version is still 0 (i.e. until their first revocation event).
+    ver: int | None = None
 
 
 class APIKeyCreate(BaseModel):
@@ -101,3 +134,20 @@ class APIKeyResponse(BaseModel):
     key: str = Field(description="Store securely — not retrievable after creation")
     role: UserRole
     created_at: datetime
+    key_prefix: str | None = None
+
+
+class APIKeyInfo(BaseModel):
+    """An API key as listed (never includes the key itself)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    role: UserRole
+    is_active: bool
+    created_at: datetime
+    last_used_at: datetime | None = None
+    key_prefix: str | None = Field(None, description="First characters of the key, for display")
+    user_id: str
+    username: str | None = None

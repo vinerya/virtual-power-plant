@@ -34,6 +34,15 @@ closed with code **4001** (reason ``"Token expired"``) when
 
 Clients should reconnect with a fresh token (the console does so
 automatically); if the session is gone, minting a new token fails with 401.
+
+Session revocation
+------------------
+Socket tokens carry the user's ``token_version`` (``ver``) like session
+JWTs. The handshake refuses a token whose version is stale, and an open
+socket re-checks its user every ``WS_REVALIDATE_SECONDS`` (30 s): if the
+user was deactivated, or their sessions were revoked (password change,
+role change, "log out everywhere"), it is closed with **4001** (reason
+``"Session revoked"``); reconnecting then fails.
 """
 
 from __future__ import annotations
@@ -49,7 +58,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import jwt
 from pydantic import BaseModel
 
-from vpp.auth.security import decode_access_token, get_current_user
+from vpp.auth.security import decode_access_token, get_current_user, token_version_ok
 from vpp.db.models import UserModel
 from vpp.events.bus import Event, EventBus, EventType
 from vpp.schemas.auth import TokenPayload, UserRole
@@ -191,6 +200,8 @@ WS_POLICY_VIOLATION = 1008
 #: Application close code: the socket's credential expired (reconnect).
 WS_TOKEN_EXPIRED = 4001
 WS_TOKEN_TYPE = "ws"
+#: How often an open socket re-checks that its user's session is still valid.
+WS_REVALIDATE_SECONDS = 30.0
 _BEARER_SUBPROTOCOL = "bearer"
 
 
@@ -233,14 +244,25 @@ async def _load_active_user(user_id: str) -> UserModel | None:
     return user
 
 
+def _now() -> float:
+    return datetime.now(timezone.utc).timestamp()
+
+
 async def authenticate_websocket(token: str) -> TokenPayload | None:
     """Validate a JWT for a WebSocket handshake; None if it is not acceptable."""
     try:
         payload = decode_access_token(token)
     except HTTPException:
         return None
+    return await authenticate_websocket_payload(payload)
+
+
+async def authenticate_websocket_payload(payload: TokenPayload) -> TokenPayload | None:
+    """Check a decoded socket token against the user's current state."""
     user = await _load_active_user(payload.sub)
     if user is None:
+        return None
+    if not token_version_ok(payload.ver, user.token_version):
         return None
     # Every channel carries fleet-wide data, so customer accounts (member
     # portal) are refused, mirroring get_current_user on the HTTP API.
@@ -274,6 +296,7 @@ def create_ws_token(
             "typ": WS_TOKEN_TYPE,
             "exp": expire,
             "sexp": int(session_expires_at.timestamp()),
+            "ver": user.token_version or 0,
         },
         settings.secret_key,
         algorithm=settings.jwt_algorithm,
@@ -362,6 +385,7 @@ async def websocket_endpoint(ws: WebSocket) -> None:
     token, subprotocol = _extract_token(ws)
 
     expires_at: float | None = None
+    payload: TokenPayload | None = None
     if token is not None:
         payload = await authenticate_websocket(token)
         if payload is None:
@@ -381,19 +405,29 @@ async def websocket_endpoint(ws: WebSocket) -> None:
         for channel in rejected:
             await ws.send_text(json.dumps({"error": f"Unknown channel: {channel}"}))
 
+        next_check = _now() + WS_REVALIDATE_SECONDS
         while True:
-            if expires_at is None:
+            if expires_at is None or payload is None:
                 raw = await ws.receive_text()
             else:
-                remaining = expires_at - datetime.now(timezone.utc).timestamp()
-                try:
-                    if remaining <= 0:
-                        raise TimeoutError
-                    raw = await asyncio.wait_for(ws.receive_text(), timeout=remaining)
-                except TimeoutError:
+                now = _now()
+                remaining = expires_at - now
+                if remaining <= 0:
                     await manager.disconnect(ws)
                     await ws.close(code=WS_TOKEN_EXPIRED, reason="Token expired")
                     return
+                if now >= next_check:
+                    next_check = now + WS_REVALIDATE_SECONDS
+                    if await authenticate_websocket_payload(payload) is None:
+                        await manager.disconnect(ws)
+                        await ws.close(code=WS_TOKEN_EXPIRED, reason="Session revoked")
+                        return
+                try:
+                    raw = await asyncio.wait_for(
+                        ws.receive_text(), timeout=max(0.0, min(remaining, next_check - now))
+                    )
+                except TimeoutError:
+                    continue
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:

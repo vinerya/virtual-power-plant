@@ -26,6 +26,7 @@ from vpp.schemas.auth import (
 from vpp.settings import Settings, get_settings
 
 _bearer_scheme = HTTPBearer(auto_error=False)
+_LAST_USED_RESOLUTION = timedelta(minutes=1)
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
@@ -35,11 +36,44 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        # bcrypt >= 5 refuses inputs over 72 bytes (and malformed hashes);
+        # such a password can never have been set, so it cannot match.
+        return False
 
 
 def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def require_valid_password(password: str, *, username: str | None = None) -> None:
+    """HTTP wrapper around the password policy: 422 with the reason."""
+    from vpp.auth.passwords import password_problem
+
+    problem = password_problem(password, username=username)
+    if problem is not None:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=problem)
+
+
+_dummy_hash: str | None = None
+
+
+def verify_user_password(user: UserModel | None, plain: str) -> bool:
+    """Check ``plain`` against ``user``'s hash in (roughly) constant time.
+
+    For an unknown user a bcrypt check still runs against a dummy hash of
+    the same cost, so response timing does not reveal whether a username
+    exists. Inactive users are verified too and then refused by the caller.
+    """
+    global _dummy_hash
+    if user is None:
+        if _dummy_hash is None:
+            _dummy_hash = get_password_hash(secrets.token_urlsafe(16))
+        verify_password(plain, _dummy_hash)
+        return False
+    return verify_password(plain, user.hashed_password)
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +94,35 @@ def hash_api_key(key: str) -> str:
 # ---------------------------------------------------------------------------
 # JWT helpers
 # ---------------------------------------------------------------------------
+
+
+def token_version_ok(claimed: int | None, current: int) -> bool:
+    """Whether a token carrying ``ver=claimed`` is still valid for the user.
+
+    Tokens issued before per-user versioning existed have no ``ver`` claim;
+    they stay valid (until their normal expiry) only while the user's
+    version is still 0 -- the first revocation event invalidates them too.
+    """
+    return (claimed if claimed is not None else 0) == (current or 0)
+
+
+def revoke_user_sessions(user: UserModel) -> None:
+    """Invalidate every JWT (and WebSocket token) issued to ``user`` so far."""
+    user.token_version = (user.token_version or 0) + 1
+
+
+def issue_access_token(user: UserModel, settings: Settings | None = None) -> str:
+    """Mint a session JWT for ``user`` with the standard claims."""
+    return create_access_token(
+        {
+            "sub": user.id,
+            "username": user.username,
+            "role": user.role,
+            "aud": audience_for_role(user.role),
+            "ver": user.token_version or 0,
+        },
+        settings,
+    )
 
 
 def create_access_token(data: dict[str, Any], settings: Settings | None = None) -> str:
@@ -130,6 +193,12 @@ async def get_current_principal(
         user = await UserRepository.get_by_id(session, payload.sub)
         if user is None or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        if not token_version_ok(payload.ver, user.token_version):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Session has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         # A token minted for one console must not outlive a role change
         # that moves the user to the other one.
         if payload.aud is not None and payload.aud != audience_for_role(user.role):
@@ -188,6 +257,15 @@ async def get_api_key_user(api_key: str, session: AsyncSession) -> UserModel:
     user = await _UR.get_by_id(session, key_obj.user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    # Record usage, at most once per minute per key so a busy integration
+    # does not turn every read into a write. Committed with the request.
+    now = datetime.now(timezone.utc)
+    last = key_obj.last_used_at
+    if last is not None and last.tzinfo is None:  # SQLite returns naive datetimes
+        last = last.replace(tzinfo=timezone.utc)
+    if last is None or now - last >= _LAST_USED_RESOLUTION:
+        key_obj.last_used_at = now
 
     # A key acts with the *lesser* of its own role and its owner's current
     # role: a viewer-scoped key minted by an admin must not carry admin

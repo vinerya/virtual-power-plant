@@ -195,6 +195,11 @@ class UserModel(TimestampMixin, Base):
     hashed_password: Mapped[str] = mapped_column(String(256))
     role: Mapped[str] = mapped_column(String(30), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: Session generation. Embedded in every JWT as ``ver``; bumping it
+    #: (password change, deactivation, role change, "log out everywhere")
+    #: invalidates every token issued before. See vpp.auth.security.
+    token_version: Mapped[int] = mapped_column(Integer, default=0)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class APIKeyModel(TimestampMixin, Base):
@@ -209,6 +214,11 @@ class APIKeyModel(TimestampMixin, Base):
     hashed_key: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     role: Mapped[str] = mapped_column(String(30), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: First characters of the raw key (e.g. ``vpp_AbCd1234``), shown in
+    #: listings so a key can be recognised; NULL for keys created before 0009.
+    key_prefix: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    #: Updated at most once a minute per key (see get_api_key_user).
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 # ---------------------------------------------------------------------------
