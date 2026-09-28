@@ -80,11 +80,12 @@ def _schedule_lines(schedules: list[TOUSchedule]) -> list[str]:
     for s in schedules:
         kind = "weekdays" if s.weekday_mask == WEEKDAYS else "weekends/holidays"
         grouped.setdefault((s.season_mask, s.hour_range), set()).add(kind)
-    lines = []
-    for (months, (h0, h1)), kinds in sorted(
-        grouped.items(), key=lambda kv: (min(kv[0][0]), kv[0][1])
-    ):
+    rows = []
+    for (months, (h0, h1)), kinds in grouped.items():
         days = "every day" if len(kinds) == 2 else next(iter(kinds))
+        rows.append((min(months), days, h0, months, h1))
+    lines = []
+    for _m, days, h0, months, h1 in sorted(rows, key=lambda r: r[:3]):
         lines.append(f"{_month_ranges(months)}, {days} {h0:02d}:00-{h1 % 24 or 24:02d}:00")
     return lines
 

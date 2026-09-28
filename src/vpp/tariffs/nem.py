@@ -91,9 +91,18 @@ class ExportCredit:
 
 
 def normalize_regime(value: str | None) -> str:
-    regime = (value or "none").strip().lower().replace("-", "_").replace(".", "")
-    aliases = {"nem20": "nem2", "nem30": "nem3", "nbt": "nem3", "": "none"}
-    regime = aliases.get(regime, regime)
+    compact = "".join(ch for ch in (value or "none").lower() if ch not in " ._-")
+    aliases = {
+        "": "none",
+        "none": "none",
+        "nem2": "nem2",
+        "nem20": "nem2",
+        "nem3": "nem3",
+        "nem30": "nem3",
+        "nbt": "nem3",
+        "netbilling": "net_billing",
+    }
+    regime = aliases.get(compact, compact)
     if regime not in NEM_REGIMES:
         raise NEMConfigError(f"Unknown NEM regime {value!r}; expected one of {NEM_REGIMES}")
     return regime
