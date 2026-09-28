@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +58,11 @@ class Settings(BaseSettings):
     api_key_header: str = "X-API-Key"
     rate_limit_enabled: bool = True
     rate_limit_requests_per_minute: int = 120
+    # Where the HTTP rate limiter and the login throttle keep their counters:
+    # "memory" (per process, no DB round trip), "database" (shared by every
+    # worker, table shared_rate_limits) or "auto" (database when
+    # api_workers > 1, else memory). See vpp.auth.shared_limits.
+    rate_limit_backend: Literal["auto", "memory", "database"] = "auto"
     # Reverse proxies (CIDRs or addresses, e.g. the web console container)
     # whose X-Forwarded-For / X-Real-IP headers identify the client for rate
     # limiting. Empty (default): those headers are ignored.
@@ -69,7 +75,8 @@ class Settings(BaseSettings):
     ws_token_expire_seconds: int = 60
     # Accounts (see vpp.auth.passwords / vpp.auth.throttle / vpp.auth.bootstrap).
     password_min_length: int = 12
-    # Per-username failed-login throttle (in-memory, per process); 0 disables.
+    # Per-username failed-login throttle (shared by all workers when
+    # rate_limit_backend resolves to "database"); 0 disables.
     login_max_failures: int = 5
     login_lockout_seconds: int = 300
     # First-boot admin: created only while the users table is empty.
@@ -211,6 +218,11 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"log_level must be one of {valid}")
         return upper
+
+    @field_validator("rate_limit_backend", mode="before")
+    @classmethod
+    def normalise_rate_limit_backend(cls, v: object) -> object:
+        return v.strip().lower() if isinstance(v, str) else v
 
     @field_validator("trusted_proxies")
     @classmethod

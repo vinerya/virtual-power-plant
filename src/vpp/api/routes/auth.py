@@ -24,7 +24,7 @@ from vpp.auth.security import (
     revoke_user_sessions,
     verify_user_password,
 )
-from vpp.auth.throttle import login_throttle
+from vpp.auth.throttle import shared_login_throttle
 from vpp.db.engine import get_db
 from vpp.db.models import APIKeyModel, UserModel
 from vpp.db.repositories import UserRepository
@@ -174,7 +174,7 @@ async def login(request: Request, response: Response, session: AsyncSession = De
         response.headers["Warning"] = (
             '299 - "Credentials in the query string are deprecated; use a form or JSON body"'
         )
-    retry_after = login_throttle.retry_after(username)
+    retry_after = await shared_login_throttle.retry_after(username)
     if retry_after is not None:
         raise _too_many_attempts(retry_after)
 
@@ -183,10 +183,10 @@ async def login(request: Request, response: Response, session: AsyncSession = De
     # does not reveal which usernames exist.
     password_ok = verify_user_password(user, password)
     if user is None or not password_ok or not user.is_active:
-        login_throttle.record_failure(username)
+        await shared_login_throttle.record_failure(username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    login_throttle.record_success(username)
+    await shared_login_throttle.record_success(username)
     user.last_login_at = datetime.now(timezone.utc)
     return _token_response(user)
 
@@ -251,11 +251,11 @@ async def change_password(
     passwords count towards the login throttle.
     """
     user = await _reload(session, principal)
-    retry_after = login_throttle.retry_after(user.username)
+    retry_after = await shared_login_throttle.retry_after(user.username)
     if retry_after is not None:
         raise _too_many_attempts(retry_after)
     if not verify_user_password(user, body.current_password):
-        login_throttle.record_failure(user.username)
+        await shared_login_throttle.record_failure(user.username)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect"
         )

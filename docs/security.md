@@ -38,9 +38,12 @@ issue.
   unknown users) runs in every case, so timing does not reveal which
   usernames exist. After `VPP_LOGIN_MAX_FAILURES` (5) failures a username
   is locked for `VPP_LOGIN_LOCKOUT_SECONDS` (300 s, `429` + `Retry-After`),
-  unknown usernames included. The throttle is **in memory and per process**:
-  with N workers or replicas an attacker gets N times the attempts, and a
-  restart clears it. Anyone who knows a username can keep it locked; keep
+  unknown usernames included. With several workers
+  (`VPP_API_WORKERS > 1`, or `VPP_RATE_LIMIT_BACKEND=database` for
+  replicas sharing a database) the counters live in the database and hold
+  across all of them; if the database is unreachable each worker falls back
+  to its in-memory counters (throttling is never switched off). A single
+  worker keeps them in memory, so a restart clears them. Anyone who knows a username can keep it locked; keep
   the lockout short, and rely on the per-IP rate limiter and a proxy/WAF
   for volumetric attacks. `0` disables the throttle.
 - **JWTs** are HS256, signed with `VPP_SECRET_KEY`, and expire after

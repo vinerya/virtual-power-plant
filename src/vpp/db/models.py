@@ -650,3 +650,25 @@ class ClusterEventModel(Base):
     channel: Mapped[str] = mapped_column(String(64))
     payload_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class SharedRateLimitModel(Base):
+    """Rate-limit / login-throttle counters shared by every API worker.
+
+    Used when ``VPP_RATE_LIMIT_BACKEND`` resolves to ``database`` (see
+    :mod:`vpp.auth.shared_limits`). ``key`` is ``http:<client ip>`` or
+    ``login:<username>``. Times are Unix epoch seconds (floats, so the
+    window arithmetic in the atomic upserts is portable between SQLite and
+    PostgreSQL); rows past ``expires_at`` carry no state and are purged.
+    """
+
+    __tablename__ = "shared_rate_limits"
+
+    key: Mapped[str] = mapped_column(String(255), primary_key=True)
+    # Requests in the current window (HTTP) / failures in the window (login).
+    hits: Mapped[int] = mapped_column(Integer, default=0)
+    # Requests in the previous window (HTTP sliding-window estimate).
+    prev_hits: Mapped[int] = mapped_column(Integer, default=0)
+    window_start: Mapped[float] = mapped_column(Float)
+    locked_until: Mapped[float] = mapped_column(Float, default=0.0)
+    expires_at: Mapped[float] = mapped_column(Float, index=True)

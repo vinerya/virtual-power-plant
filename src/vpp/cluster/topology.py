@@ -27,9 +27,6 @@ LEADER_ONLY = {
 }
 
 PER_PROCESS = (
-    "HTTP rate limiter (VPP_RATE_LIMIT_*): each worker counts separately, so a client "
-    "can make up to workers x the configured requests per minute",
-    "login/auth throttling state, if enabled, is per worker",
     "WebSocket broadcasts reach other workers' clients through the database relay "
     "(cluster_events), about one VPP_CLUSTER_POLL_INTERVAL_SECONDS later",
 )
@@ -77,6 +74,20 @@ def log_topology(settings: Any, leadership: dict[str, bool]) -> None:
     if workers > 1:
         for item in PER_PROCESS:
             logger.warning("Multi-worker deployment: %s", item)
+        from vpp.auth.shared_limits import MEMORY, resolve_backend
+
+        if resolve_backend(settings) == MEMORY:
+            logger.warning(
+                "Multi-worker deployment with VPP_RATE_LIMIT_BACKEND=memory: each worker "
+                "counts HTTP requests and failed logins separately, so a client gets up to "
+                "workers x VPP_RATE_LIMIT_REQUESTS_PER_MINUTE and a password guesser "
+                "workers x VPP_LOGIN_MAX_FAILURES attempts per lockout window"
+            )
+        else:
+            logger.info(
+                "HTTP rate limit and login throttle are shared by all workers "
+                "(table shared_rate_limits)"
+            )
         if getattr(settings, "openadr_enabled", False) or getattr(
             settings, "ieee2030_5_enabled", False
         ):

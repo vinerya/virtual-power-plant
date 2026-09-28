@@ -476,7 +476,10 @@ def create_app(
     )
     if enable_rate_limit:
         from vpp.auth.middleware import RateLimitMiddleware
+        from vpp.auth.shared_limits import resolve_backend
 
+        # One worker: in-memory buckets. Several: counters shared through the
+        # database (VPP_RATE_LIMIT_BACKEND, see vpp.auth.shared_limits).
         app.add_middleware(
             RateLimitMiddleware,
             requests_per_minute=(
@@ -485,6 +488,7 @@ def create_app(
                 else settings.rate_limit_requests_per_minute
             ),
             trusted_proxies=settings.trusted_proxies,
+            backend=resolve_backend(settings),
         )
 
     # Request-id, access log, Prometheus middleware (outermost), plus the

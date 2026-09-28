@@ -112,8 +112,9 @@ uvicorn vpp.api.app:create_app --factory --host 127.0.0.1 --port 8000
   `--workers` to uvicorn *and* set `VPP_API_WORKERS` to the same number, so
   the WebSocket relay starts and the startup checks see it). Use PostgreSQL,
   keep host clocks NTP-synchronised, and note that OCPP and device control
-  (`VPP_CONTROL_ENABLED`) require a single
-  worker and the rate limit applies per worker; see
+  (`VPP_CONTROL_ENABLED`) require a single worker. The rate limit and the
+  login throttle are counted in the database for all workers; for several
+  single-worker replicas set `VPP_RATE_LIMIT_BACKEND=database`. See
   [architecture](architecture.md#process-model).
 
 Web console:

@@ -49,13 +49,14 @@ defined in code.
 | `VPP_JWT_ALGORITHM` | `HS256` | JWT signing algorithm (symmetric). |
 | `VPP_JWT_EXPIRE_MINUTES` | `60` | Lifetime of access tokens from `POST /api/v1/auth/token`, and of WebSocket sessions opened with an API key. |
 | `VPP_API_KEY_HEADER` | `X-API-Key` | Request header that carries API keys (`POST /api/v1/auth/api-key`). The OpenAPI security scheme shows the name configured at startup. |
-| `VPP_RATE_LIMIT_ENABLED` | `true` | Per-client-IP token-bucket rate limit on every HTTP route (in-process, per worker). |
-| `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | Bucket size and refill rate per client. Requests over the limit get `429`. |
+| `VPP_RATE_LIMIT_ENABLED` | `true` | Per-client-IP rate limit on every HTTP route. |
+| `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` | `120` | Requests per minute per client, across all workers. Requests over the limit get `429`. |
+| `VPP_RATE_LIMIT_BACKEND` | `auto` | Where the rate limiter and the login throttle count: `memory` (per process; a token bucket, no database round trip), `database` (table `shared_rate_limits`, shared by every worker and replica on the database; a one-minute sliding window) or `auto` (`database` when `VPP_API_WORKERS > 1`, else `memory`). Set `database` for several single-worker replicas behind a load balancer. On a database error requests are let through and logins fall back to in-memory counting, with a warning. See [architecture](architecture.md#process-model). |
 | `VPP_TRUSTED_PROXIES` | `[]` | JSON list of CIDRs/addresses (e.g. `'["172.29.0.10/32"]'`) whose `X-Forwarded-For` / `X-Real-IP` headers identify the client for rate limiting. The web console forwards them, so trust its address to give each console user their own bucket. Empty: the headers are ignored (every console user shares the Next.js server's bucket). `X-Forwarded-For` is walked from the right past trusted hops, so clients cannot choose their address by sending the header themselves. See [deployment](deployment.md#rate-limiting-behind-the-console). |
 | `VPP_WS_AUTH_REQUIRED` | `true` | Refuse WebSocket handshakes without a valid token (close code 1008). Setting `false` lets anonymous sockets receive fleet-wide data; only for isolated development. |
 | `VPP_WS_TOKEN_EXPIRE_SECONDS` | `60` | How long a token from `POST /api/v1/ws/token` may be used to *open* a socket. The socket itself lives until the underlying session expires (see [api.md](api.md#websocket)). |
 | `VPP_PASSWORD_MIN_LENGTH` | `12` | Minimum password length; the rest of the policy is fixed (see [security.md](security.md#authentication)). |
-| `VPP_LOGIN_MAX_FAILURES` | `5` | Failed logins per username before it is locked out (`429`); in memory, per process. `0` disables. |
+| `VPP_LOGIN_MAX_FAILURES` | `5` | Failed logins per username before it is locked out (`429`); counted across workers when `VPP_RATE_LIMIT_BACKEND` resolves to `database`. `0` disables. |
 | `VPP_LOGIN_LOCKOUT_SECONDS` | `300` | Lockout duration, and the window in which failures are counted. |
 | `VPP_BOOTSTRAP_ADMIN_USERNAME` | unset | With `VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE`: create this admin at startup while the users table is empty. |
 | `VPP_BOOTSTRAP_ADMIN_PASSWORD_FILE` | unset | File holding the bootstrap admin's password (e.g. `/run/secrets/...`); read only when the bootstrap runs. |
