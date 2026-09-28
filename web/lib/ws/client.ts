@@ -25,6 +25,8 @@ export type WsChannel =
   | "optimization_events"
   | "market_data"
   | "alerts"
+  | "grid_events"
+  | "system"
   | "*";
 
 export interface WsMessage {

@@ -252,3 +252,22 @@ async def test_ws_token_carries_session_expiry(client: AsyncClient, auth_headers
     payload = ws_module.decode_access_token(body["token"])
     assert payload.sexp == session.exp
     assert payload.exp <= session.exp
+
+
+@pytest.mark.parametrize(
+    ("event_type", "channel"),
+    [
+        ("DR_EVENT_RECEIVED", "grid_events"),
+        ("V2G_DISPATCH", "grid_events"),
+        ("PROTOCOL_ERROR", "grid_events"),
+        ("TARIFF_UPDATED", "system"),
+        ("CONFIG_CHANGED", "system"),
+        ("ALERT_TRIGGERED", "alerts"),
+    ],
+)
+def test_non_alert_events_stay_off_the_alerts_channel(event_type, channel):
+    """The console toasts every "alerts" message, so only alerts may land there."""
+    from vpp.events.bus import EventType
+
+    assert ws_module.event_to_channel(EventType[event_type]) == channel
+    assert channel in ws_module.VALID_CHANNELS

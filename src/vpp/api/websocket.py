@@ -121,13 +121,16 @@ VALID_CHANNELS = {
     "optimization_events",
     "market_data",
     "alerts",
+    "grid_events",
+    "system",
     "*",
 }
 
 
 # Maps EventBus event types to the WebSocket channel operators subscribe to.
-# Anything not listed here falls through to "alerts" so it's never silently
-# dropped — see event_to_channel().
+# "alerts" is reserved for alert-shaped payloads (AlertService broadcasts
+# those directly and the console toasts every message on it), so anything
+# not listed here falls through to "system" rather than being dropped.
 _EVENT_CHANNEL_MAP: dict[EventType, str] = {
     EventType.RESOURCE_ADDED: "resource_updates",
     EventType.RESOURCE_REMOVED: "resource_updates",
@@ -143,12 +146,26 @@ _EVENT_CHANNEL_MAP: dict[EventType, str] = {
     EventType.ORDER_REJECTED: "market_data",
     EventType.TRADE_EXECUTED: "market_data",
     EventType.MARKET_DATA: "market_data",
+    EventType.PROTOCOL_CONNECTED: "grid_events",
+    EventType.PROTOCOL_DISCONNECTED: "grid_events",
+    EventType.PROTOCOL_ERROR: "grid_events",
+    EventType.DR_EVENT_RECEIVED: "grid_events",
+    EventType.DR_RESPONSE_SENT: "grid_events",
+    EventType.EV_CONNECTED: "grid_events",
+    EventType.EV_DISCONNECTED: "grid_events",
+    EventType.V2G_DISPATCH: "grid_events",
+    EventType.V2G_SCHEDULE_CREATED: "grid_events",
+    EventType.ISLAND_DETECTED: "grid_events",
+    EventType.ISLAND_ENTERED: "grid_events",
+    EventType.GRID_RECONNECTED: "grid_events",
+    EventType.LOAD_SHED: "grid_events",
+    EventType.ALERT_TRIGGERED: "alerts",
 }
 
 
 def event_to_channel(event_type: EventType) -> str:
     """Map an EventBus event type to a WebSocket broadcast channel."""
-    return _EVENT_CHANNEL_MAP.get(event_type, "alerts")
+    return _EVENT_CHANNEL_MAP.get(event_type, "system")
 
 
 def subscribe_event_bus_to_websocket(bus: EventBus, mgr: ConnectionManager) -> str:
