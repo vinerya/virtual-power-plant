@@ -21,12 +21,13 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002 -- FastAPI resolves dependency annotations at runtime
 )
 
-from vpp.auth.security import get_current_user
+from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import ResourceModel, UserModel
 from vpp.db.repositories import ResourceRepository
 from vpp.portal.sites import resource_capacity_kwh
 from vpp.portal.telemetry import latest_soc
+from vpp.schemas.auth import UserRole
 from vpp.schemas.resources import (
     CREATE_MODELS,
     BatteryCreate,
@@ -39,6 +40,9 @@ from vpp.schemas.resources import (
 )
 
 router = APIRouter(prefix="/api/v1/resources", tags=["Resources"])
+
+# Mutations change what the dispatcher controls: operators and admins only.
+_writer = require_role(UserRole.ADMIN, UserRole.OPERATOR)
 
 #: Type-specific fields that live in dedicated columns rather than config_json.
 _COLUMN_FIELDS = frozenset({"capacity_kwh", "chemistry"})
@@ -203,7 +207,7 @@ async def list_resources(
 async def create_resource(
     body: ResourceCreateRequest,
     session: AsyncSession = Depends(get_db),
-    _user: UserModel = Depends(get_current_user),
+    _user: UserModel = Depends(_writer),
 ):
     """Register a new energy resource.
 
@@ -239,7 +243,7 @@ async def update_resource(
     resource_id: str,
     body: ResourceUpdate,
     session: AsyncSession = Depends(get_db),
-    _user: UserModel = Depends(get_current_user),
+    _user: UserModel = Depends(_writer),
 ):
     """Partially update a resource (see :class:`~vpp.schemas.resources.ResourceUpdate`)."""
     row = await ResourceRepository.get_by_id(session, resource_id)
@@ -293,7 +297,7 @@ async def update_resource(
 async def delete_resource(
     resource_id: str,
     session: AsyncSession = Depends(get_db),
-    _user: UserModel = Depends(get_current_user),
+    _user: UserModel = Depends(_writer),
 ):
     """Remove a resource."""
     deleted = await ResourceRepository.delete(session, resource_id)

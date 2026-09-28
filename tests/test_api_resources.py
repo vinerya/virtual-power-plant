@@ -71,3 +71,22 @@ async def test_update_resource_returns_fresh_row(client: AsyncClient, auth_heade
     assert resp.status_code == 200, resp.text
     assert resp.json()["online"] is False
     assert resp.json()["updated_at"]
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_mutate_resources(client: AsyncClient, auth_headers, viewer_headers):
+    body = {"name": "viewer-denied-batt", "resource_type": "battery", "rated_power": 10.0}
+    denied = await client.post("/api/v1/resources", json=body, headers=viewer_headers)
+    assert denied.status_code == 403
+
+    created = await client.post("/api/v1/resources", json=body, headers=auth_headers)
+    assert created.status_code == 201
+    rid = created.json()["id"]
+    put = await client.put(
+        f"/api/v1/resources/{rid}", json={"rated_power": 5.0}, headers=viewer_headers
+    )
+    assert put.status_code == 403
+    delete = await client.delete(f"/api/v1/resources/{rid}", headers=viewer_headers)
+    assert delete.status_code == 403
+    # Viewers keep read access.
+    assert (await client.get(f"/api/v1/resources/{rid}", headers=viewer_headers)).status_code == 200
