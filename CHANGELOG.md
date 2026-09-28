@@ -311,6 +311,12 @@ changes** before upgrading.
 
 ### Changed
 
+- Pyomo and HiGHS are now core dependencies. `import vpp` (and so the API
+  and `vpp` CLI) always needed them, so a plain install without the
+  `solver` extra could not start; `solver` remains as an empty extra.
+- `VPP_API_HOST` defaults to `127.0.0.1`, so a bare `vpp serve` is not
+  reachable from the network by accident. The Docker image and compose
+  files already pass `--host 0.0.0.0` explicitly.
 - V2G flexibility bids (`v2g_flexibility_bids`) and the aggregator's
   dispatch counters are persisted instead of kept per process; bids carry a
   `bid_id`.

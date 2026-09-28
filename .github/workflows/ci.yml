@@ -22,7 +22,7 @@ jobs:
       # real SQLAlchemy/FastAPI/NumPy types (without them every ORM query is
       # ``Any``).  Linter versions are pinned to match the ``dev`` extra.
       - name: Install dependencies
-        run: pip install -e ".[api,db,cli,protocols,monitoring,solver,degradation]" ruff==0.15.8 mypy==2.3.1 types-PyYAML
+        run: pip install -e ".[api,db,cli,protocols,monitoring,degradation]" ruff==0.15.8 mypy==2.3.1 types-PyYAML
       - name: Ruff check
         run: ruff check src/ tests/
       - name: Ruff format check
@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package with dev dependencies
-        run: pip install -e ".[dev,api,db,cli]"
+        run: pip install -e ".[dev,api,db,cli,protocols,monitoring,degradation,migrations]"
       - name: Run tests with coverage
         run: pytest tests/ --cov=src/vpp --cov-report=xml --cov-report=term-missing -x
         env:
@@ -83,7 +83,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install package with migration dependencies
-        run: pip install -e ".[dev,db,migrations,cli]"
+        run: pip install -e ".[dev,api,db,migrations,cli]"
       - name: vpp migrate (from outside the checkout)
         # Migrations ship inside the package, so this must not depend on CWD.
         working-directory: ${{ runner.temp }}

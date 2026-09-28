@@ -31,6 +31,10 @@ classifiers = [
 dependencies = [
     "numpy>=1.24.0",
     "pulp>=2.7.0",
+    # Dispatch, MPC and stochastic optimization (and `import vpp` itself)
+    # use Pyomo + HiGHS, so they are core, not optional.
+    "pyomo>=6.7",
+    "highspy>=1.7",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "pyyaml>=6.0",
@@ -78,10 +82,8 @@ cli = [
 monitoring = [
     "prometheus-client>=0.20.0",
 ]
-solver = [
-    "pyomo>=6.7",
-    "highspy>=1.7",
-]
+# Kept for backwards compatibility: Pyomo + HiGHS are now core dependencies.
+solver = []
 degradation = [
     "numpy>=1.24.0",
     "rainflow>=3.2.0",

@@ -23,14 +23,13 @@ COPY src/ src/
 #   api         FastAPI, uvicorn, JWT, httpx
 #   db          SQLAlchemy async, alembic, aiosqlite, asyncpg
 #   protocols   MQTT, Modbus, lxml, httpx (OpenADR / IEEE 2030.5 clients)
-#   solver      Pyomo + HiGHS (dispatch / MPC); falls back to rules without it
 #   degradation rainflow cycle counting for battery SOH
 #   monitoring  prometheus-client (/metrics)
 #   cli         click + rich (`vpp migrate`, `vpp serve`, ...)
 # psycopg2-binary: alembic migrations run on a *sync* driver
 # (postgresql+asyncpg URLs are rewritten to postgresql+psycopg2).
 RUN pip wheel --wheel-dir /wheels \
-    ".[api,db,protocols,solver,degradation,monitoring,cli]" \
+    ".[api,db,protocols,degradation,monitoring,cli]" \
     "psycopg2-binary>=2.9"
 
 # ============================================================================

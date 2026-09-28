@@ -34,7 +34,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # API
-    api_host: str = "0.0.0.0"
+    # Loopback by default so a bare `vpp serve` isn't reachable from the
+    # network by accident; containers pass --host 0.0.0.0 explicitly.
+    api_host: str = "127.0.0.1"
     api_port: int = 8000
     # Worker processes `vpp serve` starts. >1 is supported: singleton
     # background work runs on the holder of a DB lease (see vpp.cluster);

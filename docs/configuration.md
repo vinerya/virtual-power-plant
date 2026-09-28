@@ -33,7 +33,7 @@ defined in code.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `VPP_API_HOST` | `0.0.0.0` | Bind address for `vpp serve` (`--host` overrides); plain uvicorn uses its own `--host`. Reported by `GET /api/v1/config`. |
+| `VPP_API_HOST` | `127.0.0.1` | Bind address for `vpp serve` (`--host` overrides); plain uvicorn uses its own `--host`. Reported by `GET /api/v1/config`. |
 | `VPP_API_PORT` | `8000` | Bind port for `vpp serve` (`--port` overrides), as above. |
 | `VPP_API_WORKERS` | `1` | Worker processes started by `vpp serve` (overridden by `--workers`). With more than one, singleton work runs on DB-lease holders and WebSocket broadcasts are relayed between workers; see [architecture](architecture.md#process-model). Refused together with `VPP_OCPP_ENABLED`. If you start uvicorn/gunicorn with several workers yourself, set this to the same number. |
 | `VPP_CLUSTER_LEASE_TTL_SECONDS` | `15` | Leadership lease lifetime (renewed every third of it). A crashed leader's work moves to another worker within about this long (at once on the same host). Host clocks must agree to well within it. |

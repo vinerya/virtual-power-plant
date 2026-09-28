@@ -131,7 +131,7 @@ class FeedCache:
     def _persist_path(self, key: str) -> Path | None:
         if self.persist_dir is None:
             return None
-        safe = hashlib.sha1(key.encode()).hexdigest()
+        safe = hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()  # filename only
         return self.persist_dir / f"{safe}.json"
 
     def _persist(self, key: str, expires_at: float, points: list[PricePoint]) -> None:

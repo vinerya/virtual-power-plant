@@ -22,7 +22,7 @@ Create Date: 2026-09-28 00:00:00
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from alembic import op
@@ -89,11 +89,12 @@ def upgrade() -> None:
 
     for table in _TIMESTAMP_TABLES:
         for column in _columns_for(table):
+            col: sa.ColumnClause[Any] = sa.column(column)
             op.execute(
-                sa.text(
-                    f"UPDATE {table} SET {column} = CURRENT_TIMESTAMP "
-                    f"WHERE {column} IS NULL"
-                )
+                sa.table(table, col)
+                .update()
+                .where(col.is_(None))
+                .values({column: sa.func.current_timestamp()})
             )
         with op.batch_alter_table(table) as batch:
             for column in _columns_for(table):
