@@ -68,7 +68,7 @@ from vpp.schemas.tariffs import (
 )
 from vpp.tariffs import MeterTrace, Tariff, load_urdb_json
 from vpp.tariffs.csv_trace import CSVTraceError, parse_csv_trace
-from vpp.tariffs.nem import NEMConfigError, nem_config_from_urdb
+from vpp.tariffs.nem import NEMConfigError, nem_config_from_urdb, normalize_avoided_cost
 from vpp.tariffs.preset_library import get_preset, list_presets
 from vpp.tariffs.simulation import simulate_bill
 from vpp.tariffs.synthetic_load import DEFAULT_AVG_KW, synthetic_trace
@@ -112,6 +112,7 @@ def _validate_urdb(urdb_json: dict[str, Any]) -> None:
     """Reject URDB JSON the bill engine cannot evaluate (422 now, not a 400 at bill time)."""
     try:
         load_urdb_json(urdb_json)
+        normalize_avoided_cost(urdb_json.get("nem3_avoided_cost"))
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -411,7 +412,7 @@ def _bill_one(
 ) -> BillResponse:
     cfg = nem_config_from_urdb(urdb_json)
     regime = body.nem or cfg.regime
-    avoided = body.nem3_avoided_cost or list(cfg.avoided_cost)
+    avoided = list(normalize_avoided_cost(body.nem3_avoided_cost) or cfg.avoided_cost)
     try:
         result = simulate_bill(
             tariff,

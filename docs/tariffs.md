@@ -70,7 +70,7 @@ These are not part of URDB; they live in the same JSON object.
 |---|---|
 | `adders` | list of `{name, rate, basis, ...}` surcharges (e.g. a percentage of the subtotal) |
 | `nem` | the tariff's export-compensation regime: `none`, `nem2`, `nem3` or `net_billing` (spellings like `NEM-2`, `nem 3.0`, `NBT`, `net billing` are normalised) |
-| `nem3_avoided_cost` | list of $/kWh export credits by **local hour of day** for `nem3` |
+| `nem3_avoided_cost` | $/kWh export credits by **local time** for `nem3`: 24 (hour of day), 12 x 24 (month x hour), 8760 / 8784 (hour of year) or 1 value; see [avoided-cost shapes](#avoided-cost-shapes) |
 
 Example:
 
@@ -101,7 +101,7 @@ so both credit exports identically.
 |---|---|
 | `none` | exports earn nothing |
 | `nem2` | each exported kWh at the TOU period rate in effect when it was exported: the period's `sell` rate if the tariff defines one, else the retail import rate. Tariffs without TOU periods fall back to the bill's blended energy rate |
-| `nem3` | each exported kWh at `nem3_avoided_cost[local hour]` |
+| `nem3` | each exported kWh at the `nem3_avoided_cost` entry for its local time |
 | `net_billing` | only at explicit `sell` rates; exports in periods without a `sell` rate are not credited |
 
 ### Where the regime comes from
@@ -119,12 +119,29 @@ so both credit exports identically.
 4. otherwise `none` (source `default`).
 
 `nem3` without an avoided-cost vector (from the request's
-`nem3_avoided_cost` or the tariff's) is an error (`422`).
+`nem3_avoided_cost` or the tariff's) is an error (`400`).
 
-The avoided-cost vector is indexed by local hour of day
-(`vector[hour % len(vector)]`): a 24-entry vector repeats daily. Entries
-beyond the 24th are never used, so an 8760-hour vector is **not** applied
-hour-of-year.
+### Avoided-cost shapes
+
+The vector is indexed by the export's **local** wall-clock time (the
+simulation's `timezone`, the site's timezone for portal bills, `tz` for the
+optimizer). Accepted shapes:
+
+| Length | Shape | Index |
+|---|---|---|
+| 1 | flat | same rate for every hour |
+| 24 | hour of day | `hour`, repeated every day |
+| 288, or 12 lists of 24 | month x hour (CPUC ACC style) | `(month - 1) * 24 + hour`; a nested list is flattened month-major |
+| 8760 | hour of year | `(day_of_year - 1) * 24 + hour` on a 365-day calendar; Feb 29 of a leap year reuses Feb 28 |
+| 8784 | hour of leap year | same on a 366-day calendar; in a non-leap year the Feb 29 block is skipped |
+
+Hour-of-year vectors follow the calendar date, not the offset from the start
+of a bill or optimization horizon. On DST days the repeated autumn hour uses
+the same entry twice and the skipped spring hour is unused. Any other length,
+a 12 x 24 list of the wrong size, or a non-finite value is rejected: `422`
+on `POST /api/v1/tariffs/simulate` and when creating or updating a tariff,
+`ValueError` from `tariff_to_opt_params`. A stored tariff whose vector is
+invalid (saved before this validation) is treated as having none.
 
 ## Simulating a bill
 
@@ -207,5 +224,4 @@ answers `409` with an explanation instead of inventing a bill.
   roll-over and no annual true-up. A credit may take a bill below the
   tariff's minimum charge.
 - Partial cycles are not prorated (see above).
-- NEM3 avoided cost is hour-of-day only (see above).
 - Demand lookback windows and non-USD currencies are not modelled.

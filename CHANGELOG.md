@@ -273,6 +273,12 @@ changes** before upgrading.
 
 ### Fixed
 
+- NEM 3.0 avoided cost supports full-year vectors: 24 (hour of day),
+  12 x 24 (month x hour, nested or flat), 8760 and 8784 (hour of year,
+  leap-day aware), indexed by local time in both the bill credit and the
+  optimizer. Previously only the hour of day was used for bills and the
+  optimizer indexed long vectors by horizon offset. Other lengths are now
+  rejected (422) instead of being indexed modulo their length.
 - `VPP_API_KEY_HEADER` now sets the header API keys are read from (it was
   ignored in favour of a hard-coded `X-API-Key`).
 - `VPP_CONFIG_PATH` is now loaded at startup when no configuration document
