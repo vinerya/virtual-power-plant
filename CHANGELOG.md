@@ -91,6 +91,33 @@ changes** before upgrading.
 
 ### Added
 
+**SunSpec device simulator**
+- `vpp simulate sunspec` / `python -m vpp.simulators.sunspec`: a pymodbus
+  Modbus TCP server serving a SunSpec PV + battery hybrid inverter ("SunS"
+  at 40000, common model 1, inverter model 103 or 113, controls model 123,
+  storage model 124, end model), with realistic scale factors and "not
+  implemented" values, strict write validation (read-only points and
+  out-of-range set points answer Modbus exceptions) and simple physics:
+  `WMaxLimPct`/`WMaxLim_Ena` curtail the PV output, `StorCtl_Mod` with
+  `OutWRte`/`InWRte` charges or discharges the battery, SoC integrates
+  between the reserve and 100 %, and the `*_RvrtTms` revert timers fire.
+  Point layouts are checked against the SunSpec model definitions and the
+  project's own register maps. Built from the specification: it does not
+  show how vendor firmware behaves. Docker Compose profile `sim` runs it as
+  `sunspec-sim`; see docs/protocols.md "Testing without hardware".
+- `tests/test_sunspec_simulator.py` runs discovery, polling (ingestion loop)
+  and `POST /api/v1/optimization/dispatch` with `apply=true` through the real
+  actuator against the simulator on an ephemeral port.
+- Modbus ingestion: optional `soc_register` in `metadata.modbus` records a
+  polled state of charge (percent, e.g. SunSpec `ChaState`) in the resource
+  telemetry, where the dispatch optimiser reads a battery's SoC. Before,
+  Modbus-polled batteries never reported SoC and dispatch fell back to the
+  configured or assumed value.
+- `sunspec_model_124_registers()` also returns the read-only `WChaMax`,
+  `ChaState` and `ChaSt` points (with their scale factors) for polling;
+  `SUNSPEC_NOT_IMPLEMENTED` is public. `VPP_MODBUS_INGESTION_ENABLED` and
+  `VPP_CONTROL_ENABLED` are passed through by `docker-compose.yml`.
+
 **SunSpec discovery**
 - `vpp.protocols.modbus.discover_sunspec_models()` walks a device's SunSpec
   chain (the `"SunS"` marker at 40000, 0 or 50000, `ID`/`L` model headers,

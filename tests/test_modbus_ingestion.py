@@ -215,3 +215,34 @@ async def test_handle_message_records_telemetry_history(db_session, app):
     assert rows[0].power_kw == pytest.approx(1.2)
     assert rows[0].source == "modbus"
     assert rows[0].state_of_charge is None
+
+
+@pytest.mark.asyncio
+async def test_handle_message_records_polled_soc_for_the_optimizer(db_session, app):
+    """``soc_register`` (e.g. SunSpec ChaState, %) lands in resource telemetry,
+    where the dispatch optimiser reads a battery's state of charge from."""
+    from vpp.portal.telemetry import latest_soc
+
+    reset_event_bus()
+    resource = await ResourceRepository.create(
+        db_session,
+        name=f"modbus-battery-{datetime.now().timestamp()}",
+        resource_type="battery",
+        rated_power=5.0,
+    )
+    await db_session.commit()
+    persister = ModbusResourcePersister(
+        resource.id, get_session_factory(), power_register="battery_w", soc_register="cha_state"
+    )
+    # SoC only (no power register polled): recorded, current_power untouched.
+    await persister.handle_message(
+        ProtocolMessage(topic="modbus/custom", payload={"cha_state": 51.9}, source="modbus")
+    )
+    assert (await latest_soc(db_session, [resource.id]))[resource.id] == pytest.approx(0.519)
+    # An out-of-range SoC is ignored; with no power either, nothing is recorded.
+    await persister.handle_message(
+        ProtocolMessage(topic="modbus/custom", payload={"cha_state": 250.0}, source="modbus")
+    )
+    assert (await latest_soc(db_session, [resource.id]))[resource.id] == pytest.approx(0.519)
+    await db_session.refresh(resource)
+    assert resource.current_power == pytest.approx(0.0)

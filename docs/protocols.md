@@ -338,3 +338,145 @@ metadata / DR response details) and published as a `DEVICE_SETPOINT` event
 `unchanged`, `deferred`, `simulated`, `failed`, `offline`, `disabled`,
 `not_configured`.
 
+## Testing without hardware
+
+`vpp simulate sunspec` (same as `python -m vpp.simulators.sunspec`; needs
+the `protocols` extra for pymodbus) serves a simulated PV + battery hybrid
+inverter over Modbus TCP, so polling, SunSpec discovery and device control
+can be exercised end to end without a device.
+
+**What it serves** (defaults, 0-based wire addresses; `--help` lists the
+options):
+
+| Address | Model | Contents |
+|---|---|---|
+| 40000 | `"SunS"` | marker |
+| 40002 | 1 common, L = 65 | `Mn` "VPP Simulator", `Md`, `Vr`, `SN` (`--serial`), `DA` |
+| 40069 | 103 three-phase inverter, L = 50 (`--inverter-model 113`: float32, L = 60) | `W`, `Hz`, `A`, `PhV`, `WH`, `DCW`, temperatures, `St` … with scale factors (`W_SF` 0, `Hz_SF` −2, `Tmp_SF` −1, …) |
+| 40121 | 123 immediate controls, L = 24 | `WMaxLimPct` (`WMaxLimPct_SF` −1), `WMaxLim_Ena`, `WMaxLimPct_RvrtTms`, `Conn`, … |
+| 40147 | 124 storage, L = 24 | `WChaMax`, `StorCtl_Mod`, `ChaState` (`ChaState_SF` −1), `OutWRte` / `InWRte` (`InOutWRte_SF` −2), `InOutWRte_RvrtTms`, `ChaGriSet`, … |
+| 40173 | end | `0xFFFF`, L = 0 |
+
+(With model 113 the controls start at 40131 and storage at 40157.) The
+common model is served with L = 65, as SolarEdge and Fronius devices report
+it, so the `solaredge_se` (model 103) and `fronius_symo` (model 113) polling
+maps line up; `--common-length 66` serves the spec's full model 1 (with
+`Pad`), which moves every later model by one register — use
+`"model_base": "auto"` then.
+
+**How it behaves.** PV output is `--pv` watts (default 6000) unless
+curtailed: with `WMaxLim_Ena` = 1 the AC output is capped at
+`WMaxLimPct` % of `--wmax` (default 10000 W). The battery idles unless
+`StorCtl_Mod` activates the limits: its power is 0 clamped into
+[−`OutWRte`, +`InWRte`] % of `WChaMax`, so `OutWRte` = p, `InWRte` = −p
+discharges at p % and the reverse charges — the interpretation the
+`sunspec_124` profile writes. SoC integrates battery power (95 % one-way
+efficiency) between the `MinRsvPct` reserve and 100 %. `*_RvrtTms` revert
+timers run from the last write to that control (limit disabled,
+`StorCtl_Mod` cleared, `Conn` restored). Writes to read-only points answer
+ILLEGAL DATA ADDRESS and out-of-range values (`WMaxLimPct` > 100 %,
+`StorCtl_Mod` > 3, rates beyond ±100 %) ILLEGAL DATA VALUE (pymodbus 3.10
+and later; 3.6–3.9 drop a rejected write silently, which read-back shows). Points it does not model
+hold the SunSpec "not implemented" values. `--speed 60` runs one simulated
+minute per second, so SoC changes are visible quickly.
+
+**What it does not prove.** The simulator is written from the SunSpec
+specification. Passing against it shows that the VPP implements the
+specification consistently from register map to dispatch; it does not show
+how any vendor's firmware behaves. Real devices differ exactly where it
+matters for control: how forced charge/discharge through model 124 is
+interpreted (the reason `sunspec_124` is flagged unverified), which points
+are implemented or writable, ramp and window times (stored here, not
+modelled), set points that do not persist or need a vendor unlock, unit IDs,
+and scale factors that change at run time. Validate against the real device
+before enabling control on it.
+
+### Automated test
+
+`tests/test_sunspec_simulator.py` starts the simulator in-process on an
+ephemeral port and checks, among the device-model unit tests:
+discovery finds models 1 / 103 (or 113) / 123 / 124; polled values come out
+in engineering units with the served scale factors; and a
+`POST /api/v1/optimization/dispatch` with `"apply": true` goes through the
+real actuator and Modbus writer, changes the simulator's registers
+(`WMaxLimPct` 400 = 40.0 %, `OutWRte` / `InWRte` / `StorCtl_Mod`), and the
+next poll by the ingestion loop shows the new output and SoC.
+
+```bash
+python -m pytest tests/test_sunspec_simulator.py -q
+```
+
+### By hand, against a running API
+
+```bash
+# Terminal 1: the device (Ctrl-C to stop)
+vpp simulate sunspec --port 5020 --speed 10
+
+# Terminal 2: the API with Modbus polling and device control, one worker
+export VPP_SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+export VPP_MODBUS_INGESTION_ENABLED=true VPP_CONTROL_ENABLED=true
+vpp migrate
+vpp users create-admin admin
+vpp serve --workers 1
+```
+
+Create a PV and a battery resource pointing at the simulator (the battery
+polls `ChaState` through `custom_registers` and records it with
+`soc_register`, which is where the optimiser reads its state of charge):
+
+```bash
+PW='<the admin password chosen above>'
+TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token -d username=admin -d password="$PW" \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+AUTH="Authorization: Bearer $TOKEN"
+
+curl -s -X POST localhost:8000/api/v1/resources/ -H "$AUTH" -H 'Content-Type: application/json' -d '{
+  "name": "sim-pv", "resource_type": "solar", "rated_power": 10,
+  "metadata": {"modbus": {"host": "127.0.0.1", "port": 5020, "unit_id": 1,
+    "device_profile": "solaredge_se", "poll_interval_s": 2,
+    "control": {"enabled": true, "profile": "sunspec_123", "model_base": "auto",
+                "reference_kw": 10, "revert_timeout_s": 300}}}}'
+
+curl -s -X POST localhost:8000/api/v1/resources/ -H "$AUTH" -H 'Content-Type: application/json' -d '{
+  "name": "sim-battery", "resource_type": "battery", "rated_power": 5,
+  "metadata": {"capacity_kwh": 10, "modbus": {"host": "127.0.0.1", "port": 5020, "unit_id": 1,
+    "device_profile": "sunspec_storage", "poll_interval_s": 2,
+    "soc_register": "cha_state",
+    "custom_registers": {
+      "cha_state": {"address": 40155, "data_type": "uint16", "unit": "%",
+                    "scale_factor": "cha_state_sf",
+                    "sunspec": {"model": 124, "base": 40147, "point": "ChaState"}},
+      "cha_state_sf": {"address": 40169, "data_type": "int16",
+                       "sunspec": {"model": 124, "base": 40147, "point": "ChaState_SF"}}},
+    "control": {"enabled": true, "profile": "sunspec_124", "model_base": "auto",
+                "reference_kw": 5, "revert_timeout_s": 300}}}}'
+```
+
+Modbus resources are discovered when the API starts: restart `vpp serve`,
+then dispatch (use the ids returned above) and watch the simulator's status
+lines:
+
+```bash
+curl -s -X POST localhost:8000/api/v1/optimization/dispatch -H "$AUTH" \
+  -H 'Content-Type: application/json' \
+  -d '{"target_power_kw": 4, "resource_ids": ["<sim-pv id>"], "apply": true}'
+curl -s -X POST localhost:8000/api/v1/optimization/dispatch -H "$AUTH" \
+  -H 'Content-Type: application/json' \
+  -d '{"target_power_kw": -2, "resource_ids": ["<sim-battery id>"], "apply": true}'
+curl -s localhost:8000/api/v1/optimization/setpoints -H "$AUTH"
+```
+
+The simulator's status lines then show the set points taking effect, e.g.
+`ac=4000W pv=6000/6000W battery=-2000W soc=50.3% limit=40.0% stor_ctl=3`
+(PV curtailed to a 4 kW export cap while it charges the battery at 2 kW).
+`--speed` also speeds up the device's revert timers but not the VPP's
+keep-alive refresh, so with `--speed 10` a 300 s `revert_timeout_s` fires
+after 30 real seconds; use `--speed 1` to watch keep-alive and revert.
+
+**Docker.** `docker compose --profile sim up -d` also starts `sunspec-sim`
+(Modbus TCP on the compose network as `sunspec-sim:5020`, published on
+127.0.0.1:5020). Use `"host": "sunspec-sim"` in the resources above and set
+`VPP_MODBUS_INGESTION_ENABLED=true VPP_CONTROL_ENABLED=true` for `vpp-api`
+(the compose file passes both through; control needs the single default
+worker).
+

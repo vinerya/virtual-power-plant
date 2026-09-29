@@ -100,7 +100,7 @@ Both are off by default because they dial out to external systems.
 | `VPP_MQTT_TOPIC_PREFIX` | `vpp/#` | Subscription filter. |
 | `VPP_MQTT_USERNAME` | unset | Broker username. |
 | `VPP_MQTT_PASSWORD` | unset | Broker password. |
-| `VPP_MODBUS_INGESTION_ENABLED` | `false` | Poll Modbus TCP/RTU devices for every resource whose `metadata.modbus` block configures one (host, port, mode, device profile, poll interval, power register). Discovery runs once at startup. See `src/vpp/protocols/modbus_ingestion.py`. |
+| `VPP_MODBUS_INGESTION_ENABLED` | `false` | Poll Modbus TCP/RTU devices for every resource whose `metadata.modbus` block configures one (host, port, mode, device profile, poll interval, power register, optional `soc_register`). Discovery runs once at startup. See `src/vpp/protocols/modbus_ingestion.py`. |
 
 ## OCPP 1.6-J Central System
 

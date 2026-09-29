@@ -567,3 +567,31 @@ def demo(demo_name: str | None) -> None:
 
     module = importlib.import_module(f"vpp.demos.{demo_name}_demo")
     module.run()
+
+
+# ---------------------------------------------------------------------------
+# Device simulators
+# ---------------------------------------------------------------------------
+
+
+@cli.group("simulate")
+def simulate_group() -> None:
+    """Simulated devices for testing without hardware."""
+
+
+@simulate_group.command(
+    "sunspec",
+    context_settings={"ignore_unknown_options": True, "allow_extra_args": True},
+    add_help_option=False,
+)
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def simulate_sunspec(args: tuple[str, ...]) -> None:
+    """Serve a SunSpec PV + battery inverter over Modbus TCP (--help for options)."""
+    try:
+        import pymodbus  # noqa: F401
+    except ImportError:
+        click.echo("pymodbus is required: pip install virtual-power-plant[protocols]", err=True)
+        sys.exit(1)
+    from vpp.simulators.sunspec import main
+
+    sys.exit(main(list(args), prog="vpp simulate sunspec"))

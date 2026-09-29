@@ -83,6 +83,7 @@ Maturity labels used below:
 | Device control | dispatch allocations → Modbus setpoints (generic register, SunSpec 123 and 124 — register maps verified against the SunSpec model definitions, untested on hardware; model 124 charge/discharge semantics vendor-specific) with clamping, deadband, rate limit, read-back and fallback watchdog | beta — **off by default** (`VPP_CONTROL_ENABLED`), per-device opt-in |
 | V2G | persisted vehicles, charger binding, schedules / dispatch via OCPP profiles | beta — discharge uses a vendor extension (negative limits) |
 | MQTT / Modbus ingestion | telemetry in from brokers and inverters/meters | beta |
+| SunSpec device simulator | `vpp simulate sunspec`: Modbus TCP PV + battery inverter (models 1, 103/113, 123, 124) with simple physics, for testing polling and control without hardware ([docs](docs/protocols.md#testing-without-hardware)); built from the spec, so it does not stand in for vendor validation | test tool |
 | Trading | order types incl. stop-limit/iceberg/IOC/FOK, pre-trade risk, portfolio, VaR, strategies and backtests | **simulated** venue |
 | Protocol adapters without an endpoint | in-memory state machines, status `simulated` | simulated |
 | Grid-forming inverters, microgrid islanding | models and demos | simulated |

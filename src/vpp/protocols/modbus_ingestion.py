@@ -24,8 +24,12 @@ free-form ``metadata`` under a ``"modbus"`` key, e.g.::
 
 ``power_register`` (default ``"ac_power"``) names which polled register
 this module writes to ``ResourceModel.current_power`` (converted W -> kW).
-Every other key is passed straight through to
-:meth:`ModbusAdapter.configure`.
+``soc_register`` (optional) names a polled state-of-charge register in
+percent (e.g. SunSpec model 124 ``ChaState``, see
+:func:`vpp.protocols.modbus.sunspec_model_124_registers`); its value is
+recorded in the resource telemetry, where the dispatch optimiser reads a
+battery's state of charge from. Every other key is passed straight through
+to :meth:`ModbusAdapter.configure`.
 """
 
 from __future__ import annotations
@@ -40,6 +44,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_POWER_REGISTER = "ac_power"
+#: Keys of a resource's ``modbus`` config consumed by the VPP, not the adapter.
+NON_ADAPTER_KEYS = ("power_register", "soc_register", "control")
 
 
 def modbus_config_for_resource(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -66,24 +72,36 @@ class ModbusResourcePersister:
         resource_id: str,
         session_factory,
         power_register: str = DEFAULT_POWER_REGISTER,
+        soc_register: str | None = None,
     ) -> None:
         self._resource_id = resource_id
         self._session_factory = session_factory
         self._power_register = power_register
+        self._soc_register = soc_register
 
-    async def handle_message(self, message: ProtocolMessage) -> None:
-        watts = message.payload.get(self._power_register)
-        if watts is None:
-            return
+    def _number(self, payload: dict[str, Any], register: str | None) -> float | None:
+        if register is None:
+            return None
+        value = payload.get(register)
+        if value is None:
+            return None
         try:
-            kw = float(watts) / 1000.0
+            return float(value)
         except (TypeError, ValueError):
             logger.warning(
                 "Non-numeric Modbus register %r=%r for resource %s; dropping",
-                self._power_register,
-                watts,
+                register,
+                value,
                 self._resource_id,
             )
+            return None
+
+    async def handle_message(self, message: ProtocolMessage) -> None:
+        watts = self._number(message.payload, self._power_register)
+        kw = watts / 1000.0 if watts is not None else None
+        soc_pct = self._number(message.payload, self._soc_register)
+        soc = soc_pct / 100.0 if soc_pct is not None and 0.0 <= soc_pct <= 100.0 else None
+        if kw is None and soc is None:
             return
 
         # Local imports to avoid a hard import-time dependency between
@@ -92,29 +110,39 @@ class ModbusResourcePersister:
         from vpp.events import Event, EventType, get_event_bus
 
         async with self._session_factory() as session:
-            updated = await ResourceRepository.update(session, self._resource_id, current_power=kw)
+            if kw is not None:
+                updated = await ResourceRepository.update(
+                    session, self._resource_id, current_power=kw
+                )
+            else:
+                updated = await ResourceRepository.get_by_id(session, self._resource_id)
             if updated is None:
                 logger.warning(
                     "Modbus telemetry for unknown resource %r; dropping", self._resource_id
                 )
                 return
             # Keep history too, so GET /resources/{id}/metrics has a series
-            # for Modbus devices (battery_states only covers MQTT batteries).
+            # for Modbus devices (battery_states only covers MQTT batteries),
+            # and the optimiser finds the polled state of charge.
             from vpp.portal.telemetry import record_samples
 
+            power = kw if kw is not None else float(updated.current_power or 0.0)
             await record_samples(
                 session,
                 self._resource_id,
-                [(datetime.fromtimestamp(message.timestamp, tz=timezone.utc), kw, None)],
+                [(datetime.fromtimestamp(message.timestamp, tz=timezone.utc), power, soc)],
                 source="modbus",
             )
             await session.commit()
 
+        data: dict[str, Any] = {"resource_id": self._resource_id, "current_power_kw": power}
+        if soc is not None:
+            data["soc"] = soc
         try:
             await get_event_bus().publish(
                 Event(
                     event_type=EventType.RESOURCE_UPDATED,
-                    data={"resource_id": self._resource_id, "current_power_kw": kw},
+                    data=data,
                     source="modbus.telemetry_ingestion",
                 )
             )

@@ -179,16 +179,23 @@ async def _modbus_device_loop(
     """
     from vpp.api.routes.protocols import get_registry
     from vpp.protocols.modbus import ModbusAdapter
-    from vpp.protocols.modbus_ingestion import DEFAULT_POWER_REGISTER, ModbusResourcePersister
+    from vpp.protocols.modbus_ingestion import (
+        DEFAULT_POWER_REGISTER,
+        NON_ADAPTER_KEYS,
+        ModbusResourcePersister,
+    )
 
-    adapter_config = {k: v for k, v in config.items() if k != "power_register"}
+    adapter_config = {k: v for k, v in config.items() if k not in NON_ADAPTER_KEYS}
     power_register = config.get("power_register", DEFAULT_POWER_REGISTER)
+    soc_register = config.get("soc_register")
 
     adapter = ModbusAdapter()
     adapter.name = f"modbus:{resource_id}"
     adapter.configure(**adapter_config)
 
-    persister = ModbusResourcePersister(resource_id, get_session_factory(), power_register)
+    persister = ModbusResourcePersister(
+        resource_id, get_session_factory(), power_register, soc_register
+    )
     adapter.subscribe("*", persister.handle_message)
 
     registry = get_registry()
