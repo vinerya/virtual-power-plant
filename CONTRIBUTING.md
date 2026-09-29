@@ -62,8 +62,8 @@ Backend:
 ```bash
 pytest                                        # whole suite
 pytest tests/test_api_tariffs.py -q           # one module
-ruff check src tests
-ruff format --check src tests
+ruff check src tests examples
+ruff format --check src tests examples
 mypy src/vpp --ignore-missing-imports
 ```
 

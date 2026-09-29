@@ -72,7 +72,7 @@ optimization:
 
   solver_options:
     method: "interior_point"
-    tolerance: 1e-6
+    tolerance: 1.0e-6
     max_iterations: 1000
 
 # Heuristic Algorithms Configuration
@@ -213,9 +213,9 @@ resources:
       model_type: "advanced"  # or "simple"
       
       # Electrochemical parameters (for advanced model)
-      diffusion_coefficient: 1e-14  # m²/s
-      particle_radius: 5e-6         # m
-      electrode_thickness: 100e-6   # m
+      diffusion_coefficient: 1.0e-14  # m²/s
+      particle_radius: 5.0e-6       # m
+      electrode_thickness: 1.0e-4   # m
       porosity: 0.3
       
       # Aging parameters
