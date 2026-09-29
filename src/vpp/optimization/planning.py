@@ -76,6 +76,8 @@ class FleetAsset:
     # Non-battery availability (kW) and where it came from.
     available_kw: float | None = None
     availability_basis: str = "nameplate"
+    # Output cap the VPP currently holds on this (generation) resource, kW.
+    output_limit_kw: float | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -150,6 +152,7 @@ class FleetAsset:
                 {
                     "available_kw": self.available_kw,
                     "availability_basis": self.availability_basis,
+                    "output_limit_kw": self.output_limit_kw,
                 }
             )
         return out

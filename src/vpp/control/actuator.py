@@ -19,7 +19,10 @@ Safety rules, in the order applied:
 1. **Offline** resources are never written (``offline``).
 2. **Clamp** to the resource's limits (battery: -charge .. +discharge limit,
    anything else: 0 .. rated power) and the control block's
-   ``min_kw``/``max_kw``. ``clamped`` is reported.
+   ``min_kw``/``max_kw``. ``clamped`` is reported. A generation resource
+   allocated all of its estimated availability is *uncurtailed*: its upper
+   limit is written instead of the estimate (``uncurtailed``), so a cap
+   never pins the output at a stale estimate.
 3. **Deadband**: a setpoint within ``deadband_kw`` of the one in force is
    not rewritten (``unchanged``), only its expiry is extended.
 4. **Rate limit**: at most one write per ``min_interval_s``; a newer
@@ -36,6 +39,11 @@ Safety rules, in the order applied:
    a device-side revert timer (``revert_timeout_s``) also cover a crashed
    process; the watchdog refreshes the setpoint (``keepalive_s``) so that
    timer only fires when the VPP really is gone.
+
+The output caps currently held on generation resources are exposed by
+:meth:`SetpointActuator.output_limits` / :func:`active_output_limits`: the
+optimiser needs them to tell a curtailed reading from the real availability
+(:func:`vpp.api.optimization_support.resource_to_asset`).
 
 Every command that touches (or would touch) a device is recorded in the
 ``event_log`` table (``event_type="device_setpoint"``, one row per
@@ -77,6 +85,8 @@ logger = logging.getLogger(__name__)
 EVENT_LOG_TYPE = "device_setpoint"
 EV_PREFIX = "ev:"  # vpp.v2g.store.EV_ASSET_PREFIX (EVs are driven over OCPP)
 _MAX_RELEASE_ATTEMPTS = 3
+# Setpoints closer than this to a bound are treated as at the bound.
+_LIMIT_EPS_KW = 1e-3
 
 ACCEPTED = "accepted"
 UNCHANGED = "unchanged"
@@ -109,6 +119,22 @@ class _Active:
     run_id: str | None
     pending_kw: float | None = None
     release_failures: int = 0
+    # Generation (non-battery) resource whose output this setpoint caps.
+    curtailable: bool = False
+    # When the VPP started holding this resource's output below its upper
+    # limit (continuously, across rewrites); ``None`` while not limiting.
+    limit_since: float | None = None
+
+    def limiting(self, kw: float) -> bool:
+        return self.curtailable and kw < self.hi_kw - _LIMIT_EPS_KW
+
+    def note_written(self, kw: float, now: float) -> None:
+        """Record that *kw* is now in force on the device."""
+        if not self.limiting(kw):
+            self.limit_since = None
+        elif self.limit_since is None:
+            self.limit_since = now
+        self.setpoint_kw, self.written_at = kw, now
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -122,7 +148,21 @@ class _Active:
             "run_id": self.run_id,
             "profile": self.config.profile,
             "simulated": self.config.simulate,
+            "limit_since": self.limit_since,
         }
+
+
+@dataclass(frozen=True)
+class OutputLimit:
+    """A generation resource's output cap currently held by the VPP.
+
+    Only limits the device accepted (``accepted``, read back when ``verify``
+    is on) are reported; simulated control blocks write nothing and are not.
+    """
+
+    resource_id: str
+    limit_kw: float
+    since: float  # epoch seconds: when the VPP started limiting (continuously)
 
 
 @dataclass
@@ -137,6 +177,9 @@ class _Target:
     hi_kw: float
     rated_kw: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    is_battery: bool = False
+    # Generation resources: the output the optimiser believed available.
+    available_kw: float | None = None
 
     @classmethod
     def from_asset(cls, asset: FleetAsset) -> _Target:
@@ -153,6 +196,8 @@ class _Target:
             hi_kw=hi,
             rated_kw=max(0.0, float(asset.rated_power_kw)),
             metadata=asset.metadata or {},
+            is_battery=asset.is_battery,
+            available_kw=None if asset.is_battery else asset.available_kw,
         )
 
 
@@ -326,8 +371,21 @@ class SetpointActuator:
             d.update(status=FAILED, reason=f"empty setpoint range [{lo:g}, {hi:g}] kW")
             return d
         setpoint = max(lo, min(hi, requested))
-        d["setpoint_kw"] = setpoint
         d["clamped"] = abs(setpoint - requested) > 1e-9
+        if (
+            not target.is_battery
+            and target.available_kw is not None
+            and target.available_kw > _LIMIT_EPS_KW
+            and requested >= target.available_kw - _LIMIT_EPS_KW
+            and setpoint < hi
+        ):
+            # The allocation is everything the resource was believed to have:
+            # it is not to be curtailed. Capping it at that estimate would pin
+            # the output there (the next poll could never show more), so the
+            # cap goes to the upper limit instead (sunspec_123: lifted).
+            setpoint = hi
+            d["uncurtailed"] = True
+        d["setpoint_kw"] = setpoint
         expires = now + max(0.0, ttl) + self.expiry_grace_s
         d["expires_at"] = expires
 
@@ -364,7 +422,8 @@ class SetpointActuator:
             d.update(
                 status=ACCEPTED, reason="written" + (" and verified" if result.verified else "")
             )
-        self._active[target.id] = _Active(
+        prev = self._active.get(target.id)
+        entry = _Active(
             resource_id=target.id,
             name=target.name,
             config=control,
@@ -376,7 +435,11 @@ class SetpointActuator:
             expires_at=expires,
             source=source,
             run_id=run_id,
+            curtailable=not target.is_battery,
+            limit_since=prev.limit_since if prev is not None else None,
         )
+        entry.note_written(setpoint, now)
+        self._active[target.id] = entry
         return d
 
     # -- fallback / release ----------------------------------------------------
@@ -520,7 +583,7 @@ class SetpointActuator:
                 d.update(status=FAILED, reason=result.error or "write failed")
                 return d
             d["status"] = ACCEPTED
-        a.setpoint_kw, a.written_at = kw, now
+        a.note_written(kw, now)
         return d
 
     async def run_forever(self) -> None:
@@ -608,6 +671,19 @@ class SetpointActuator:
         except Exception:
             logger.warning("failed to publish DEVICE_SETPOINT", exc_info=True)
 
+    def output_limits(self) -> dict[str, OutputLimit]:
+        """Generation resources whose output the VPP currently caps, by id.
+
+        The dispatch optimiser uses this to tell a curtailed reading from the
+        resource's real availability (see
+        :func:`vpp.api.optimization_support.resource_to_asset`).
+        """
+        return {
+            rid: OutputLimit(rid, a.setpoint_kw, a.limit_since)
+            for rid, a in self._active.items()
+            if a.limit_since is not None and a.writer is not None and not a.config.simulate
+        }
+
     def status(self) -> dict[str, Any]:
         return {
             "enabled": self.enabled,
@@ -662,6 +738,16 @@ def get_setpoint_actuator() -> SetpointActuator:
     return _actuator
 
 
+def active_output_limits() -> dict[str, OutputLimit]:
+    """Output caps held by this process's actuator (``{}`` when there is none).
+
+    Never creates the actuator. The state is per process: another API worker
+    or a restarted process does not see these limits (on a clean shutdown
+    they are released; after a crash the device's revert timer applies).
+    """
+    return _actuator.output_limits() if _actuator is not None else {}
+
+
 def set_setpoint_actuator(actuator: SetpointActuator | None) -> None:
     global _actuator
     _actuator = actuator
@@ -700,7 +786,9 @@ __all__ = [
     "OFFLINE",
     "SIMULATED",
     "UNCHANGED",
+    "OutputLimit",
     "SetpointActuator",
+    "active_output_limits",
     "build_actuator",
     "get_setpoint_actuator",
     "set_setpoint_actuator",

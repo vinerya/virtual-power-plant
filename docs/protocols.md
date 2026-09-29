@@ -282,7 +282,7 @@ sent on the wire; vendor tables often list 1-based register numbers.
 | Profile | Writes | Release | Status |
 |---|---|---|---|
 | `register` (default) | one signed setpoint register: `register` (a map/custom register flagged `"writable": true`) or `address` + `data_type`; `unit` `W` / `kW` / `pct` (of `reference_kw`, default rated power); `scale` (value of one count) or `scale_factor_register` (SunSpec-style int16 exponent); `sign` `export_positive` (default) / `import_positive`; optional `enable_register` (+`enable_value`, `disable_value`) | `disable_value` to `enable_register`, else `release_value` (default 100 for `pct`, 0 otherwise) | generic |
-| `sunspec_123` | SunSpec model 123 Immediate Controls at `model_base` (address of the model `ID`, or `"auto"`): `WMaxLimPct` (+5, scaled by `WMaxLimPct_SF` at +23) = setpoint / `reference_kw` (the spec's % of `WMax`, so set `reference_kw` to `WMax`), clamped to 0–100 %; `WMaxLim_Ena` (+9) = 1; optional `WMaxLimPct_RvrtTms` (+7) = `revert_timeout_s` | `WMaxLim_Ena` = 0 | offsets verified against the SunSpec model definition; untested on hardware |
+| `sunspec_123` | SunSpec model 123 Immediate Controls at `model_base` (address of the model `ID`, or `"auto"`): `WMaxLimPct` (+5, scaled by `WMaxLimPct_SF` at +23) = setpoint / `reference_kw` (the spec's % of `WMax`, so set `reference_kw` to `WMax`), clamped to 0 %; `WMaxLim_Ena` (+9) = 1; optional `WMaxLimPct_RvrtTms` (+7) = `revert_timeout_s`. A setpoint of 100 % or more is no limit: only `WMaxLim_Ena` = 0 is written (the limit is lifted) | `WMaxLim_Ena` = 0 | offsets verified against the SunSpec model definition; untested on hardware |
 | `sunspec_124` | SunSpec model 124 Storage: `OutWRte` (+12) / `InWRte` (+13) as % of `reference_kw` (spec: % of `WDisChaMax` / `WChaMax`; discharge: `OutWRte`=p, `InWRte`=−p; charge the reverse), `StorCtl_Mod` (+5, bitfield: CHARGE + DISCHARGE) = 3 | `StorCtl_Mod` = 0 | offsets verified against the SunSpec model definition; forced charge/discharge **semantics unverified** — vendors interpret them differently; validate on your device |
 
 No vendor-specific absolute control addresses are shipped: SunSpec models
@@ -305,7 +305,17 @@ hardware. The Fronius/SolarEdge read maps assume the inverter model's `ID`
 at address 40069 (common model with L = 65, as both vendors document);
 polling multiplies values by their `*_SF` scale factor and drops SunSpec
 "not implemented" values (0x8000, 0xFFFF, 0x80000000, 0xFFFFFFFF, acc32 0,
-float NaN). The `sma_sunnyboy` map uses SMA's proprietary registers, not
+float NaN). A value and its scale factor always come from the **same read
+request**: the polled registers of one SunSpec model are read as one
+contiguous block (e.g. `solaredge_se`: model 103 offsets 14–37, one request
+of 24 registers per poll), and any other value is read together with its
+scale-factor register as the minimal span covering both (at most 125
+registers). Reading them separately let a device that rescales between two
+requests produce a value off by a power of ten. If a device rejects a block
+read, that poll falls back to one request per value + scale-factor pair;
+registers without a scale factor outside SunSpec models (e.g.
+`sma_sunnyboy`, custom maps with gaps) are still read one by one. The
+`sma_sunnyboy` map uses SMA's proprietary registers, not
 SunSpec, and is not covered by that check.
 `"simulate": true` runs the whole pipeline without device I/O.
 
@@ -330,6 +340,46 @@ SunSpec, and is not covered by that check.
    `revert_timeout_s` the device reverts on its own if the process dies;
    the watchdog refreshes the setpoint every `keepalive_s` (default half the
    revert timeout). A failed release is retried three times.
+
+### Curtailed generation and its availability
+
+A PV (or other generation) resource's available power for dispatch comes
+from its polled output. Once the VPP has capped that output, the polled
+value is the cap, not what the panels could deliver, and taking it as the
+availability would keep the optimiser from ever allocating more — the
+limit could only go away when the device's revert timer fired. So:
+
+- The actuator tracks, per resource, the output cap it currently holds: a
+  setpoint below the resource's upper limit that the device accepted (read
+  back when `verify` is on). Simulated control blocks and batteries are
+  not tracked. The cap's start time is kept across rewrites of a
+  continuous limit.
+- While such a cap is in force and the polled output is at it (within
+  max(0.05 kW, 2 % of rated power)), the optimiser does not trust the
+  reading. It estimates the availability as the newest telemetry reading
+  taken **before** the cap started, if that is at most 15 minutes old
+  (`availability_basis` `pre_curtailment_telemetry`; never less than the
+  current output), else the nameplate rating (`nameplate_curtailed`, an
+  upper bound). A reported `available_kw` in the resource's metadata or
+  config still takes precedence, and output clearly below the cap is plain
+  `telemetry`. The dispatch response reports the basis per allocation; the
+  run's asset summary also records `output_limit_kw`.
+- When a generation resource is allocated all of its estimated
+  availability, it is not to be curtailed: the actuator writes the
+  resource's upper limit instead of the estimate (delivery field
+  `"uncurtailed": true`), which for `sunspec_123` lifts the limit
+  (`WMaxLim_Ena` = 0). Capping at the estimate would pin the output there
+  again, since the next poll could never show more.
+
+Limitations: the estimate is only as good as the last uncurtailed reading
+(sun or wind may have changed since, and after 15 minutes of curtailment the
+nameplate is used). No SunSpec point the project reads gives the real
+availability: model 103/113 report the AC and DC output, which both follow
+the cap, and model 123 only the limit itself (model 121's `WMax` and
+vendor-specific "available power" points are not read). Forecasts are not
+used. The cap state lives in the API process that wrote it: another worker,
+or a restarted process, does not know it (on a clean shutdown every cap is
+released; after a crash the device's revert timer applies).
 
 Every command is recorded in the `event_log` table (`event_type =
 device_setpoint`), stored with the dispatch (`device_deliveries` in the run
@@ -400,7 +450,12 @@ in engineering units with the served scale factors; and a
 `POST /api/v1/optimization/dispatch` with `"apply": true` goes through the
 real actuator and Modbus writer, changes the simulator's registers
 (`WMaxLimPct` 400 = 40.0 %, `OutWRte` / `InWRte` / `StorCtl_Mod`), and the
-next poll by the ingestion loop shows the new output and SoC.
+next poll by the ingestion loop shows the new output and SoC. After the PV
+is curtailed to 40 %, a dispatch asking for full output estimates its
+availability from the reading before the cap, lifts the limit
+(`WMaxLim_Ena` = 0), and the next poll shows the restored 6 kW. A further
+test flips the served `W_SF` after every request and checks that polled
+values stay consistent (one block read per poll).
 
 ```bash
 python -m pytest tests/test_sunspec_simulator.py -q

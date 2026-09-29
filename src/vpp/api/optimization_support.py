@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -33,6 +33,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from vpp.control.actuator import OutputLimit
+
 logger = logging.getLogger(__name__)
 
 # Marker for the wrapped solution_json layout written by this module. Rows
@@ -41,6 +43,9 @@ _SOLUTION_LAYOUT_VERSION = 2
 # C/4 heuristic used when a battery has no recorded energy capacity, matching
 # vpp.degradation.telemetry.DEFAULT_C_RATE_HOURS.
 _DEFAULT_C_RATE_HOURS = 4.0
+#: Oldest reading taken before a VPP output cap that still estimates a
+#: curtailed generator's availability; after that the nameplate is used.
+PRE_CURTAILMENT_MAX_AGE_S = 900.0
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +81,19 @@ def _fraction(v: float | None) -> float | None:
     return v / 100.0 if v > 1.0 else v
 
 
-async def resource_to_asset(session: AsyncSession, row: ResourceModel) -> FleetAsset:
+async def resource_to_asset(
+    session: AsyncSession,
+    row: ResourceModel,
+    limits: dict[str, OutputLimit] | None = None,
+) -> FleetAsset:
+    """One resource as a :class:`FleetAsset`.
+
+    *limits* are the output caps the VPP currently holds on generation
+    resources (:func:`vpp.control.actuator.active_output_limits`). A
+    resource producing at such a cap is curtailed, so its polled output is
+    not its availability (see ``availability_basis``); without this the
+    optimiser could never allocate more than the cap and never lift it.
+    """
     cfg = _loads(row.config_json)
     meta = _loads(row.metadata_json)
     asset = FleetAsset(
@@ -144,13 +161,54 @@ async def resource_to_asset(session: AsyncSession, row: ResourceModel) -> FleetA
                 setattr(asset, attr, None)
     else:
         avail = _first_number(meta.get("available_kw"), cfg.get("available_kw"))
+        polled = float(row.current_power or 0.0)
+        limit = (limits or {}).get(row.id)
+        if limit is not None:
+            asset.output_limit_kw = limit.limit_kw
         if avail is not None:
             asset.available_kw, asset.availability_basis = avail, "reported"
-        elif (row.current_power or 0.0) > 0:
-            asset.available_kw, asset.availability_basis = float(row.current_power), "telemetry"
+        elif limit is not None and polled >= limit.limit_kw - _curtailed_tolerance_kw(asset):
+            # The output sits at a cap the VPP wrote: the reading is what the
+            # VPP allowed, not what the resource could deliver. Neither the
+            # AC output nor any point of models 103/113/123 tells the real
+            # availability, so estimate it: the newest reading taken before
+            # the cap if it is recent, else the nameplate (an upper bound).
+            before = await _reading_before(session, row.id, limit.since)
+            if before is not None:
+                asset.available_kw = max(polled, before)
+                asset.availability_basis = "pre_curtailment_telemetry"
+            else:
+                asset.available_kw = asset.rated_power_kw
+                asset.availability_basis = "nameplate_curtailed"
+        elif polled > 0:
+            asset.available_kw, asset.availability_basis = polled, "telemetry"
         else:
             asset.available_kw, asset.availability_basis = asset.rated_power_kw, "nameplate"
     return asset
+
+
+def _curtailed_tolerance_kw(asset: FleetAsset) -> float:
+    """How close to a VPP cap a reading must be to count as held at it."""
+    return max(0.05, 0.02 * max(0.0, asset.rated_power_kw))
+
+
+async def _reading_before(session: AsyncSession, resource_id: str, since: float) -> float | None:
+    """Newest telemetry power taken before *since* (epoch s), if recent enough."""
+    from vpp.db.models import ResourceTelemetryModel
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=PRE_CURTAILMENT_MAX_AGE_S)
+    before = datetime.fromtimestamp(since, tz=timezone.utc)
+    rt = ResourceTelemetryModel
+    value = (
+        await session.execute(
+            select(rt.power_kw)
+            .where(rt.resource_id == resource_id, rt.timestamp < before, rt.timestamp >= cutoff)
+            .order_by(rt.timestamp.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return _first_number(value)
 
 
 async def load_fleet_assets(
@@ -183,7 +241,10 @@ async def load_fleet_assets(
             .all()
         )
         missing = [i for i in ids if i not in found_any]
-    assets = [await resource_to_asset(session, r) for r in rows]
+    from vpp.control.actuator import active_output_limits
+
+    limits = active_output_limits()
+    assets = [await resource_to_asset(session, r, limits) for r in rows]
     return assets, missing
 
 
