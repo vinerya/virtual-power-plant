@@ -8,7 +8,6 @@ portfolio tracking, risk management, and market data integration.
 import logging
 import queue
 import threading
-import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -390,12 +389,12 @@ class TradingEngine:
                     for callback in self.callbacks["on_risk_breach"]:
                         callback(risk_status)
 
-                # Sleep before next check
-                time.sleep(self.risk_manager.limits.position_limit_check_interval)
+                # Sleep before next check (wakes immediately on stop())
+                self._stop_event.wait(self.risk_manager.limits.position_limit_check_interval)
 
             except Exception as e:
                 self.logger.error(f"Error in risk monitoring: {e}")
-                time.sleep(60)  # Wait before retrying
+                self._stop_event.wait(60)  # Wait before retrying
 
     def _execute_strategies(self) -> None:
         """Execute trading strategies."""
@@ -419,12 +418,12 @@ class TradingEngine:
                             order = self._create_sell_order(signal)
                             self.submit_order(order)
 
-                # Sleep before next strategy execution
-                time.sleep(60)  # Execute strategies every minute
+                # Execute strategies every minute (wakes immediately on stop())
+                self._stop_event.wait(60)
 
             except Exception as e:
                 self.logger.error(f"Error executing strategies: {e}")
-                time.sleep(60)
+                self._stop_event.wait(60)
 
     def _process_market_data(self) -> None:
         """Process incoming market data."""
@@ -438,11 +437,11 @@ class TradingEngine:
                     for callback in self.callbacks["on_market_data"]:
                         callback(data)
 
-                time.sleep(1)  # Check for updates every second
+                self._stop_event.wait(1)  # Check for updates every second
 
             except Exception as e:
                 self.logger.error(f"Error processing market data: {e}")
-                time.sleep(5)
+                self._stop_event.wait(5)
 
     def _create_buy_order(self, signal: dict[str, Any]) -> Order:
         """Create a buy order from trading signal."""

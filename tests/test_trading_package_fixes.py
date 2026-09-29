@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import time
 from datetime import datetime, timedelta
 
 import pytest
@@ -357,6 +358,27 @@ class TestEngine:
         assert order.status == OrderStatus.FILLED
         assert len(engine.portfolio_manager.trades) == 1
         assert engine.get_portfolio().positions["RT"].quantity == 5
+
+    def test_stop_is_prompt_and_joins_worker_threads(self):
+        """The worker loops used ``time.sleep(60)`` between iterations, so
+        ``stop()`` sat through ``join(timeout=10)`` per thread (~20 s) and
+        still left the threads running.  They now wait on the stop event."""
+        engine = TradingEngine()
+        assert engine.start()
+        started = time.monotonic()
+        assert engine.stop()
+        assert time.monotonic() - started < 3.0
+        assert not any(t.is_alive() for t in engine._threads)
+
+    def test_simulated_provider_stop_streaming_is_prompt(self):
+        provider = SimulatedDataProvider()
+        provider.update_frequency = 60
+        assert provider.start_streaming()
+        started = time.monotonic()
+        provider.stop_streaming()
+        assert time.monotonic() - started < 3.0
+        assert provider._data_thread is not None
+        assert not provider._data_thread.is_alive()
 
 
 # ---------------------------------------------------------------------------

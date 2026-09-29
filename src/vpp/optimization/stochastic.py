@@ -287,23 +287,38 @@ class SimpleStochasticRules(RuleBasedOptimizer):
         max_power = problem.parameters.get("max_power", 250.0)  # kW
         efficiency = problem.parameters.get("efficiency", 0.9)
 
+        # Reference price: the horizon-average expected price.  Each period's
+        # pessimistic price is compared against it -- the 10th-percentile
+        # (sell) price against it to discharge, the 90th-percentile (buy)
+        # price to charge.  (Comparing a period's p10 against the same
+        # period's p90, as this used to, can never trigger: p10 <= p90.)
+        if price_scenarios:
+            reference_price = float(np.mean([np.mean(s[:num_periods]) for s in price_scenarios]))
+        else:
+            reference_price = float(np.mean(conservative_buy_prices + conservative_sell_prices))
+
         for t in range(num_periods):
             current_soc = battery_soc[-1]
 
             # Net load (load - renewable)
             net_load = conservative_load[t] - conservative_renewable[t]
 
-            # Dispatch rules
-            if conservative_sell_prices[t] > conservative_buy_prices[t] * 1.2:
-                # High price spread - discharge if possible
+            # Dispatch rules (mutually exclusive: p10 > ref implies p90 > ref)
+            if conservative_sell_prices[t] > reference_price:
+                # Even the pessimistic sale price beats the average - discharge
                 if current_soc > 0.2:  # Keep 20% reserve
-                    discharge_power = min(
-                        max_power, net_load, (current_soc - 0.2) * battery_capacity / time_step
+                    discharge_power = max(
+                        0.0,
+                        min(
+                            max_power,
+                            net_load,
+                            (current_soc - 0.2) * battery_capacity / time_step,
+                        ),
                     )
                     power = -discharge_power
                 else:
                     power = 0.0
-            elif conservative_buy_prices[t] < conservative_sell_prices[t] * 0.8:
+            elif conservative_buy_prices[t] < reference_price:
                 # Low prices - charge if possible
                 if current_soc < 0.9:  # Don't overcharge
                     charge_power = min(

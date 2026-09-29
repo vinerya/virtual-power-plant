@@ -70,7 +70,7 @@ class BatteryModel(ABC):
         self.logger = logging.getLogger(f"{self.__class__.__name__}")
 
         # Initialize state
-        initial_soc = config.parameters.get("initial_soc", 0.5)
+        initial_soc = float(config.parameters.get("initial_soc", 0.5))
         self.state = BatteryState(
             soc=initial_soc,
             soh=1.0,
@@ -280,11 +280,14 @@ class AdvancedElectrochemicalModel(BatteryModel):
     def __init__(self, parameters: BatteryParameters, config: ResourceConfig):
         super().__init__(parameters, config)
 
-        # Additional electrochemical parameters
-        self.diffusion_coefficient = config.parameters.get("diffusion_coefficient", 1e-14)  # m²/s
-        self.particle_radius = config.parameters.get("particle_radius", 5e-6)  # m
-        self.electrode_thickness = config.parameters.get("electrode_thickness", 100e-6)  # m
-        self.porosity = config.parameters.get("porosity", 0.3)
+        # Additional electrochemical parameters.  Coerced with float():
+        # PyYAML follows YAML 1.1, where ``1e-14`` (no dot) is a *string*,
+        # so values from a YAML config file can arrive as str.
+        params = config.parameters
+        self.diffusion_coefficient = float(params.get("diffusion_coefficient", 1e-14))  # m²/s
+        self.particle_radius = float(params.get("particle_radius", 5e-6))  # m
+        self.electrode_thickness = float(params.get("electrode_thickness", 100e-6))  # m
+        self.porosity = float(params.get("porosity", 0.3))
 
         # Concentration states
         self.surface_concentration = 0.5  # Normalized

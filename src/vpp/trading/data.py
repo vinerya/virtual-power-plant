@@ -190,11 +190,11 @@ class MarketDataProvider(ABC):
                     if data:
                         self._update_data(data)
 
-                time.sleep(self.update_frequency)
+                self._stop_event.wait(self.update_frequency)
 
             except Exception as e:
                 self.logger.error(f"Error in data loop: {e}")
-                time.sleep(5)  # Wait before retrying
+                self._stop_event.wait(5)  # Wait before retrying
 
     def _update_data(self, data: MarketData) -> None:
         """Update internal data storage."""

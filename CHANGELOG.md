@@ -403,6 +403,23 @@ changes** before upgrading.
 
 ### Changed
 
+- **`examples/` are linted and tested.** CI's lint job (and CONTRIBUTING's
+  checks) now run `ruff check` / `ruff format --check` on `examples/`, and
+  `tests/test_examples.py` runs every example as a subprocess from an empty
+  working directory (exit code 0, no files left behind; ~5 s in total).
+  `examples/advanced_usage.py`, which imported APIs removed long ago
+  (`EventHandler`, `WebhookEventHandler`, `create_strategy`,
+  `forecast_production`, ...), is rewritten as a walkthrough of the current
+  core API: `VPPConfig`, `Battery`/`Solar`/`WindTurbine`,
+  `VirtualPowerPlant` dispatch and the `EventBus`. The other examples now
+  exit non-zero on failure instead of printing the error and exiting 0;
+  `advanced_configuration_demo.py` writes into `--output-dir` (default: a
+  temporary directory) instead of the repo's `output/` directory and the
+  current directory, and drops its "hot reload (simulated)" section (there
+  is no hot reload); `trading_demo.py`'s engine section now actually
+  submits orders against seeded liquidity. The stale generated files in
+  `output/` are removed.
+
 - Pyomo and HiGHS are now core dependencies. `import vpp` (and so the API
   and `vpp` CLI) always needed them, so a plain install without the
   `solver` extra could not start; `solver` remains as an empty extra.
@@ -453,6 +470,25 @@ changes** before upgrading.
   accepted; responses carry `Deprecation` and `Warning` headers).
 
 ### Fixed
+
+- **Rule-based stochastic fallback never dispatched.**
+  `SimpleStochasticRules` (the fallback for stochastic problems, also used
+  by `optimize_trading_schedule` and by the API's stochastic dispatch when
+  the Pyomo CVaR plugin cannot solve) compared
+  each period's 10th-percentile price with the same period's 90th
+  percentile, which can never trigger, so it always returned an all-idle
+  schedule with zero cost. It now charges when even the pessimistic
+  (90th-percentile) price is below the horizon's average expected price and
+  discharges when even the pessimistic (10th-percentile) price is above it.
+- **`TradingEngine.stop()` took ~20 s and left threads running.** Its
+  worker loops slept with `time.sleep(60)`, so `stop()` waited out
+  `join(timeout=10)` per thread; they now wait on the stop event and exit
+  immediately. Same for `MarketDataProvider.stop_streaming()`.
+- **`AdvancedElectrochemicalModel` crashed on YAML-loaded parameters.**
+  PyYAML reads `1e-14` (no dot) as a string, so the model built from
+  `configs/advanced_vpp_config.yaml` raised `TypeError` on the first
+  `update()`. Numeric parameters are now coerced with `float()`, and the
+  sample config spells those values YAML-1.1-safely (`1.0e-14`).
 
 - **SunSpec register maps verified against the official SunSpec model
   definitions** (the sunspec/models JSON bundled with pysunspec2 1.3.6);
