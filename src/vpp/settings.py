@@ -207,13 +207,15 @@ class Settings(BaseSettings):
 
     # Data retention (vpp.retention): rows older than N days are deleted by a
     # background pass on the data-retention lease holder and by `vpp prune`.
-    # 0 = keep forever. Trades/orders and billing data are never pruned.
+    # 0 = keep forever. Trades/orders and billing data are never pruned. Only
+    # the audit log (new in this release) is pruned by default, so upgrading
+    # never deletes existing history; the other tables are opt-in.
     audit_retention_days: int = Field(365, ge=0)
-    event_log_retention_days: int = Field(365, ge=0)
-    alert_retention_days: int = Field(365, ge=0)  # resolved alerts only
-    dr_response_retention_days: int = Field(365, ge=0)
+    event_log_retention_days: int = Field(0, ge=0)
+    alert_retention_days: int = Field(0, ge=0)  # resolved alerts only
+    dr_response_retention_days: int = Field(0, ge=0)
     # battery_states + resource_telemetry; the metrics API serves up to 366 days.
-    telemetry_retention_days: int = Field(366, ge=0)
+    telemetry_retention_days: int = Field(0, ge=0)
     retention_interval_minutes: int = Field(60, ge=1)
     retention_batch_size: int = Field(1000, ge=1)
 

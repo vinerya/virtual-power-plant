@@ -247,10 +247,10 @@ not itself written to the audit log.
 | Table | Setting | Default |
 |---|---|---|
 | `audit_log` | `VPP_AUDIT_RETENTION_DAYS` | 365 days |
-| `event_log` | `VPP_EVENT_LOG_RETENTION_DAYS` | 365 days |
-| `alerts` (resolved only, by resolution time) | `VPP_ALERT_RETENTION_DAYS` | 365 days |
-| `dr_event_responses` | `VPP_DR_RESPONSE_RETENTION_DAYS` | 365 days |
-| `battery_states`, `resource_telemetry` | `VPP_TELEMETRY_RETENTION_DAYS` | 366 days |
+| `event_log` | `VPP_EVENT_LOG_RETENTION_DAYS` | forever (`0`) |
+| `alerts` (resolved only, by resolution time) | `VPP_ALERT_RETENTION_DAYS` | forever (`0`) |
+| `dr_event_responses` | `VPP_DR_RESPONSE_RETENTION_DAYS` | forever (`0`) |
+| `battery_states`, `resource_telemetry` | `VPP_TELEMETRY_RETENTION_DAYS` | forever (`0`) |
 
 `0` keeps a table forever. Not pruned: `orders` and `trades` (the venue
 rebuilds positions and P&L by replaying trades), `meter_readings`,

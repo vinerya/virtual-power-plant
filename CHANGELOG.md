@@ -81,12 +81,6 @@ changes** before upgrading.
 - **Migration `0009_user_management`** adds `users.token_version`,
   `users.last_login_at`, `api_keys.key_prefix` and `api_keys.last_used_at`.
 - **Migration `0012_audit_log`** adds the `audit_log` table.
-- **Old rows are pruned by default.** A background pass (one worker, the
-  `data-retention` lease) deletes `audit_log`, `event_log`, resolved
-  `alerts` and `dr_event_responses` rows older than 365 days and
-  `battery_states` / `resource_telemetry` samples older than 366 days. Set
-  the matching `VPP_*_RETENTION_DAYS` to `0` to keep a table forever
-  (see **Added → Data retention**).
 - **List endpoints are capped.** `GET /api/v1/users`,
   `/api/v1/auth/api-keys` and `/api/v1/users/{id}/api-keys` now return at
   most 100 rows by default (`limit` up to 500; they returned everything)
@@ -140,8 +134,10 @@ changes** before upgrading.
   alerts), `VPP_DR_RESPONSE_RETENTION_DAYS`, `VPP_TELEMETRY_RETENTION_DAYS`
   (`0` = forever), pruned every `VPP_RETENTION_INTERVAL_MINUTES` in batches
   of `VPP_RETENTION_BATCH_SIZE` by the `data-retention` lease holder, with
-  counts logged. `vpp prune [--dry-run]` runs the same pass once. Trades,
-  orders and billing data are never pruned.
+  counts logged. Only the audit log is pruned by default (365 days); the
+  other tables are opt-in, so upgrading deletes no existing history.
+  `vpp prune [--dry-run]` runs the same pass once. Trades, orders and
+  billing data are never pruned.
 - `DELETE /api/v1/users/{id}` (admin): deletes a user with their API keys,
   customer profile and programme enrolments (owned sites and saved config
   versions are kept, unlinked). Not your own account, never the last

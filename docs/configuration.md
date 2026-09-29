@@ -80,10 +80,10 @@ records are never pruned; see [security.md](security.md#data-retention).
 | Variable | Default | Meaning |
 |---|---|---|
 | `VPP_AUDIT_RETENTION_DAYS` | `365` | Keep `audit_log` entries this many days. |
-| `VPP_EVENT_LOG_RETENTION_DAYS` | `365` | Keep `event_log` rows (setpoint history, platform events). |
-| `VPP_ALERT_RETENTION_DAYS` | `365` | Keep *resolved* alerts this long after resolution; open, acknowledged and snoozed alerts are never pruned. |
-| `VPP_DR_RESPONSE_RETENTION_DAYS` | `365` | Keep `dr_event_responses` (the DR orchestrator's decision log). |
-| `VPP_TELEMETRY_RETENTION_DAYS` | `366` | Keep `battery_states` and `resource_telemetry` samples. The metrics API serves ranges up to 366 days. |
+| `VPP_EVENT_LOG_RETENTION_DAYS` | `0` | Keep `event_log` rows (setpoint history, platform events). |
+| `VPP_ALERT_RETENTION_DAYS` | `0` | Keep *resolved* alerts this long after resolution; open, acknowledged and snoozed alerts are never pruned. |
+| `VPP_DR_RESPONSE_RETENTION_DAYS` | `0` | Keep `dr_event_responses` (the DR orchestrator's decision log). |
+| `VPP_TELEMETRY_RETENTION_DAYS` | `0` | Keep `battery_states` and `resource_telemetry` samples. The metrics API serves ranges up to 366 days, so 366 is a sensible value. |
 | `VPP_RETENTION_INTERVAL_MINUTES` | `60` | How often the background pass runs (the first one about a minute after startup). |
 | `VPP_RETENTION_BATCH_SIZE` | `1000` | Rows deleted per transaction. |
 
