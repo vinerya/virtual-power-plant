@@ -3,13 +3,15 @@ Enhanced configuration system for the Virtual Power Plant library.
 Provides comprehensive, hierarchical, and validatable configuration management.
 """
 
+import copy
+import dataclasses
 import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
 
@@ -47,7 +49,115 @@ class ConfigValidationResult:
         self.warnings.append(message)
 
 
-class BaseConfig(ABC):
+_T = TypeVar("_T")
+
+
+class TracksFieldsSet:
+    """Mixin for config dataclasses that remembers which fields were set.
+
+    A field counts as *set* when it was passed to the constructor
+    (positionally or by keyword) or assigned after construction; fields left
+    at their defaults are *unset*. This is the dataclass equivalent of
+    pydantic's ``model_fields_set`` and is what lets ``BaseConfig.merge``
+    apply only the fields an override actually specifies. Mutating a value
+    in place (``config.resources.append(...)``) is not an assignment and does
+    not mark the field as set.
+    """
+
+    _fields_set: set[str]
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
+        obj = super().__new__(cls)
+        names = _init_field_names(cls)
+        explicit = set(names[: len(args)]) | (kwargs.keys() & set(names))
+        object.__setattr__(obj, "_fields_set", explicit)
+        return obj
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # The dataclass ``__init__`` assigns every field once; only a later
+        # re-assignment is an explicit set.
+        if name in self.__dict__ and name in _field_names(type(self)):
+            self._fields_set.add(name)
+        object.__setattr__(self, name, value)
+
+    @property
+    def fields_set(self) -> frozenset[str]:
+        """Names of the fields that were explicitly set on this object."""
+        return frozenset(self._fields_set)
+
+
+# Per-class caches (``TracksFieldsSet.__setattr__`` runs on every assignment).
+_FIELD_NAMES: dict[type, frozenset[str]] = {}
+_INIT_FIELD_NAMES: dict[type, tuple[str, ...]] = {}
+
+
+def _field_names(cls: type) -> frozenset[str]:
+    names = _FIELD_NAMES.get(cls)
+    if names is None:
+        fields = dataclasses.fields(cls) if dataclasses.is_dataclass(cls) else ()
+        names = _FIELD_NAMES[cls] = frozenset(f.name for f in fields)
+    return names
+
+
+def _init_field_names(cls: type) -> tuple[str, ...]:
+    names = _INIT_FIELD_NAMES.get(cls)
+    if names is None:
+        fields = dataclasses.fields(cls) if dataclasses.is_dataclass(cls) else ()
+        names = _INIT_FIELD_NAMES[cls] = tuple(f.name for f in fields if f.init)
+    return names
+
+
+def _init_kwargs(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """The entries of ``data`` that are init fields of dataclass ``cls``.
+
+    ``from_dict`` builds objects from these (rather than filling in every
+    field with its default) so that only keys present in the source are
+    marked as set.
+    """
+    names = _init_field_names(cls)
+    return {k: v for k, v in (data or {}).items() if k in names}
+
+
+def _merge_values(base: Any, override: Any) -> Any:
+    """Merge one explicitly-set ``override`` value onto ``base``."""
+    if (
+        isinstance(base, TracksFieldsSet)
+        and isinstance(override, TracksFieldsSet)
+        and type(base) is type(override)
+    ):
+        return _merge_tracked(base, override)
+    if isinstance(base, dict) and isinstance(override, dict):
+        return BaseConfig._deep_merge(base, override)
+    # Scalars and lists: the override replaces the base value.
+    return copy.deepcopy(override)
+
+
+def _merge_tracked(base: _T, override: _T) -> _T:
+    """Field-by-field merge of two tracked dataclasses of the same type."""
+    assert isinstance(base, TracksFieldsSet) and isinstance(override, TracksFieldsSet)
+    cls = type(base)
+    if not dataclasses.is_dataclass(cls):
+        raise TypeError(f"{cls.__name__} is not a dataclass; cannot merge it field by field")
+    kwargs: dict[str, Any] = {}
+    for name in _init_field_names(cls):
+        value = getattr(base, name)
+        other = getattr(override, name)
+        if name in override._fields_set or (
+            # A nested config is always merged recursively, so fields set on
+            # it directly (``override.monitoring.log_level = ...``) count
+            # even though the nested object itself was never reassigned.
+            isinstance(other, TracksFieldsSet) and type(other) is type(value)
+        ):
+            value = _merge_values(value, other)
+        else:
+            value = copy.deepcopy(value)
+        kwargs[name] = value
+    merged = cls(**kwargs)
+    object.__setattr__(merged, "_fields_set", base._fields_set | override._fields_set)
+    return merged
+
+
+class BaseConfig(TracksFieldsSet, ABC):
     """Abstract base class for all configuration objects."""
 
     def __init__(self, validation_level: ValidationLevel = ValidationLevel.STRICT):
@@ -106,22 +216,31 @@ class BaseConfig(ABC):
         return cls.from_dict(data)
 
     def merge(self, other: "BaseConfig") -> "BaseConfig":
-        """Merge this configuration with another."""
-        self_dict = self.to_dict()
-        other_dict = other.to_dict()
-        merged = self._deep_merge(self_dict, other_dict)
-        return self.__class__.from_dict(merged)
+        """Return a new config: this one with ``other``'s *set* fields applied.
+
+        Only fields explicitly set on ``other`` (passed to its constructor,
+        assigned afterwards, or present in the dict it was loaded from)
+        override this config; fields ``other`` left at their defaults do
+        not. Nested configs are merged the same way, recursively; dict
+        fields are deep-merged key by key; lists and scalars are replaced.
+        Neither input is modified.
+
+        ``other`` must be an instance of this config's class.
+        """
+        if not isinstance(other, type(self)):
+            raise TypeError(f"cannot merge {type(other).__name__} into {type(self).__name__}")
+        return _merge_tracked(self, other)
 
     @staticmethod
     def _deep_merge(dict1: dict[str, Any], dict2: dict[str, Any]) -> dict[str, Any]:
         """Deep merge two dictionaries."""
-        result = dict1.copy()
+        result = copy.deepcopy(dict1)
 
         for key, value in dict2.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
                 result[key] = BaseConfig._deep_merge(result[key], value)
             else:
-                result[key] = value
+                result[key] = copy.deepcopy(value)
 
         return result
 
@@ -256,36 +375,20 @@ class OptimizationConfig(BaseConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "OptimizationConfig":
         """Create from dictionary."""
-        objectives = [
-            OptimizationObjective(
-                name=obj_data["name"],
-                weight=obj_data.get("weight", 1.0),
-                priority=obj_data.get("priority", 1),
-                enabled=obj_data.get("enabled", True),
-                parameters=obj_data.get("parameters", {}),
-            )
-            for obj_data in data.get("objectives", [])
-        ]
-
-        constraints = [
-            ConstraintConfig(
-                name=constraint_data["name"],
-                enabled=constraint_data.get("enabled", True),
-                parameters=constraint_data.get("parameters", {}),
-                violation_penalty=constraint_data.get("violation_penalty", 1000.0),
-            )
-            for constraint_data in data.get("constraints", [])
-        ]
-
-        return cls(
-            strategy=data.get("strategy", "linear_programming"),
-            objectives=objectives,
-            constraints=constraints,
-            time_horizon=data.get("time_horizon", 24),
-            time_step=data.get("time_step", 15),
-            solver_timeout=data.get("solver_timeout", 300),
-            solver_options=data.get("solver_options", {}),
-        )
+        kwargs = _init_kwargs(cls, data)
+        if "objectives" in kwargs:
+            kwargs["objectives"] = [
+                OptimizationObjective(**_init_kwargs(OptimizationObjective, obj_data))
+                for obj_data in kwargs["objectives"] or []
+            ]
+        if "constraints" in kwargs:
+            kwargs["constraints"] = [
+                ConstraintConfig(**_init_kwargs(ConstraintConfig, constraint_data))
+                for constraint_data in kwargs["constraints"] or []
+            ]
+        # Only keys present in ``data`` are passed, so they alone are marked
+        # as set (see ``BaseConfig.merge``); the rest take the field defaults.
+        return cls(**kwargs)
 
 
 @dataclass
@@ -328,13 +431,7 @@ class HeuristicConfig(BaseConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "HeuristicConfig":
         """Create from dictionary."""
-        return cls(
-            algorithm=data.get("algorithm", "genetic_algorithm"),
-            parameters=data.get("parameters", {}),
-            max_iterations=data.get("max_iterations", 1000),
-            convergence_tolerance=data.get("convergence_tolerance", 1e-6),
-            random_seed=data.get("random_seed"),
-        )
+        return cls(**_init_kwargs(cls, data))
 
 
 @dataclass
@@ -423,21 +520,10 @@ class RuleEngineConfig(BaseConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RuleEngineConfig":
         """Create from dictionary."""
-        rules = [
-            RuleConfig(
-                name=rule_data["name"],
-                enabled=rule_data.get("enabled", True),
-                priority=rule_data.get("priority", 1),
-                conditions=rule_data.get("conditions", {}),
-                actions=rule_data.get("actions", {}),
-            )
-            for rule_data in data.get("rules", [])
-        ]
-
-        return cls(
-            inference_method=data.get("inference_method", "forward_chaining"),
-            conflict_resolution=data.get("conflict_resolution", "priority"),
-            rules=rules,
-            max_inference_depth=data.get("max_inference_depth", 100),
-            enable_explanation=data.get("enable_explanation", True),
-        )
+        kwargs = _init_kwargs(cls, data)
+        if "rules" in kwargs:
+            kwargs["rules"] = [
+                RuleConfig(**_init_kwargs(RuleConfig, rule_data))
+                for rule_data in kwargs["rules"] or []
+            ]
+        return cls(**kwargs)

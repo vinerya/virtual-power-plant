@@ -100,6 +100,38 @@ class BatteryModel(ABC):
         """Get maximum discharging power at current state."""
         pass
 
+    def _coulomb_count(self, power_setpoint: float, dt: float) -> tuple[float, float, float]:
+        """Apply ``power_setpoint`` (kW, + = charging) for ``dt`` seconds.
+
+        Returns ``(actual_power_kw, cell_current_a, new_soc)``. The power is
+        limited by ``get_max_charge_power`` / ``get_max_discharge_power`` and
+        so that SoC stays within ``[min_soc, max_soc]`` during the step; SoC
+        then moves by exactly the charge that reached the cells.
+        """
+        p = self.parameters
+        soc = self.state.soc
+        actual_power = float(
+            np.clip(power_setpoint, -self.get_max_discharge_power(), self.get_max_charge_power())
+        )
+        current = _cell_current(p, actual_power)
+
+        capacity_ah = p.nominal_capacity * self.state.soh
+        if dt > 0 and capacity_ah > 0:
+            # Largest charge/discharge current that does not cross a SoC limit
+            # this step (never forces a move if SoC starts outside the limits).
+            max_in = max(0.0, (p.max_soc - soc) * capacity_ah * 3600.0 / dt)
+            max_out = max(0.0, (soc - p.min_soc) * capacity_ah * 3600.0 / dt)
+            limited = min(max(current, -max_out), max_in)
+            if limited != current:
+                current = limited
+                actual_power = _terminal_power(p, current)
+            new_soc = soc + current * dt / 3600.0 / capacity_ah
+            # Guard against floating-point drift past the limits.
+            new_soc = float(min(max(new_soc, min(p.min_soc, soc)), max(p.max_soc, soc)))
+        else:
+            new_soc = soc
+        return actual_power, current, new_soc
+
     def get_available_energy(self) -> float:
         """Get available energy for discharge in kWh."""
         available_capacity = (
@@ -125,16 +157,34 @@ class BatteryModel(ABC):
         )
 
 
-def _ecm_max_charge_power(parameters: BatteryParameters, state: BatteryState) -> float:
-    """Max charging power (kW) from current/voltage/SOC/temperature limits."""
-    # Current limit
-    max_current = parameters.max_current
+def _cell_current(parameters: BatteryParameters, power_kw: float) -> float:
+    """Current through the cells (A, + = charging) for a terminal power (kW).
 
-    # Voltage limit
-    voltage_headroom = parameters.max_voltage - state.voltage
-    if voltage_headroom <= 0:
-        return 0.0
+    Conversion losses: charging stores ``charge_efficiency`` of the power
+    delivered; discharging draws ``power / discharge_efficiency`` from the
+    cells. Current is referred to the nominal voltage, so SoC follows
+    Coulomb counting of the delivered energy.
+    """
+    if power_kw >= 0:
+        return power_kw * 1000.0 * parameters.charge_efficiency / parameters.nominal_voltage
+    return power_kw * 1000.0 / (parameters.discharge_efficiency * parameters.nominal_voltage)
 
+
+def _terminal_power(parameters: BatteryParameters, current: float) -> float:
+    """Inverse of :func:`_cell_current`: terminal power (kW) for a cell current (A)."""
+    if current >= 0:
+        return current * parameters.nominal_voltage / (parameters.charge_efficiency * 1000.0)
+    return current * parameters.nominal_voltage * parameters.discharge_efficiency / 1000.0
+
+
+def _ecm_max_charge_power(
+    parameters: BatteryParameters, state: BatteryState, ocv: float, resistance: float
+) -> float:
+    """Max charging power (kW) from current/voltage/SOC/temperature limits.
+
+    The voltage limit is the current at which ``ocv + I * resistance``
+    reaches ``max_voltage``.
+    """
     # SOC limit
     if state.soc >= parameters.max_soc:
         return 0.0
@@ -143,25 +193,25 @@ def _ecm_max_charge_power(parameters: BatteryParameters, state: BatteryState) ->
     if state.temperature >= parameters.max_temperature:
         return 0.0
 
-    # Calculate power limit
-    max_power = min(
-        max_current * parameters.nominal_voltage / 1000,  # Current limit
-        voltage_headroom * max_current / 1000,  # Voltage limit
-    )
-
-    return max_power * parameters.charge_efficiency
-
-
-def _ecm_max_discharge_power(parameters: BatteryParameters, state: BatteryState) -> float:
-    """Max discharging power (kW) from current/voltage/SOC/temperature limits."""
-    # Current limit
-    max_current = parameters.max_current
-
     # Voltage limit
-    voltage_margin = state.voltage - parameters.min_voltage
-    if voltage_margin <= 0:
+    voltage_headroom = parameters.max_voltage - ocv
+    if voltage_headroom <= 0:
         return 0.0
+    max_current = parameters.max_current
+    if resistance > 0:
+        max_current = min(max_current, voltage_headroom / resistance)
 
+    return _terminal_power(parameters, max_current)
+
+
+def _ecm_max_discharge_power(
+    parameters: BatteryParameters, state: BatteryState, ocv: float, resistance: float
+) -> float:
+    """Max discharging power (kW) from current/voltage/SOC/temperature limits.
+
+    The voltage limit is the current at which ``ocv - I * resistance``
+    falls to ``min_voltage``.
+    """
     # SOC limit
     if state.soc <= parameters.min_soc:
         return 0.0
@@ -170,13 +220,15 @@ def _ecm_max_discharge_power(parameters: BatteryParameters, state: BatteryState)
     if state.temperature <= parameters.min_temperature:
         return 0.0
 
-    # Calculate power limit
-    max_power = min(
-        max_current * parameters.nominal_voltage / 1000,  # Current limit
-        voltage_margin * max_current / 1000,  # Voltage limit
-    )
+    # Voltage limit
+    voltage_margin = ocv - parameters.min_voltage
+    if voltage_margin <= 0:
+        return 0.0
+    max_current = parameters.max_current
+    if resistance > 0:
+        max_current = min(max_current, voltage_margin / resistance)
 
-    return max_power / parameters.discharge_efficiency
+    return -_terminal_power(parameters, -max_current)
 
 
 class SimpleEquivalentCircuitModel(BatteryModel):
@@ -188,32 +240,12 @@ class SimpleEquivalentCircuitModel(BatteryModel):
 
     def update(self, power_setpoint: float, dt: float) -> BatteryState:
         """Update battery state using equivalent circuit model."""
-        # Limit power based on current constraints
-        max_charge = self.get_max_charge_power()
-        max_discharge = self.get_max_discharge_power()
-        actual_power = np.clip(power_setpoint, -max_discharge, max_charge)
+        actual_power, current, new_soc = self._coulomb_count(power_setpoint, dt)
 
-        # Calculate current from power
-        if actual_power >= 0:  # Charging
-            efficiency = self.parameters.charge_efficiency
-            current = actual_power * 1000 / (self.parameters.nominal_voltage * efficiency)
-        else:  # Discharging
-            efficiency = self.parameters.discharge_efficiency
-            current = actual_power * 1000 / (self.parameters.nominal_voltage / efficiency)
-
-        # Update SOC
-        capacity_ah = self.parameters.nominal_capacity * self.state.soh
-        delta_soc = (current * dt / 3600) / capacity_ah
-        new_soc = np.clip(
-            self.state.soc + delta_soc, self.parameters.min_soc, self.parameters.max_soc
-        )
-
-        # Calculate terminal voltage
-        internal_resistance = self.parameters.internal_resistance * (
-            1 + self.parameters.resistance_growth_rate * self.state.cycle_count
-        )
-        voltage_drop = current * internal_resistance
-        terminal_voltage = self.parameters.nominal_voltage - voltage_drop
+        # Terminal voltage: open-circuit (taken as nominal) plus the ohmic
+        # drop, which raises the voltage while charging (current > 0).
+        internal_resistance = self._internal_resistance()
+        terminal_voltage = self.parameters.nominal_voltage + current * internal_resistance
 
         # Update thermal state
         power_loss = current**2 * internal_resistance / 1000  # kW
@@ -265,13 +297,28 @@ class SimpleEquivalentCircuitModel(BatteryModel):
         total_aging = cycle_aging + calendar_aging
         self.state.soh = max(0.7, self.state.soh - total_aging)
 
+    def _internal_resistance(self) -> float:
+        return self.parameters.internal_resistance * (
+            1 + self.parameters.resistance_growth_rate * self.state.cycle_count
+        )
+
     def get_max_charge_power(self) -> float:
         """Get maximum charging power considering all constraints."""
-        return _ecm_max_charge_power(self.parameters, self.state)
+        return _ecm_max_charge_power(
+            self.parameters,
+            self.state,
+            self.parameters.nominal_voltage,
+            self._internal_resistance(),
+        )
 
     def get_max_discharge_power(self) -> float:
         """Get maximum discharging power considering all constraints."""
-        return _ecm_max_discharge_power(self.parameters, self.state)
+        return _ecm_max_discharge_power(
+            self.parameters,
+            self.state,
+            self.parameters.nominal_voltage,
+            self._internal_resistance(),
+        )
 
 
 class AdvancedElectrochemicalModel(BatteryModel):
@@ -289,51 +336,36 @@ class AdvancedElectrochemicalModel(BatteryModel):
         self.electrode_thickness = float(params.get("electrode_thickness", 100e-6))  # m
         self.porosity = float(params.get("porosity", 0.3))
 
-        # Concentration states
-        self.surface_concentration = 0.5  # Normalized
-        self.bulk_concentration = 0.5  # Normalized
+        # Normalised lithium concentration in the active particles: the
+        # particle average ("bulk") is the SoC; the surface leads it while
+        # current flows.  Start at rest at the initial SoC.
+        self.bulk_concentration = self.state.soc
+        self.surface_concentration = self.state.soc
 
         self._last_soc = self.state.soc
 
     def update(self, power_setpoint: float, dt: float) -> BatteryState:
         """Update using advanced electrochemical model."""
-        # Limit power based on current constraints
-        max_charge = self.get_max_charge_power()
-        max_discharge = self.get_max_discharge_power()
-        actual_power = np.clip(power_setpoint, -max_discharge, max_charge)
-
-        # Calculate current
-        if actual_power >= 0:  # Charging
-            efficiency = self.parameters.charge_efficiency
-            current = actual_power * 1000 / (self.parameters.nominal_voltage * efficiency)
-        else:  # Discharging
-            efficiency = self.parameters.discharge_efficiency
-            current = actual_power * 1000 / (self.parameters.nominal_voltage / efficiency)
+        # SoC by Coulomb counting of the charge that reaches the cells.
+        actual_power, current, new_soc = self._coulomb_count(power_setpoint, dt)
 
         # Update concentration dynamics
-        self._update_concentration(current, dt)
+        self._update_concentration(new_soc, dt)
 
         # Calculate open circuit voltage from concentration
         ocv = self._calculate_ocv(self.bulk_concentration)
 
-        # Calculate overpotentials
+        # Calculate overpotentials.  Each carries the sign of the current
+        # (asinh is odd; the surface leads the bulk in the direction of the
+        # current), so they add to the OCV when charging and subtract when
+        # discharging.
         activation_overpotential = self._calculate_activation_overpotential(current)
         concentration_overpotential = self._calculate_concentration_overpotential(current)
         ohmic_overpotential = current * self.parameters.internal_resistance
 
-        # Terminal voltage
-        if current >= 0:  # Charging
-            terminal_voltage = (
-                ocv + activation_overpotential + concentration_overpotential + ohmic_overpotential
-            )
-        else:  # Discharging
-            terminal_voltage = (
-                ocv - activation_overpotential - concentration_overpotential + ohmic_overpotential
-            )
-
-        # Update SOC from bulk concentration
-        new_soc = self.bulk_concentration
-        new_soc = np.clip(new_soc, self.parameters.min_soc, self.parameters.max_soc)
+        terminal_voltage = (
+            ocv + activation_overpotential + concentration_overpotential + ohmic_overpotential
+        )
 
         # Update thermal state with more detailed heat generation
         reversible_heat = current * self._calculate_entropy_coefficient() * self.state.temperature
@@ -368,29 +400,35 @@ class AdvancedElectrochemicalModel(BatteryModel):
 
         return self.state
 
-    def _update_concentration(self, current: float, dt: float) -> None:
-        """Update lithium concentration using diffusion dynamics."""
-        # Flux at particle surface
-        surface_flux = current / (96485 * self.parameters.nominal_capacity * 3600)  # mol/m²/s
+    def _diffusion_time_constant(self) -> float:
+        """Solid-phase diffusion time constant R^2/(15 D) in seconds."""
+        return self.particle_radius**2 / (15 * self.diffusion_coefficient)
 
-        # Diffusion time constant
-        tau = self.particle_radius**2 / (15 * self.diffusion_coefficient)
+    def _update_concentration(self, new_soc: float, dt: float) -> None:
+        """Update lithium concentrations after a step that moved SoC to ``new_soc``.
 
-        # Update surface concentration
-        concentration_change = surface_flux * dt / (self.particle_radius / 3)
-        self.surface_concentration += concentration_change
-        self.surface_concentration = np.clip(self.surface_concentration, 0.01, 0.99)
-
-        # Update bulk concentration with diffusion lag
-        concentration_error = self.surface_concentration - self.bulk_concentration
-        self.bulk_concentration += concentration_error * dt / tau
-        self.bulk_concentration = np.clip(self.bulk_concentration, 0.01, 0.99)
+        The particle-average (bulk) concentration *is* the SoC: it changes by
+        exactly the charge moved.  (The old flux formula here was
+        dimensionally wrong, ran several times faster than Coulomb counting,
+        and kept the bulk drifting towards the surface after the current
+        stopped or reversed.)  The surface concentration uses the
+        polynomial-profile approximation of Fickian diffusion in a sphere,
+        ``c_surf - c_avg = tau * d(c_avg)/dt`` with ``tau = R^2/(15 D)``.
+        """
+        rate = (new_soc - self.bulk_concentration) / dt if dt > 0 else 0.0
+        self.bulk_concentration = new_soc
+        self.surface_concentration = float(
+            np.clip(new_soc + self._diffusion_time_constant() * rate, 0.01, 0.99)
+        )
 
     def _calculate_ocv(self, concentration: float) -> float:
-        """Calculate open circuit voltage from concentration."""
-        # Simplified OCV curve for lithium-ion
-        x = concentration
-        ocv = 4.2 - 1.5 * x + 0.5 * np.sin(2 * np.pi * x) + 0.1 * np.sin(4 * np.pi * x)
+        """Pack open-circuit voltage (V) at a normalised concentration (= SoC).
+
+        Rises with SoC, +/-4 % of nominal voltage across the SoC range.  (The
+        previous curve was a single-cell voltage of ~3-4 V, clipped to the
+        pack's ``min_voltage`` and so pinned there, which blocked discharge.)
+        """
+        ocv = self.parameters.nominal_voltage * (1.0 + 0.08 * (concentration - 0.5))
         return float(np.clip(ocv, self.parameters.min_voltage, self.parameters.max_voltage))
 
     def _calculate_activation_overpotential(self, current: float) -> float:
@@ -462,38 +500,32 @@ class AdvancedElectrochemicalModel(BatteryModel):
         """Get maximum charging power with electrochemical constraints."""
         # Basic current/voltage/SOC/temperature constraints.  (``BatteryModel``'s
         # version is abstract and returns None, so it cannot be used via super().)
-        basic_limit = _ecm_max_charge_power(self.parameters, self.state)
+        basic_limit = _ecm_max_charge_power(
+            self.parameters,
+            self.state,
+            self._calculate_ocv(self.bulk_concentration),
+            self.parameters.internal_resistance,
+        )
 
-        # Concentration constraint (prevent lithium plating)
-        if self.surface_concentration > 0.95:
-            concentration_limit = 0.0
-        else:
-            concentration_limit = (
-                (0.95 - self.surface_concentration)
-                * self.parameters.max_current
-                * self.parameters.nominal_voltage
-                / 1000
-            )
-
-        return min(basic_limit, concentration_limit)
+        # Concentration constraint (prevent lithium plating): taper to zero
+        # as the surface concentration approaches 0.95.
+        taper = float(np.clip((0.95 - self.surface_concentration) / 0.1, 0.0, 1.0))
+        return basic_limit * taper
 
     def get_max_discharge_power(self) -> float:
         """Get maximum discharging power with electrochemical constraints."""
         # Basic constraints (see get_max_charge_power).
-        basic_limit = _ecm_max_discharge_power(self.parameters, self.state)
+        basic_limit = _ecm_max_discharge_power(
+            self.parameters,
+            self.state,
+            self._calculate_ocv(self.bulk_concentration),
+            self.parameters.internal_resistance,
+        )
 
-        # Concentration constraint (prevent over-discharge)
-        if self.surface_concentration < 0.05:
-            concentration_limit = 0.0
-        else:
-            concentration_limit = (
-                (self.surface_concentration - 0.05)
-                * self.parameters.max_current
-                * self.parameters.nominal_voltage
-                / 1000
-            )
-
-        return min(basic_limit, concentration_limit)
+        # Concentration constraint (prevent over-discharge): taper to zero
+        # as the surface concentration approaches 0.05.
+        taper = float(np.clip((self.surface_concentration - 0.05) / 0.1, 0.0, 1.0))
+        return basic_limit * taper
 
 
 def create_battery_model(

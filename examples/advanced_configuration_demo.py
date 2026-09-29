@@ -24,7 +24,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vpp.config import ConfigFormat, ConstraintConfig, OptimizationObjective, RuleConfig, VPPConfig
+from vpp.config import (
+    ConfigFormat,
+    ConstraintConfig,
+    OptimizationConfig,
+    OptimizationObjective,
+    ResourceConfig,
+    RuleConfig,
+    VPPConfig,
+)
 from vpp.models.battery import BatteryParameters, create_battery_model
 
 CONFIG_PATH = (Path(__file__).parent.parent / "configs" / "advanced_vpp_config.yaml").resolve()
@@ -262,20 +270,24 @@ def demonstrate_configuration_management(config: VPPConfig, output_dir: Path):
     assert reloaded.to_dict() == config.to_dict(), "JSON round-trip changed the configuration"
     print("✓ Reloaded the JSON file; it matches the in-memory configuration")
 
-    # Apply overrides on top of an existing configuration via its dict form.
-    # (``BaseConfig.merge(other)`` takes *every* field from ``other``,
-    # including its defaults, so it is not suited to partial overrides.)
+    # Apply overrides on top of the existing configuration. merge() applies
+    # only the fields set on the override (nested configs field by field);
+    # lists are replaced whole, so extend the existing resource list.
     print("\nApplying configuration overrides:")
-    data = config.to_dict()
-    data["optimization"]["solver_timeout"] = 600
-    data["resources"].append(
-        {
-            "name": "additional_battery",
-            "type": "battery",
-            "parameters": {"nominal_capacity": 500.0},
-        }
+    overrides = VPPConfig(
+        optimization=OptimizationConfig(solver_timeout=600),
+        resources=[
+            *config.resources,
+            ResourceConfig(
+                name="additional_battery",
+                type="battery",
+                parameters={"nominal_capacity": 500.0},
+            ),
+        ],
     )
-    overridden = VPPConfig.from_dict(data)
+    overridden = config.merge(overrides)
+    assert isinstance(overridden, VPPConfig)
+    assert overridden.name == config.name, "merge() dropped a field the override left unset"
     print(f"  Original resources: {len(config.resources)}")
     print(f"  Overridden resources: {len(overridden.resources)}")
     print(

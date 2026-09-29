@@ -3,6 +3,7 @@ Main VPP configuration class that integrates all configuration components.
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,6 +13,8 @@ from .base import (
     HeuristicConfig,
     OptimizationConfig,
     RuleEngineConfig,
+    TracksFieldsSet,
+    _init_kwargs,
 )
 
 
@@ -43,7 +46,7 @@ class ResourceConfig:
 
 
 @dataclass
-class MonitoringConfig:
+class MonitoringConfig(TracksFieldsSet):
     """Configuration for monitoring and diagnostics."""
 
     enabled: bool = True
@@ -70,7 +73,7 @@ class MonitoringConfig:
 
 
 @dataclass
-class SimulationConfig:
+class SimulationConfig(TracksFieldsSet):
     """Configuration for simulation parameters."""
 
     enabled: bool = False
@@ -96,7 +99,7 @@ class SimulationConfig:
 
 
 @dataclass
-class SecurityConfig:
+class SecurityConfig(TracksFieldsSet):
     """Configuration for security settings."""
 
     enable_authentication: bool = False
@@ -153,19 +156,25 @@ class VPPConfig(BaseConfig):
         """Setup logging based on monitoring configuration."""
         logger = logging.getLogger("vpp")
         logger.setLevel(getattr(logging, self.monitoring.log_level))
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
         # Console handler
         if not logger.handlers:
             console_handler = logging.StreamHandler()
-            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
             console_handler.setFormatter(formatter)
             logger.addHandler(console_handler)
 
-        # File handler if specified
+        # File handler if specified (once per file: every VPPConfig built,
+        # e.g. by from_dict or merge, runs this again)
         if self.monitoring.log_file:
-            file_handler = logging.FileHandler(self.monitoring.log_file)
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+            log_path = os.path.abspath(self.monitoring.log_file)
+            if not any(
+                isinstance(h, logging.FileHandler) and h.baseFilename == log_path
+                for h in logger.handlers
+            ):
+                file_handler = logging.FileHandler(log_path)
+                file_handler.setFormatter(formatter)
+                logger.addHandler(file_handler)
 
     def validate(self) -> ConfigValidationResult:
         """Validate the entire VPP configuration."""
@@ -276,76 +285,27 @@ class VPPConfig(BaseConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "VPPConfig":
         """Create configuration from dictionary."""
-        # Parse component configurations
-        optimization = OptimizationConfig.from_dict(data.get("optimization", {}))
-        heuristics = HeuristicConfig.from_dict(data.get("heuristics", {}))
-        rules = RuleEngineConfig.from_dict(data.get("rules", {}))
-
-        # Parse monitoring configuration
-        monitoring_data = data.get("monitoring", {})
-        monitoring = MonitoringConfig(
-            enabled=monitoring_data.get("enabled", True),
-            log_level=monitoring_data.get("log_level", "INFO"),
-            log_file=monitoring_data.get("log_file"),
-            metrics_collection=monitoring_data.get("metrics_collection", True),
-            performance_profiling=monitoring_data.get("performance_profiling", False),
-            alert_thresholds=monitoring_data.get("alert_thresholds", {}),
-            dashboard_enabled=monitoring_data.get("dashboard_enabled", False),
-            dashboard_port=monitoring_data.get("dashboard_port", 8080),
-        )
-
-        # Parse simulation configuration
-        simulation_data = data.get("simulation", {})
-        simulation = SimulationConfig(
-            enabled=simulation_data.get("enabled", False),
-            start_time=simulation_data.get("start_time"),
-            end_time=simulation_data.get("end_time"),
-            time_step_minutes=simulation_data.get("time_step_minutes", 15),
-            weather_simulation=simulation_data.get("weather_simulation", True),
-            market_simulation=simulation_data.get("market_simulation", True),
-            random_seed=simulation_data.get("random_seed"),
-            monte_carlo_runs=simulation_data.get("monte_carlo_runs", 1),
-        )
-
-        # Parse security configuration
-        security_data = data.get("security", {})
-        security = SecurityConfig(
-            enable_authentication=security_data.get("enable_authentication", False),
-            api_key_required=security_data.get("api_key_required", False),
-            rate_limiting=security_data.get("rate_limiting", True),
-            max_requests_per_minute=security_data.get("max_requests_per_minute", 100),
-            allowed_ips=security_data.get("allowed_ips", []),
-            encryption_enabled=security_data.get("encryption_enabled", False),
-        )
-
-        # Parse resources
-        resources = [
-            ResourceConfig(
-                name=resource_data["name"],
-                type=resource_data["type"],
-                enabled=resource_data.get("enabled", True),
-                parameters=resource_data.get("parameters", {}),
-                constraints=resource_data.get("constraints", {}),
-            )
-            for resource_data in data.get("resources", [])
-        ]
-
-        return cls(
-            name=data.get("name", "Virtual Power Plant"),
-            description=data.get("description", ""),
-            location=data.get("location", ""),
-            timezone=data.get("timezone", "UTC"),
-            optimization=optimization,
-            heuristics=heuristics,
-            rules=rules,
-            monitoring=monitoring,
-            simulation=simulation,
-            security=security,
-            resources=resources,
-            enable_hot_reload=data.get("enable_hot_reload", False),
-            backup_config=data.get("backup_config", True),
-            config_version=data.get("config_version", "1.0"),
-        )
+        # Only keys present in ``data`` are passed on, so they alone are
+        # marked as set and a partially-specified config merges correctly
+        # (see ``BaseConfig.merge``); everything else takes the field default.
+        kwargs = _init_kwargs(cls, data)
+        sections: dict[str, Any] = {
+            "optimization": OptimizationConfig.from_dict,
+            "heuristics": HeuristicConfig.from_dict,
+            "rules": RuleEngineConfig.from_dict,
+            "monitoring": lambda d: MonitoringConfig(**_init_kwargs(MonitoringConfig, d)),
+            "simulation": lambda d: SimulationConfig(**_init_kwargs(SimulationConfig, d)),
+            "security": lambda d: SecurityConfig(**_init_kwargs(SecurityConfig, d)),
+        }
+        for key, build in sections.items():
+            if key in kwargs:
+                kwargs[key] = build(kwargs[key] or {})
+        if "resources" in kwargs:
+            kwargs["resources"] = [
+                ResourceConfig(**_init_kwargs(ResourceConfig, resource_data))
+                for resource_data in kwargs["resources"] or []
+            ]
+        return cls(**kwargs)
 
     def add_resource(
         self,

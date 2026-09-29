@@ -471,6 +471,36 @@ changes** before upgrading.
 
 ### Fixed
 
+- **`BaseConfig.merge(other)` returned `other`.** It deep-merged the two
+  configs' `to_dict()` output, which includes every field, defaults too, so
+  merging a config that set a single field wiped the base's resources,
+  name, objectives and so on. Config dataclasses now record which fields
+  were explicitly set (passed to the constructor, assigned afterwards, or
+  present in the dict given to `from_dict`/`load_from_file`), and `merge`
+  applies only those: nested configs are merged field by field, dict
+  fields key by key, and lists and scalars are replaced. `merge` now
+  raises `TypeError` for a config of another class. Loading a
+  `VPPConfig` whose `monitoring.log_file` is set no longer fails with
+  `UnboundLocalError` when the `vpp` logger already has a handler, and no
+  longer adds a second file handler for the same file.
+- **Battery model SoC did not track the charge moved.**
+  `AdvancedElectrochemicalModel` reported a normalised "bulk
+  concentration" as SoC, driven by a dimensionally wrong flux term and
+  lagging the surface concentration: an hour at 100 kW into the sample
+  2000 Ah / 400 V battery moved SoC from 0.50 to 0.83 (Coulomb counting
+  gives about 0.62) and SoC kept rising during a following discharge. Its
+  OCV, a single-cell curve clipped to the pack's voltage limits, sat at
+  `min_voltage`, which blocked discharge entirely. SoC now follows Coulomb
+  counting in both battery models; the advanced model's OCV is a pack-level
+  curve rising with SoC and its concentrations start at the initial SoC.
+  Both models also applied the charge/discharge efficiencies the wrong way
+  round, so a charge/discharge cycle created energy. Charging now stores
+  `charge_efficiency` of the delivered power and discharging draws
+  `power / discharge_efficiency`. The voltage power limits now use the
+  current that brings the terminal voltage to `max_voltage`/`min_voltage`,
+  which no longer caps the sample battery near 10 kW, and a step no longer
+  overshoots `max_soc`/`min_soc`. The simple model's terminal voltage now
+  rises while charging.
 - **Rule-based stochastic fallback never dispatched.**
   `SimpleStochasticRules` (the fallback for stochastic problems, also used
   by `optimize_trading_schedule` and by the API's stochastic dispatch when
