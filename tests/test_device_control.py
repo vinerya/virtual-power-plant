@@ -228,6 +228,12 @@ async def test_sunspec_123_curtailment_write_verify_and_release(modbus_server):
         # Curtailment cannot go negative.
         assert (await writer.write(-3.0)).ok
         assert await server.read(base + 5) == [0]
+        assert await server.read(base + 9) == [1]
+        # 100 % of WMax (or more) is no limit: lifted, not written as a 100 % cap.
+        full = await writer.write(8.0)
+        assert full.ok and full.verified is True, full.error
+        assert [w["register"] for w in full.writes] == ["WMaxLim_Ena"]
+        assert await server.read(base + 9) == [0]
 
         released = await writer.release()
         assert released.ok
@@ -553,6 +559,87 @@ async def test_clamping_to_resource_and_control_limits(db):
     bad = _asset("b4", rated=10.0, min_kw=5.0, max_kw=1.0)
     [d] = await act.apply([bad], {"b4": 1.0}, source="t")
     assert d["status"] == "failed" and "empty setpoint range" in d["reason"]
+
+
+async def test_output_limits_follow_vpp_curtailment_and_full_allocation_lifts_it(db):
+    clock = Clock(1_000.0)
+    act, writers = _actuator(clock, db)
+    pv = _asset("pv", rtype="solar", rated=10.0)
+    pv.available_kw = 6.0
+    [d] = await act.apply([pv], {"pv": 4.0}, source="t")
+    assert d["status"] == "accepted" and d["setpoint_kw"] == 4.0 and "uncurtailed" not in d
+    [limit] = act.output_limits().values()
+    assert (limit.resource_id, limit.limit_kw, limit.since) == ("pv", 4.0, 1_000.0)
+    # A deeper cut keeps the time the VPP started limiting.
+    clock.t = 1_100.0
+    await act.apply([pv], {"pv": 3.0}, source="t")
+    assert act.output_limits()["pv"].limit_kw == 3.0
+    assert act.output_limits()["pv"].since == 1_000.0
+    # Allocating all of the estimated availability means "do not curtail":
+    # the cap goes to the upper limit (sunspec_123: lifted), not to 6 kW.
+    clock.t = 1_200.0
+    [d] = await act.apply([pv], {"pv": 6.0}, source="t")
+    assert d["status"] == "accepted" and d["uncurtailed"] is True
+    assert d["setpoint_kw"] == 10.0 and not d["clamped"]
+    assert writers["pv"].calls[-1] == ("write", 10.0)
+    assert act.output_limits() == {}
+    # Curtailing again starts a new limit period.
+    clock.t = 1_300.0
+    await act.apply([pv], {"pv": 5.0}, source="t")
+    assert act.output_limits()["pv"].since == 1_300.0
+    await act.release(["pv"], reason="t")
+    assert act.output_limits() == {}
+    # Batteries and simulated control blocks never report an output cap.
+    sim = _asset("pv2", rtype="solar", rated=10.0, simulate=True)
+    await act.apply([_asset("b1", rated=10.0), sim], {"b1": 2.0, "pv2": 1.0}, source="t")
+    assert act.output_limits() == {}
+
+
+async def test_curtailed_reading_is_not_taken_as_availability(db):
+    """Under a VPP cap the polled output is estimated, not trusted."""
+    from datetime import datetime, timedelta, timezone
+
+    from vpp.api.optimization_support import resource_to_asset
+    from vpp.control.actuator import OutputLimit
+    from vpp.portal.telemetry import record_samples
+
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(seconds=30)).timestamp()
+    async with db() as s:
+        rows = {}
+        for rid, polled, meta in (
+            ("fresh", 4.0, {}),
+            ("stale", 4.0, {}),
+            ("below", 2.5, {}),
+            ("reported", 4.0, {"available_kw": 5.5}),
+        ):
+            rows[rid] = ResourceModel(
+                id=rid,
+                name=rid,
+                resource_type="solar",
+                rated_power=10.0,
+                current_power=polled,
+                metadata_json=json.dumps(meta),
+            )
+            s.add(rows[rid])
+        await s.flush()
+        await record_samples(s, "fresh", [(now - timedelta(seconds=60), 6.0, None)], source="t")
+        await record_samples(s, "fresh", [(now - timedelta(seconds=5), 4.0, None)], source="t")
+        await record_samples(s, "stale", [(now - timedelta(hours=2), 7.0, None)], source="t")
+        await s.commit()
+        limits = {rid: OutputLimit(rid, 4.0, since) for rid in rows}
+
+        fresh = await resource_to_asset(s, rows["fresh"], limits)
+        assert (fresh.available_kw, fresh.availability_basis) == (6.0, "pre_curtailment_telemetry")
+        assert fresh.output_limit_kw == 4.0
+        stale = await resource_to_asset(s, rows["stale"], limits)
+        assert (stale.available_kw, stale.availability_basis) == (10.0, "nameplate_curtailed")
+        below = await resource_to_asset(s, rows["below"], limits)  # the cap does not bind
+        assert (below.available_kw, below.availability_basis) == (2.5, "telemetry")
+        reported = await resource_to_asset(s, rows["reported"], limits)
+        assert (reported.available_kw, reported.availability_basis) == (5.5, "reported")
+        uncapped = await resource_to_asset(s, rows["fresh"])
+        assert (uncapped.available_kw, uncapped.availability_basis) == (4.0, "telemetry")
 
 
 async def test_deadband_rate_limit_and_deferred_write(db):

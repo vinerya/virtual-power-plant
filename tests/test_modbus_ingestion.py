@@ -246,3 +246,55 @@ async def test_handle_message_records_polled_soc_for_the_optimizer(db_session, a
     assert (await latest_soc(db_session, [resource.id]))[resource.id] == pytest.approx(0.519)
     await db_session.refresh(resource)
     assert resource.current_power == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_poll_never_leaves_the_sqlite_write_lock_held(tmp_path):
+    """Stopping the ingestion loop mid-write must not leak a locked connection.
+
+    Cancelling SQLAlchemy mid-statement used to invalidate the connection
+    without a rollback; SQLite then kept the write lock until the connection
+    was garbage collected, and every other writer failed with "database is
+    locked". The persister now lets the write finish (commit or roll back,
+    close) before the cancellation proceeds.
+    """
+    import asyncio
+    import contextlib
+    import sqlite3
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from vpp.db.base import Base
+    from vpp.db.models import ResourceModel
+
+    path = tmp_path / "lock.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as s:
+            s.add(ResourceModel(id="r1", name="r1", resource_type="solar", rated_power=10.0))
+            await s.commit()
+        persister = ModbusResourcePersister("r1", factory)
+        # Cancel at many points of the write (before, during and after the
+        # UPDATE/INSERT and the COMMIT); another writer is never blocked.
+        for step in range(40):
+            task = asyncio.ensure_future(
+                persister.handle_message(
+                    ProtocolMessage(topic="t", payload={"ac_power": 1000.0}, source="modbus")
+                )
+            )
+            for _ in range(step):
+                await asyncio.sleep(0.00005)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            other = sqlite3.connect(path, timeout=0.2)
+            try:
+                other.execute("UPDATE resources SET online = 1")
+                other.commit()
+            finally:
+                other.close()
+    finally:
+        await engine.dispose()

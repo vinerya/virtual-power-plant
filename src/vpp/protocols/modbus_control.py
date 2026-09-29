@@ -39,8 +39,8 @@ Profiles
     SunSpec model 123 Immediate Controls: ``WMaxLimPct`` = setpoint as % of
     ``reference_kw`` (the spec defines it as % of ``WMax``, so set
     ``reference_kw`` to the inverter's ``WMax``; curtailment, negative
-    setpoints clamp to 0 %), ``WMaxLim_Ena`` = 1; release sets
-    ``WMaxLim_Ena`` = 0. The scale factor is read from ``WMaxLimPct_SF``.
+    setpoints clamp to 0 %), ``WMaxLim_Ena`` = 1; release, and a setpoint
+    of 100 % or more (no limit), set ``WMaxLim_Ena`` = 0. The scale factor is read from ``WMaxLimPct_SF``.
     ``revert_timeout_s`` programs ``WMaxLimPct_RvrtTms`` so the inverter
     reverts on its own if the VPP goes silent.
 ``sunspec_124`` (semantics **unverified**)
@@ -374,7 +374,8 @@ class ModbusSetpointWriter:
             writes.append(_Write(reg.name or str(ref), reg.address, reg.data_type, raw, value))
 
         if cfg.profile == "sunspec_123":
-            if kw is None:
+            if kw is None or self._pct(kw) >= 100.0:
+                # Release, or a limit of 100 % of WMax, i.e. no limit: lift it.
                 add("wmax_lim_ena", 0, scaled=False)
                 return writes
             if cfg.revert_timeout_s is not None:

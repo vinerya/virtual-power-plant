@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
-import gc
 import json
 import uuid
 from functools import cache
@@ -292,6 +291,74 @@ async def test_discovery_and_polling_in_engineering_units(inverter: int, profile
         assert "frequency_scale" not in values
 
 
+async def test_a_scale_factor_change_between_requests_never_tears_a_reading() -> None:
+    """Each value is decoded with the scale factor from the same request.
+
+    The simulated device re-encodes its output after *every* request, flipping
+    ``W_SF`` between -1 and 0 (1234.6 W is served as 12346 at -1 or 1235 at
+    0), as a device rescaling a changing value would. Reading ``W`` and
+    ``W_SF`` in two requests pairs one encoding's value with the other's
+    exponent; the adapter reads the whole model block in one request.
+    """
+    async with _simulator(inverter_model=103) as sim:
+        dev = sim.device
+        requests: list[tuple[int, int]] = []
+        serve = dev.read
+        encodings = [-1, 0]
+
+        def set_encoding(sf: int) -> None:
+            dev._set_raw(103, "W_SF", [sf & 0xFFFF])
+            dev.set_value(103, "W", 1234.6)
+
+        def read(address: int, count: int = 1) -> list[int] | int:
+            got = serve(address, count)
+            requests.append((address, count))
+            encodings.reverse()
+            set_encoding(encodings[0])  # the device changes after answering
+            return got
+
+        set_encoding(encodings[0])
+        dev.read = read  # type: ignore[method-assign]
+        w, w_sf = dev.point_address(103, "W"), dev.point_address(103, "W_SF")
+
+        adapter = await _adapter(sim.port, device_profile="solaredge_se")
+        try:
+            # What separate requests would decode: 10x off.
+            [raw_w] = await adapter.read_holding(w, 1)
+            [raw_sf] = await adapter.read_holding(w_sf, 1)
+            sf = raw_sf - 0x10000 if raw_sf >= 0x8000 else raw_sf
+            assert raw_w * 10.0**sf == pytest.approx(12346.0)
+            requests.clear()
+            readings = [(await adapter.poll_once())["ac_power"] for _ in range(6)]
+        finally:
+            await adapter.disconnect()
+    assert readings == pytest.approx([1234.6, 1235.0] * 3)
+    # One request per poll: the model 103 span from W (+14) to Tmp_SF (+37).
+    assert requests == [(SUNSPEC_INVERTER_BASE + 14, 24)] * 6
+
+
+def test_read_plan_groups_models_and_scale_factor_pairs() -> None:
+    from vpp.protocols.modbus import (
+        RegisterDefinition,
+        plan_register_reads,
+        split_register_block,
+    )
+
+    regs = dict(INVERTER_MAPS["solaredge_se"].registers)
+    regs.update(sunspec_model_124_registers(40200))
+    regs["plain"] = RegisterDefinition(5, 1, name="plain")
+    regs["far"] = RegisterDefinition(1000, 1, scale_factor="far_sf")
+    regs["far_sf"] = RegisterDefinition(1400, 1)  # too far apart for one request
+    plan = plan_register_reads(regs)
+    assert sorted(INVERTER_MAPS["solaredge_se"].registers) == sorted(plan[0])
+    assert sorted(sunspec_model_124_registers(40200)) == sorted(plan[1])
+    assert plan[2:] == [["plain"], ["far"], ["far_sf"]]
+    # A rejected block falls back to value + scale-factor pairs.
+    split = split_register_block(plan[0], regs)
+    assert ["ac_power", "ac_power_scale"] in split and ["frequency", "frequency_scale"] in split
+    assert all(len(p) <= 2 for p in split)
+
+
 async def _wait_for(predicate, timeout: float = 5.0) -> None:
     deadline = asyncio.get_running_loop().time() + timeout
     while not await predicate():
@@ -415,6 +482,50 @@ async def test_dispatch_apply_end_to_end_against_the_simulator(client, auth_head
 
             await _wait_for(curtailed)
 
+            # 2b. Ask for full output. The polled 4 kW is the VPP's own cap, not
+            # the PV's availability: the optimiser estimates it from the last
+            # reading before the cap (6 kW) and the actuator lifts the limit.
+            resp = await client.post(
+                "/api/v1/optimization/dispatch",
+                json={"target_power_kw": 10.0, "resource_ids": [solar], "apply": True},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            [alloc] = body["allocations"]
+            assert alloc["availability_basis"] == "pre_curtailment_telemetry"
+            assert alloc["allocated_power_kw"] == pytest.approx(6.0)
+            [delivery] = body["device_deliveries"]
+            assert delivery["status"] == "accepted", delivery
+            assert delivery["verified"] is True
+            assert delivery["uncurtailed"] is True
+            assert delivery["setpoint_kw"] == pytest.approx(10.0)
+            assert [w["register"] for w in delivery["writes"]] == ["WMaxLim_Ena"]
+            assert dev.raw(123, "WMaxLim_Ena") == [0]  # limit lifted
+            assert actuator.output_limits() == {}
+            dev.step(1.0)
+            assert dev.ac_power_w == pytest.approx(6000)
+
+            async def restored() -> bool:
+                return await current_kw(solar) == pytest.approx(6.0)
+
+            await _wait_for(restored)
+
+            # 2c. Curtail to 4 kW again (uncapped output is plain telemetry now).
+            resp = await client.post(
+                "/api/v1/optimization/dispatch",
+                json={"target_power_kw": 4.0, "resource_ids": [solar], "apply": True},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["allocations"][0]["availability_basis"] == "telemetry"
+            assert body["device_deliveries"][0]["status"] == "accepted"
+            assert dev.raw(123, "WMaxLim_Ena") == [1]
+            assert actuator.output_limits()[solar].limit_kw == pytest.approx(4.0)
+            dev.step(1.0)
+            await _wait_for(curtailed)
+
             # 3. Charge the battery at 2 kW (model 124, forced charge).
             resp = await client.post(
                 "/api/v1/optimization/dispatch",
@@ -463,25 +574,17 @@ async def test_dispatch_apply_end_to_end_against_the_simulator(client, auth_head
             await actuator.shutdown()
             set_setpoint_actuator(None)
             # Keep later fleet-wide dispatch tests away from these resources.
-            # (A poll cancelled mid-commit can hold SQLite's write lock briefly.)
+            # A poll cancelled mid-write rolls back and closes its session
+            # before the loop exits, so SQLite's write lock is free here.
             from sqlalchemy import update
-            from sqlalchemy.exc import OperationalError
 
-            for attempt in range(50):
-                try:
-                    async with get_session_factory()() as s:
-                        await s.execute(
-                            update(ResourceModel)
-                            .where(ResourceModel.id.in_([solar, battery]))
-                            .values(online=False)
-                        )
-                        await s.commit()
-                    break
-                except OperationalError:
-                    if attempt == 49:
-                        raise
-                    gc.collect()
-                    await asyncio.sleep(0.1)
+            async with get_session_factory()() as s:
+                await s.execute(
+                    update(ResourceModel)
+                    .where(ResourceModel.id.in_([solar, battery]))
+                    .values(online=False)
+                )
+                await s.commit()
 
 
 def test_cli_parser_builds_a_valid_config() -> None:

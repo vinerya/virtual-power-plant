@@ -524,6 +524,90 @@ def register_words(data_type: str) -> int:
     return 2 if data_type in ("uint32", "int32", "acc32", "float32") else 1
 
 
+#: Most registers one Modbus "read holding/input registers" request may return.
+MAX_READ_REGISTERS = 125
+
+
+def _span(regs: list[RegisterDefinition]) -> int:
+    return max(r.address + r.count for r in regs) - min(r.address for r in regs)
+
+
+def plan_register_reads(
+    registers: dict[str, RegisterDefinition], *, max_registers: int = MAX_READ_REGISTERS
+) -> list[list[str]]:
+    """Group a register map into read requests (lists of register names).
+
+    Registers that must be consistent with each other are read in one
+    request covering their contiguous span: all SunSpec registers of one
+    model instance (a SunSpec model is one contiguous block that devices
+    serve as a whole, "not implemented" points included) and every value
+    together with its scale-factor register. A group wider than
+    *max_registers* is split as by :func:`split_register_block`. Every other
+    register (vendor maps may have unreadable gaps) is read on its own.
+    Coils and discrete inputs are not polled.
+    """
+    readable = (RegisterType.HOLDING, RegisterType.INPUT)
+    names = [n for n, r in registers.items() if r.register_type in readable]
+    parent = {n: n for n in names}
+
+    def find(n: str) -> str:
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+
+    def union(a: str, b: str) -> None:
+        if registers[a].register_type == registers[b].register_type:
+            parent[find(a)] = find(b)
+
+    first_of_model: dict[tuple[int, int, RegisterType], str] = {}
+    for n in names:
+        reg = registers[n]
+        if reg.sunspec is not None:
+            key = (reg.sunspec.model, reg.sunspec.base, reg.register_type)
+            union(n, first_of_model.setdefault(key, n))
+        if reg.scale_factor is not None and reg.scale_factor in parent:
+            union(n, reg.scale_factor)
+
+    groups: dict[str, list[str]] = {}
+    for n in names:
+        groups.setdefault(find(n), []).append(n)
+
+    plan: list[list[str]] = []
+    for group in groups.values():
+        if _span([registers[n] for n in group]) <= max_registers:
+            plan.append(sorted(group, key=lambda n: registers[n].address))
+        else:
+            plan.extend(split_register_block(group, registers, max_registers=max_registers))
+    return plan
+
+
+def split_register_block(
+    block: list[str],
+    registers: dict[str, RegisterDefinition],
+    *,
+    max_registers: int = MAX_READ_REGISTERS,
+) -> list[list[str]]:
+    """Smaller requests for *block*: each value with its scale factor (the
+    minimal span covering both) and every other register on its own.
+
+    Used for groups too wide for one request and when a device rejects a
+    block read; a value and its scale factor still come from one request.
+    """
+    out: list[list[str]] = []
+    covered: set[str] = set()
+    members = set(block)
+    for n in block:
+        sf = registers[n].scale_factor
+        if sf is not None and sf in members and sf != n:
+            pair = sorted((n, sf), key=lambda p: registers[p].address)
+            if _span([registers[p] for p in pair]) <= max_registers:
+                out.append(pair)
+                covered.update(pair)
+    out.extend([n] for n in block if n not in covered)
+    return out
+
+
 class ModbusAdapter(ProtocolAdapter):
     """Modbus TCP/RTU adapter implementing the VPP ``ProtocolAdapter`` ABC.
 
@@ -688,54 +772,56 @@ class ModbusAdapter(ProtocolAdapter):
     # -- Polling -------------------------------------------------------------
 
     async def poll_once(self) -> dict[str, float]:
-        """Read all configured registers once and return name→value dict."""
+        """Read all configured registers once and return name→value dict.
+
+        Reads follow :func:`plan_register_reads`: a SunSpec model's registers
+        and every value with its scale factor come from one request, and a
+        value is scaled only with the scale factor from that same request,
+        so a device changing a scale factor between requests cannot tear a
+        reading (a value decoded with another snapshot's exponent is off by
+        a power of ten).
+        """
         if not self.is_connected or self._client is None or self._register_map is None:
             return {}
 
-        decoded: dict[str, float] = {}
         unit = self._register_map.unit_id
         registers = self._register_map.registers
+        raw_values: dict[str, float] = {}
+        scaled: dict[str, float] = {}
+        # Values whose scale-factor register came from another request (only
+        # when the pair does not fit one read, or a rejected block read was
+        # split into smaller requests that separated them).
+        deferred: list[str] = []
 
-        for name, reg in registers.items():
-            try:
-                method: Any
-                if reg.register_type == RegisterType.HOLDING:
-                    method = self._client.read_holding_registers
-                elif reg.register_type == RegisterType.INPUT:
-                    method = self._client.read_input_registers
-                else:
-                    continue
-                result = await method(reg.address, count=reg.count, **{_unit_kwarg(method): unit})
+        for block in plan_register_reads(registers):
+            snapshots = await self._read_block(block, unit)
+            if snapshots is None:  # the device rejected the block: smaller requests
+                snapshots = []
+                for sub in split_register_block(block, registers):
+                    snapshots.extend(await self._read_block(sub, unit) or [])
+            for snap in snapshots:
+                for name, raw in snap.items():
+                    raw_values[name] = raw
+                    reg = registers[name]
+                    if reg.scale_factor is None:
+                        scaled[name] = raw * reg.scale
+                    elif reg.scale_factor in snap:  # value and SF from one read
+                        value = self._apply_sf(name, raw, snap[reg.scale_factor])
+                        if value is not None:
+                            scaled[name] = value * reg.scale
+                    else:
+                        deferred.append(name)
 
-                if result.isError():
-                    logger.warning("Modbus read error for %s: %s", name, result)
-                    self._metrics.errors += 1
-                    continue
-
-                regs = list(result.registers)
-                if reg.sunspec is not None and sunspec_not_implemented(regs, reg.data_type):
-                    logger.debug("SunSpec register %s not implemented by the device", name)
-                    continue
-                raw = self._decode_registers(regs, reg)
-                if math.isnan(raw):  # float32 NaN: no reading
-                    continue
-                decoded[name] = raw
-            except Exception:
-                logger.exception("Error reading register %s", name)
-                self._metrics.errors += 1
-
-        values: dict[str, float] = {}
-        for name, raw in decoded.items():
+        for name in deferred:
+            if name in scaled:
+                continue
             reg = registers[name]
-            if reg.scale_factor is not None:
-                # SunSpec value = raw * 10**sf; without a valid sf there is no value.
-                sf = decoded.get(reg.scale_factor)
-                if sf is None or not -10 <= sf <= 10:
-                    logger.debug("No valid scale factor %s for %s", reg.scale_factor, name)
-                    continue
-                raw = raw * 10.0 ** int(sf)
-            values[name] = raw * reg.scale
+            sf_name = reg.scale_factor or ""
+            value = self._apply_sf(name, raw_values[name], raw_values.get(sf_name))
+            if value is not None:
+                scaled[name] = value * reg.scale
 
+        values = {name: scaled[name] for name in registers if name in scaled}
         self._latest_values = values
         self._metrics.messages_received += 1
         self._metrics.last_message_at = time.time()
@@ -749,6 +835,66 @@ class ModbusAdapter(ProtocolAdapter):
         await self._dispatch(msg)
 
         return values
+
+    @staticmethod
+    def _apply_sf(name: str, raw: float, sf: float | None) -> float | None:
+        """SunSpec value = raw * 10**sf; without a valid sf there is no value."""
+        if sf is None or not -10 <= sf <= 10:
+            logger.debug("No valid scale factor for %s", name)
+            return None
+        return raw * 10.0 ** int(sf)
+
+    async def _read_block(self, names: list[str], unit: int) -> list[dict[str, float]] | None:
+        """Read *names* (all of one register type) in a single request.
+
+        Returns ``[snapshot]`` -- name -> raw decoded value, with SunSpec
+        "not implemented" and NaN readings left out -- or ``None`` when the
+        device rejected a multi-register request (the caller then falls back
+        to smaller requests). A failed single-register read yields ``[]``.
+        """
+        assert self._client is not None and self._register_map is not None
+        regs_def = [self._register_map.registers[n] for n in names]
+        start = min(r.address for r in regs_def)
+        end = max(r.address + r.count for r in regs_def)
+        method: Any = (
+            self._client.read_holding_registers
+            if regs_def[0].register_type == RegisterType.HOLDING
+            else self._client.read_input_registers
+        )
+        label = names[0] if len(names) == 1 else f"{start}..{end - 1} ({', '.join(names)})"
+        failed: list[dict[str, float]] | None = None if len(names) > 1 else []
+        try:
+            result = await method(start, count=end - start, **{_unit_kwarg(method): unit})
+            if result.isError():
+                logger.warning("Modbus read error for %s: %s", label, result)
+                self._metrics.errors += 1
+                return failed
+            words = list(result.registers)
+        except Exception:
+            logger.exception("Error reading register %s", label)
+            self._metrics.errors += 1
+            return failed
+
+        snap: dict[str, float] = {}
+        for name, reg in zip(names, regs_def, strict=True):
+            regs = words[reg.address - start : reg.address - start + reg.count]
+            if len(regs) < reg.count:
+                logger.warning("Short Modbus read for %s", name)
+                self._metrics.errors += 1
+                continue
+            if reg.sunspec is not None and sunspec_not_implemented(regs, reg.data_type):
+                logger.debug("SunSpec register %s not implemented by the device", name)
+                continue
+            try:
+                raw = self._decode_registers(regs, reg)
+            except Exception:
+                logger.exception("Error decoding register %s", name)
+                self._metrics.errors += 1
+                continue
+            if math.isnan(raw):  # float32 NaN: no reading
+                continue
+            snap[name] = raw
+        return [snap]
 
     async def _poll_loop(self, interval: float) -> None:
         """Continuously poll registers at a fixed interval."""

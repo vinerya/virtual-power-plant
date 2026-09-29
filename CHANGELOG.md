@@ -454,6 +454,35 @@ changes** before upgrading.
 
 ### Fixed
 
+- **Curtailed PV can be un-curtailed by dispatch.** A generation resource's
+  availability was its polled output, so once the VPP had capped it (e.g.
+  `WMaxLimPct` 40 % -> 4 kW) every later dispatch saw only 4 kW and never
+  raised the limit until the device's revert timer expired. The actuator
+  now tracks the output caps it holds (accepted, read-back-verified writes;
+  per process), and while a resource's output sits at such a cap the
+  optimiser estimates its availability from the newest reading taken before
+  the cap (at most 15 min old, `availability_basis`
+  `pre_curtailment_telemetry`) or else its nameplate
+  (`nameplate_curtailed`). A generation resource allocated all of its
+  estimated availability gets its upper limit written instead of the
+  estimate (`"uncurtailed": true` in the delivery), and `sunspec_123` treats
+  a setpoint of 100 % or more as no limit and writes only `WMaxLim_Ena` = 0.
+  The run's asset summary records `output_limit_kw`. See
+  [docs/protocols.md](docs/protocols.md) for the limitations.
+- **Modbus scale-factor tearing.** Polling read each value and its SunSpec
+  scale-factor register in separate requests, so a device changing a scale
+  factor in between yielded a value off by a power of ten. The polled
+  registers of one SunSpec model are now read in one contiguous request
+  (e.g. `solaredge_se`: one 24-register read per poll instead of ten), any
+  other value together with its scale factor, and each value is scaled only
+  with the scale factor from its own request. A rejected block read falls
+  back to one request per value + scale-factor pair.
+- **Stopping Modbus ingestion could leave SQLite locked.** Cancelling a poll
+  while it was writing interrupted SQLAlchemy mid-statement; the connection
+  was invalidated without a rollback and kept SQLite's write lock until it
+  was garbage collected ("database is locked" for every other writer). The
+  poll's database write now runs to completion (commit or rollback, session
+  closed) before the cancellation proceeds.
 - **SunSpec register maps verified against the official SunSpec model
   definitions** (the sunspec/models JSON bundled with pysunspec2 1.3.6);
   still untested on physical hardware. `tests/test_sunspec_models.py`
