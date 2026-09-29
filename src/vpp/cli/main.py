@@ -104,6 +104,34 @@ def migrate(revision: str) -> None:
     click.echo(f"Database migrated to {revision} ({settings.database_url})")
 
 
+@cli.command()
+@click.option("--dry-run", is_flag=True, help="Only count the rows that would be deleted.")
+def prune(dry_run: bool) -> None:
+    """Delete rows older than their VPP_*_RETENTION_DAYS setting, once.
+
+    Runs the same pass the API runs periodically on the data-retention lease
+    holder (see docs/security.md#data-retention). A retention of 0 keeps a
+    table forever.
+    """
+    import asyncio
+
+    from vpp.retention import prune as run_prune
+    from vpp.settings import get_settings
+
+    settings = get_settings()
+    results = asyncio.run(_with_factory(lambda f: run_prune(f, settings, dry_run=dry_run)))
+    verb = "would delete" if dry_run else "deleted"
+    for r in results:
+        if r.enabled:
+            click.echo(
+                f"  {r.table:<20} {verb} {r.rows:>8} row(s) older than {r.retention_days} days"
+            )
+        else:
+            click.echo(f"  {r.table:<20} kept forever ({r.env_var}=0)")
+    total = sum(r.rows for r in results)
+    click.echo(f"{'Dry run: ' if dry_run else ''}{total} row(s) {verb} in total")
+
+
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
@@ -131,8 +159,8 @@ def _read_new_password(password_stdin: bool, password_file: str | None) -> str:
     return str(click.prompt("Password", hide_input=True, confirmation_prompt=True))
 
 
-async def _with_session(fn):
-    """Run ``fn(session)`` against the configured database, then commit.
+async def _with_factory(fn):
+    """Run ``fn(session_factory)`` against the configured database.
 
     Uses a private engine (not the process-global one) and prepares the
     schema the same way the API does: ``alembic upgrade head`` when
@@ -155,12 +183,21 @@ async def _with_session(fn):
         else:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        return await fn(async_sessionmaker(engine, expire_on_commit=False))
+    finally:
+        await engine.dispose()
+
+
+async def _with_session(fn):
+    """Run ``fn(session)`` against the configured database, then commit."""
+
+    async def _run(factory):
+        async with factory() as session:
             result = await fn(session)
             await session.commit()
             return result
-    finally:
-        await engine.dispose()
+
+    return await _with_factory(_run)
 
 
 _password_options = [

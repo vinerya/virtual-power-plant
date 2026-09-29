@@ -396,6 +396,14 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await elect(topology.LEASE_TRADING, trading)
     app.state.trading_market_data_task = trading.market_data.task
 
+    # Periodic pruning of old rows (VPP_*_RETENTION_DAYS); one worker prunes.
+    from vpp.retention import retention_enabled, retention_role
+
+    retention = retention_role(factory, settings)
+    if retention_enabled(settings):
+        await elect(topology.LEASE_RETENTION, retention)
+    app.state.retention_task = retention.task
+
     # Device setpoint actuator + watchdog (VPP_CONTROL_ENABLED, default off;
     # validate_topology refuses it with more than one worker).
     from vpp.control.actuator import start_control, stop_control

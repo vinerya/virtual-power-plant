@@ -68,6 +68,25 @@ defined in code.
 | `VPP_DATABASE_URL` | `sqlite+aiosqlite:///./vpp.db` | SQLAlchemy async URL. PostgreSQL: `postgresql+asyncpg://user:pass@host:5432/vpp`. Migrations rewrite the driver to a sync one (`sqlite`, `postgresql+psycopg2`), so `psycopg2` must be installed to migrate PostgreSQL (the Docker image includes it). |
 | `VPP_USE_ALEMBIC` | `false` | `false`: tables are created with `create_all` on startup (quick for development, no schema upgrades). `true`: run `alembic upgrade head` on startup. For production run `vpp migrate` before starting the API instead (compose does this). |
 
+## Data retention
+
+Old rows are deleted by a background pass on the worker holding the
+`data-retention` lease (one worker in a multi-worker deployment) and by
+`vpp prune` (`--dry-run` only counts). `0` keeps a table forever. Deletes
+run in batches, each its own transaction. `orders` / `trades` (positions are
+rebuilt from them), meter readings, charging sessions and other business
+records are never pruned; see [security.md](security.md#data-retention).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VPP_AUDIT_RETENTION_DAYS` | `365` | Keep `audit_log` entries this many days. |
+| `VPP_EVENT_LOG_RETENTION_DAYS` | `365` | Keep `event_log` rows (setpoint history, platform events). |
+| `VPP_ALERT_RETENTION_DAYS` | `365` | Keep *resolved* alerts this long after resolution; open, acknowledged and snoozed alerts are never pruned. |
+| `VPP_DR_RESPONSE_RETENTION_DAYS` | `365` | Keep `dr_event_responses` (the DR orchestrator's decision log). |
+| `VPP_TELEMETRY_RETENTION_DAYS` | `366` | Keep `battery_states` and `resource_telemetry` samples. The metrics API serves ranges up to 366 days. |
+| `VPP_RETENTION_INTERVAL_MINUTES` | `60` | How often the background pass runs (the first one about a minute after startup). |
+| `VPP_RETENTION_BATCH_SIZE` | `1000` | Rows deleted per transaction. |
+
 ## Monitoring and alerts
 
 | Variable | Default | Meaning |

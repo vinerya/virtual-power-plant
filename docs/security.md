@@ -226,10 +226,39 @@ Guarantees and limits:
   still succeeds and a warning is logged (`vpp.db.engine`).
 - Actor columns are plain copies, not foreign keys: entries survive user
   deletion.
-- The table is append-only from the API; nothing prunes it. Archive or
-  delete old rows with SQL according to your retention policy.
+- The table is append-only from the API. Entries older than
+  `VPP_AUDIT_RETENTION_DAYS` (default 365; `0` keeps them forever) are
+  deleted by the retention pass (see [Data retention](#data-retention));
+  archive them first if your policy requires longer.
 - Pure RBAC refusals (`403` from a role check, `401`) are not recorded,
   except the ones listed above.
+
+## Data retention
+
+Tables that grow with normal operation are pruned by age. A background pass
+runs every `VPP_RETENTION_INTERVAL_MINUTES` (default 60) on the worker
+holding the `data-retention` lease, so exactly one worker prunes in a
+multi-worker deployment; `vpp prune` runs the same pass once and
+`vpp prune --dry-run` only reports how many rows it would delete. Rows are
+deleted in batches of `VPP_RETENTION_BATCH_SIZE`, each in its own short
+transaction. Each pass logs its counts (logger `vpp.retention`); pruning is
+not itself written to the audit log.
+
+| Table | Setting | Default |
+|---|---|---|
+| `audit_log` | `VPP_AUDIT_RETENTION_DAYS` | 365 days |
+| `event_log` | `VPP_EVENT_LOG_RETENTION_DAYS` | 365 days |
+| `alerts` (resolved only, by resolution time) | `VPP_ALERT_RETENTION_DAYS` | 365 days |
+| `dr_event_responses` | `VPP_DR_RESPONSE_RETENTION_DAYS` | 365 days |
+| `battery_states`, `resource_telemetry` | `VPP_TELEMETRY_RETENTION_DAYS` | 366 days |
+
+`0` keeps a table forever. Not pruned: `orders` and `trades` (the venue
+rebuilds positions and P&L by replaying trades), `meter_readings`,
+`v2g_charging_sessions`, `battery_soh_samples`, `optimization_runs`,
+`v2g_schedules`, `v2g_flexibility_bids`, users, keys, sites and
+configuration. Delete or archive those with SQL if your policy requires it.
+The coordination tables `cluster_calls`, `cluster_events` and
+`shared_rate_limits` are short-lived and purged by the code that owns them.
 
 ## Supply chain
 

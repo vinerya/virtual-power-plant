@@ -14,6 +14,7 @@ LEASE_ALERTS = "alert-evaluator"
 LEASE_MQTT = "mqtt-ingestion"
 LEASE_MODBUS = "modbus-ingestion"
 LEASE_PROTOCOLS = "protocol-adapters"
+LEASE_RETENTION = "data-retention"
 
 LEADER_ONLY = {
     LEASE_TRADING: "simulated trading venue (order matching, market-data tick); "
@@ -24,6 +25,7 @@ LEADER_ONLY = {
     LEASE_MODBUS: "Modbus telemetry ingestion",
     LEASE_PROTOCOLS: "protocol adapters (OCPP / OpenADR / IEEE 2030.5) and the DR orchestrator; "
     "other workers forward OpenADR / IEEE 2030.5 / DR views and actions to it",
+    LEASE_RETENTION: "data retention (pruning old audit, event, alert, DR and telemetry rows)",
 }
 
 PER_PROCESS = (

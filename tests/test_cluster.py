@@ -644,6 +644,7 @@ async def test_single_process_lifespan_holds_every_lease(
             held = leadership()
             assert held == {
                 "alert-evaluator": True,
+                "data-retention": True,
                 "degradation-updater": True,
                 "modbus-ingestion": True,
                 "mqtt-ingestion": True,
@@ -651,6 +652,7 @@ async def test_single_process_lifespan_holds_every_lease(
             }
             assert fastapi_app.state.degradation_task is not None
             assert fastapi_app.state.trading_market_data_task is not None
+            assert fastapi_app.state.retention_task is not None
     assert "API topology: VPP_API_WORKERS=1" in caplog.text
     assert leadership() == {}
 
@@ -672,7 +674,7 @@ async def test_second_worker_lifespan_stays_idle(monkeypatch, preserve_db_global
 
     db = tmp_path / "shared.db"
     other = tmp_session_factory(db)
-    for name in ("degradation-updater", "trading-venue", "alert-evaluator"):
+    for name in ("degradation-updater", "trading-venue", "alert-evaluator", "data-retention"):
         assert await try_acquire(other, name, "worker-1", 120)
 
     ran = []
@@ -691,11 +693,13 @@ async def test_second_worker_lifespan_stays_idle(monkeypatch, preserve_db_global
     async with fastapi_app.router.lifespan_context(fastapi_app):
         assert leadership() == {
             "alert-evaluator": False,
+            "data-retention": False,
             "degradation-updater": False,
             "trading-venue": False,
         }
         assert fastapi_app.state.degradation_task is None
         assert fastapi_app.state.trading_market_data_task is None
+        assert fastapi_app.state.retention_task is None
         assert get_alert_service() is None
     assert ran == []
 

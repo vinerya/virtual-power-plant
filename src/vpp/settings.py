@@ -205,6 +205,18 @@ class Settings(BaseSettings):
     trading_market_data_enabled: bool = True
     trading_market_data_interval_seconds: float = 5.0
 
+    # Data retention (vpp.retention): rows older than N days are deleted by a
+    # background pass on the data-retention lease holder and by `vpp prune`.
+    # 0 = keep forever. Trades/orders and billing data are never pruned.
+    audit_retention_days: int = Field(365, ge=0)
+    event_log_retention_days: int = Field(365, ge=0)
+    alert_retention_days: int = Field(365, ge=0)  # resolved alerts only
+    dr_response_retention_days: int = Field(365, ge=0)
+    # battery_states + resource_telemetry; the metrics API serves up to 366 days.
+    telemetry_retention_days: int = Field(366, ge=0)
+    retention_interval_minutes: int = Field(60, ge=1)
+    retention_batch_size: int = Field(1000, ge=1)
+
     # Platform configuration document loaded at startup when none has been
     # stored with PUT /api/v1/config yet (a stored document always wins).
     config_path: str | None = None

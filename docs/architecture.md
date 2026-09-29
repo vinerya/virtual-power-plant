@@ -156,7 +156,9 @@ one. Coordination goes through the database (`vpp.cluster`):
   runs only in the process holding its lease: `trading-venue` (simulated
   venue + market-data tick), `degradation-updater`, `alert-evaluator`,
   `mqtt-ingestion`, `modbus-ingestion`, `protocol-adapters` (OCPP /
-  OpenADR / IEEE 2030.5 and the DR orchestrator). Acquire/renew is one
+  OpenADR / IEEE 2030.5 and the DR orchestrator), `data-retention`
+  (hourly pruning of old audit, event, alert, DR and telemetry rows; see
+  [security.md](security.md#data-retention)). Acquire/renew is one
   atomic `UPDATE ... WHERE holder = :me OR expires_at < :now`. Followers
   stay idle and take over once the lease expires
   (`VPP_CLUSTER_LEASE_TTL_SECONDS`), or immediately when the holder was a
