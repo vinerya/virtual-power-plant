@@ -308,7 +308,10 @@ def sunspec_model_124_registers(base: int) -> dict[str, RegisterDefinition]:
     ``StorCtl_Mod`` (+5, bitfield16 RW: bit 0 CHARGE, bit 1 DISCHARGE limit
     active), ``OutWRte`` (+12, int16 RW, % of ``WDisChaMax``), ``InWRte``
     (+13, int16 RW, % of ``WChaMax``), ``InOutWRte_RvrtTms`` (+15, uint16 RW
-    seconds) and ``InOutWRte_SF`` (+25, sunssf). The register layout is
+    seconds) and ``InOutWRte_SF`` (+25, sunssf). Read-only telemetry of the
+    same model is included for polling (e.g. as ``custom_registers``):
+    ``WChaMax`` (+2, W, ``WChaMax_SF`` +18), ``ChaState`` (+8, state of
+    charge in %, ``ChaState_SF`` +22) and ``ChaSt`` (+11, enum16). The register layout is
     verified against the spec; how devices interpret *forced*
     charge/discharge (negative ``InWRte``/``OutWRte``) differs between
     vendors and is not verified, hence the profile stays flagged unverified.
@@ -316,6 +319,13 @@ def sunspec_model_124_registers(base: int) -> dict[str, RegisterDefinition]:
     return {
         "sunspec_124_id": _sunspec_reg(124, base, "ID", 0, "Model ID (124)", "", "uint16"),
         "sunspec_124_length": _sunspec_reg(124, base, "L", 1, "Model length", "", "uint16"),
+        "w_cha_max": _sunspec_reg(
+            124, base, "WChaMax", 2, "WChaMax", "W", "uint16", scale_factor="w_cha_max_sf"
+        ),
+        "cha_state": _sunspec_reg(
+            124, base, "ChaState", 8, "ChaState", "%", "uint16", scale_factor="cha_state_sf"
+        ),
+        "cha_st": _sunspec_reg(124, base, "ChaSt", 11, "ChaSt", "", "uint16"),
         "stor_ctl_mod": _sunspec_reg(
             124, base, "StorCtl_Mod", 5, "StorCtl_Mod", "", "uint16", writable=True
         ),
@@ -344,6 +354,8 @@ def sunspec_model_124_registers(base: int) -> dict[str, RegisterDefinition]:
         "in_out_w_rte_rvrt_tms": _sunspec_reg(
             124, base, "InOutWRte_RvrtTms", 15, "InOutWRte_RvrtTms", "s", "uint16", writable=True
         ),
+        "w_cha_max_sf": _sunspec_reg(124, base, "WChaMax_SF", 18, "WChaMax_SF", "", "int16"),
+        "cha_state_sf": _sunspec_reg(124, base, "ChaState_SF", 22, "ChaState_SF", "", "int16"),
         "in_out_w_rte_sf": _sunspec_reg(
             124, base, "InOutWRte_SF", 25, "InOutWRte_SF", "", "int16"
         ),
@@ -364,7 +376,7 @@ SUNSPEC_END_MODEL_ID = 0xFFFF
 # Raw register values that mean "not implemented" per SunSpec data type.
 # (sunssf and int16 share 0x8000, enum16/bitfield16 share uint16's 0xFFFF;
 # accumulators use 0; float32 uses NaN, checked separately.)
-_SUNSPEC_NOT_IMPLEMENTED: dict[str, int] = {
+SUNSPEC_NOT_IMPLEMENTED: dict[str, int] = {
     "int16": 0x8000,
     "uint16": 0xFFFF,
     "int32": 0x80000000,
@@ -390,7 +402,7 @@ def sunspec_not_implemented(regs: list[int], data_type: str) -> bool:
             struct.unpack(">f", struct.pack(">HH", regs[0] & 0xFFFF, regs[1] & 0xFFFF))[0]
         )
         return math.isnan(value)  # 0x7FC00000 and other NaN encodings
-    sentinel = _SUNSPEC_NOT_IMPLEMENTED.get(data_type)
+    sentinel = SUNSPEC_NOT_IMPLEMENTED.get(data_type)
     return sentinel is not None and _raw_int(regs) == sentinel
 
 

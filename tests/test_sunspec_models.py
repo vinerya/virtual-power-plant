@@ -62,6 +62,7 @@ UNITS: dict[str, str] = {
     "% WMax": "%",
     "% WDisChaMax": "%",
     "% WChaMax": "%",
+    "% AhrRtg": "%",
 }
 
 

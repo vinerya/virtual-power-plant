@@ -16,6 +16,9 @@
 #   docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
 # Development overlay (reload, debug logging):
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# Simulated SunSpec inverter + battery (Modbus TCP, sunspec-sim:5020 on the
+# compose network; see docs/protocols.md "Testing without hardware"):
+#   docker compose --profile sim up -d
 #
 # See docs/deployment.md for TLS termination (incl. OCPP wss://) and the
 # first-admin bootstrap, and docs/configuration.md for every VPP_* setting.
@@ -44,6 +47,10 @@ services:
       # only from the vpp-web container's fixed address (see networks below).
       VPP_RATE_LIMIT_REQUESTS_PER_MINUTE: ${VPP_RATE_LIMIT_REQUESTS_PER_MINUTE:-120}
       VPP_TRUSTED_PROXIES: '["${VPP_WEB_IPV4:-172.29.0.10}/32"]'
+      # Modbus polling and device control (both off unless set; control
+      # needs a single API worker). See docs/protocols.md.
+      VPP_MODBUS_INGESTION_ENABLED: ${VPP_MODBUS_INGESTION_ENABLED:-false}
+      VPP_CONTROL_ENABLED: ${VPP_CONTROL_ENABLED:-false}
       # Optional: OpenEI key for GET/POST /api/v1/tariffs/import-urdb.
       OPENEI_API_KEY: ${OPENEI_API_KEY:-}
       # Optional first-boot admin (empty = disabled; ignored once any user
@@ -97,6 +104,29 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+  # Test device, not started by default (`--profile sim`). A simulator built
+  # from the SunSpec specification, not a model of any vendor's firmware.
+  sunspec-sim:
+    profiles: ["sim"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["vpp", "simulate", "sunspec", "--host", "0.0.0.0", "--port", "5020"]
+    ports:
+      - "127.0.0.1:${VPP_SUNSPEC_SIM_PORT:-5020}:5020"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 5020), 2).close()"
+      interval: 10s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped
     networks:
       - vpp-network

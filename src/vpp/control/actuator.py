@@ -214,6 +214,7 @@ class SetpointActuator:
     async def _adapter_for(self, resource_id: str, modbus: dict[str, Any]) -> Any:
         """The ingestion loop's connected adapter if any, else a private one."""
         from vpp.protocols.modbus import ModbusAdapter
+        from vpp.protocols.modbus_ingestion import NON_ADAPTER_KEYS
 
         if self._registry is not None:
             shared = self._registry.get(f"modbus:{resource_id}")
@@ -224,7 +225,7 @@ class SetpointActuator:
             return own
         adapter = ModbusAdapter()
         adapter.name = f"modbus-control:{resource_id}"
-        cfg = {k: v for k, v in modbus.items() if k not in ("control", "power_register")}
+        cfg = {k: v for k, v in modbus.items() if k not in NON_ADAPTER_KEYS}
         cfg["poll_interval_s"] = 0  # writes only; telemetry is the ingestion loop's job
         adapter.configure(**cfg)
         await adapter.connect()
