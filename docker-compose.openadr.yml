@@ -1,0 +1,15 @@
+# Compose override: point the Dockerised API at an OpenADR VTN running on
+# the host (e.g. tests/conformance/openleadr_vtn.py on 127.0.0.1:8080).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.openadr.yml up -d vpp-api
+#
+# host.docker.internal is Docker Desktop's name for the host machine.
+services:
+  vpp-api:
+    environment:
+      VPP_OPENADR_ENABLED: "true"
+      VPP_OPENADR_VTN_URL: ${VPP_OPENADR_VTN_URL:-http://host.docker.internal:8080/OpenADR2/Simple/2.0b}
+      VPP_OPENADR_VEN_NAME: ${VPP_OPENADR_VEN_NAME:-vpp-ven}
+      VPP_OPENADR_VERIFY_TLS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
