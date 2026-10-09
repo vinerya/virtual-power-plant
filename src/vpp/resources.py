@@ -1,11 +1,15 @@
 """Energy resource implementations for the Virtual Power Plant."""
 
 from abc import ABC, abstractmethod
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from .exceptions import ResourceError
+
+#: Default number of ``set_power`` samples kept by ``get_state_history``.
+DEFAULT_MAX_STATE_HISTORY = 1000
 
 
 class EnergyResource(ABC):
@@ -17,10 +21,17 @@ class EnergyResource(ABC):
         name: str | None = None,
         metadata: dict[str, Any] | None = None,
         power_curve: Callable[[float], float] | None = None,
+        max_history: int = DEFAULT_MAX_STATE_HISTORY,
     ):
-        """Initialize resource with rated power capacity and optional parameters."""
+        """Initialize resource with rated power capacity and optional parameters.
+
+        ``max_history`` caps the state history (the most recent samples are
+        kept) so a long-running resource does not grow without bound.
+        """
         if rated_power <= 0:
             raise ResourceError("Rated power must be positive")
+        if max_history <= 0:
+            raise ResourceError("max_history must be positive")
 
         self.name = name or f"{self.__class__.__name__}_{id(self)}"
         self.rated_power = rated_power
@@ -30,7 +41,7 @@ class EnergyResource(ABC):
         self._last_update = datetime.utcnow()
         self._metadata = metadata or {}
         self._power_curve = power_curve
-        self._state_history: list[dict[str, Any]] = []
+        self._state_history: deque[dict[str, Any]] = deque(maxlen=max_history)
 
     @abstractmethod
     def get_metrics(self) -> dict[str, Any]:
@@ -79,8 +90,8 @@ class EnergyResource(ABC):
         self._state_history.append(state)
 
     def get_state_history(self) -> list[dict[str, Any]]:
-        """Get resource state history for analysis."""
-        return self._state_history
+        """Get the recent resource state history (oldest first) for analysis."""
+        return list(self._state_history)
 
     def add_metadata(self, key: str, value: Any) -> None:
         """Add metadata for research/analysis."""

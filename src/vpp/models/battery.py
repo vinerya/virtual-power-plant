@@ -5,12 +5,30 @@ Includes electrochemical modeling, aging effects, and thermal dynamics.
 
 import logging
 from abc import ABC, abstractmethod
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 
 import numpy as np
 
 from ..config import ResourceConfig
+
+#: Default number of samples kept in each model's power/SoC history.
+DEFAULT_MAX_HISTORY = 1000
+
+
+def _resolve_max_history(config: ResourceConfig, max_history: int | None) -> int:
+    """History cap: explicit argument, else ``config.parameters['max_history']``."""
+    value = max_history
+    if value is None:
+        value = config.parameters.get("max_history", DEFAULT_MAX_HISTORY)
+    try:
+        cap = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"max_history must be a positive integer, got {value!r}") from exc
+    if cap <= 0:
+        raise ValueError(f"max_history must be a positive integer, got {value!r}")
+    return cap
 
 
 @dataclass
@@ -62,9 +80,25 @@ class BatteryParameters:
 
 
 class BatteryModel(ABC):
-    """Abstract base class for battery models."""
+    """Abstract base class for battery models.
 
-    def __init__(self, parameters: BatteryParameters, config: ResourceConfig):
+    ``parameters`` holds the *nominal* (beginning-of-life) values and is
+    never modified by the model, so one ``BatteryParameters`` object can be
+    shared by several models.  Aging is tracked per model: capacity fade in
+    ``state.soh`` and resistance growth via :meth:`_internal_resistance`
+    (exposed as :attr:`internal_resistance`).
+
+    Power and SoC histories keep the most recent ``max_history`` samples
+    (argument, else ``config.parameters['max_history']``, else
+    :data:`DEFAULT_MAX_HISTORY`).
+    """
+
+    def __init__(
+        self,
+        parameters: BatteryParameters,
+        config: ResourceConfig,
+        max_history: int | None = None,
+    ):
         self.parameters = parameters
         self.config = config
         self.logger = logging.getLogger(f"{self.__class__.__name__}")
@@ -82,8 +116,30 @@ class BatteryModel(ABC):
             calendar_age_days=0.0,
         )
 
-        self._power_history: list[tuple[datetime, float]] = []
-        self._soc_history: list[tuple[datetime, float]] = []
+        self.max_history = _resolve_max_history(config, max_history)
+        self._power_history: deque[tuple[datetime, float]] = deque(maxlen=self.max_history)
+        self._soc_history: deque[tuple[datetime, float]] = deque(maxlen=self.max_history)
+
+    def _internal_resistance(self) -> float:
+        """Effective (aged) internal resistance in Ohm."""
+        return self.parameters.internal_resistance
+
+    @property
+    def internal_resistance(self) -> float:
+        """Effective (aged) internal resistance in Ohm."""
+        return self._internal_resistance()
+
+    def _record_history(self, power: float, soc: float) -> None:
+        self._power_history.append((self.state.last_update, power))
+        self._soc_history.append((self.state.last_update, soc))
+
+    def get_power_history(self) -> list[tuple[datetime, float]]:
+        """Recent ``(timestamp, power_kw)`` samples, oldest first."""
+        return list(self._power_history)
+
+    def get_soc_history(self) -> list[tuple[datetime, float]]:
+        """Recent ``(timestamp, soc)`` samples, oldest first."""
+        return list(self._soc_history)
 
     @abstractmethod
     def update(self, power_setpoint: float, dt: float) -> BatteryState:
@@ -234,8 +290,13 @@ def _ecm_max_discharge_power(
 class SimpleEquivalentCircuitModel(BatteryModel):
     """Simple equivalent circuit battery model with aging."""
 
-    def __init__(self, parameters: BatteryParameters, config: ResourceConfig):
-        super().__init__(parameters, config)
+    def __init__(
+        self,
+        parameters: BatteryParameters,
+        config: ResourceConfig,
+        max_history: int | None = None,
+    ):
+        super().__init__(parameters, config, max_history)
         self._last_soc = self.state.soc
 
     def update(self, power_setpoint: float, dt: float) -> BatteryState:
@@ -271,15 +332,7 @@ class SimpleEquivalentCircuitModel(BatteryModel):
         self.state.power = actual_power
         self.state.last_update = datetime.now()
 
-        # Record history
-        self._power_history.append((self.state.last_update, actual_power))
-        self._soc_history.append((self.state.last_update, new_soc))
-
-        # Limit history size
-        max_history = 1000
-        if len(self._power_history) > max_history:
-            self._power_history = self._power_history[-max_history:]
-            self._soc_history = self._soc_history[-max_history:]
+        self._record_history(actual_power, new_soc)
 
         return self.state
 
@@ -324,8 +377,18 @@ class SimpleEquivalentCircuitModel(BatteryModel):
 class AdvancedElectrochemicalModel(BatteryModel):
     """Advanced electrochemical battery model with detailed physics."""
 
-    def __init__(self, parameters: BatteryParameters, config: ResourceConfig):
-        super().__init__(parameters, config)
+    def __init__(
+        self,
+        parameters: BatteryParameters,
+        config: ResourceConfig,
+        max_history: int | None = None,
+    ):
+        super().__init__(parameters, config, max_history)
+
+        # Cumulative aging (sum of the per-step SoH losses, not clamped at the
+        # SoH floor).  Resistance grows linearly in it relative to the nominal
+        # ``parameters.internal_resistance``; see ``_internal_resistance``.
+        self._cumulative_aging = 0.0
 
         # Additional electrochemical parameters.  Coerced with float():
         # PyYAML follows YAML 1.1, where ``1e-14`` (no dot) is a *string*,
@@ -361,7 +424,9 @@ class AdvancedElectrochemicalModel(BatteryModel):
         # discharging.
         activation_overpotential = self._calculate_activation_overpotential(current)
         concentration_overpotential = self._calculate_concentration_overpotential(current)
-        ohmic_overpotential = current * self.parameters.internal_resistance
+        # Resistance as of the start of the step (aging is applied below).
+        internal_resistance = self._internal_resistance()
+        ohmic_overpotential = current * internal_resistance
 
         terminal_voltage = (
             ocv + activation_overpotential + concentration_overpotential + ohmic_overpotential
@@ -369,7 +434,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
 
         # Update thermal state with more detailed heat generation
         reversible_heat = current * self._calculate_entropy_coefficient() * self.state.temperature
-        irreversible_heat = current**2 * self.parameters.internal_resistance
+        irreversible_heat = current**2 * internal_resistance
         total_heat = (reversible_heat + irreversible_heat) / 1000  # kW
 
         temperature_rise = total_heat * self.parameters.thermal_resistance
@@ -394,9 +459,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
         self.state.power = actual_power
         self.state.last_update = datetime.now()
 
-        # Record history
-        self._power_history.append((self.state.last_update, actual_power))
-        self._soc_history.append((self.state.last_update, new_soc))
+        self._record_history(actual_power, new_soc)
 
         return self.state
 
@@ -492,9 +555,20 @@ class AdvancedElectrochemicalModel(BatteryModel):
         total_aging = sei_growth + am_loss + li_plating
         self.state.soh = max(0.7, self.state.soh - total_aging)
 
-        # Update internal resistance
-        resistance_growth = self.parameters.resistance_growth_rate * total_aging
-        self.parameters.internal_resistance *= 1 + resistance_growth
+        # Resistance growth is derived from the cumulative aging (see
+        # ``_internal_resistance``); ``self.parameters`` is never mutated, as
+        # it may be shared with other models.
+        self._cumulative_aging += total_aging
+
+    def _internal_resistance(self) -> float:
+        """Aged resistance: ``R_nominal * (1 + resistance_growth_rate * aging)``.
+
+        ``aging`` is the cumulative SoH loss of this model, so the result
+        depends only on the total aging, not on how many steps it took.
+        """
+        return self.parameters.internal_resistance * (
+            1 + self.parameters.resistance_growth_rate * self._cumulative_aging
+        )
 
     def get_max_charge_power(self) -> float:
         """Get maximum charging power with electrochemical constraints."""
@@ -504,7 +578,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
             self.parameters,
             self.state,
             self._calculate_ocv(self.bulk_concentration),
-            self.parameters.internal_resistance,
+            self._internal_resistance(),
         )
 
         # Concentration constraint (prevent lithium plating): taper to zero
@@ -519,7 +593,7 @@ class AdvancedElectrochemicalModel(BatteryModel):
             self.parameters,
             self.state,
             self._calculate_ocv(self.bulk_concentration),
-            self.parameters.internal_resistance,
+            self._internal_resistance(),
         )
 
         # Concentration constraint (prevent over-discharge): taper to zero
@@ -529,7 +603,10 @@ class AdvancedElectrochemicalModel(BatteryModel):
 
 
 def create_battery_model(
-    model_type: str, parameters: BatteryParameters, config: ResourceConfig
+    model_type: str,
+    parameters: BatteryParameters,
+    config: ResourceConfig,
+    max_history: int | None = None,
 ) -> BatteryModel:
     """Factory function to create battery models."""
     models = {"simple": SimpleEquivalentCircuitModel, "advanced": AdvancedElectrochemicalModel}
@@ -537,4 +614,4 @@ def create_battery_model(
     if model_type not in models:
         raise ValueError(f"Unknown battery model type: {model_type}")
 
-    return models[model_type](parameters, config)
+    return models[model_type](parameters, config, max_history)

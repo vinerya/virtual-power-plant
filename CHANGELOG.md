@@ -519,6 +519,23 @@ changes** before upgrading.
   `configs/advanced_vpp_config.yaml` raised `TypeError` on the first
   `update()`. Numeric parameters are now coerced with `float()`, and the
   sample config spells those values YAML-1.1-safely (`1.0e-14`).
+- **`AdvancedElectrochemicalModel` aged the caller's `BatteryParameters`.**
+  Resistance growth multiplied `parameters.internal_resistance` in place,
+  so models sharing one parameters object (or a reused config) aged each
+  other, and the per-step re-multiplication compounded with the step count.
+  Battery models no longer modify `parameters` (the nominal values): the
+  advanced model tracks its cumulative aging and computes the resistance as
+  `nominal * (1 + resistance_growth_rate * cumulative_aging)`, which the
+  terminal voltage, heat and power limits all use. The effective value is
+  available as `BatteryModel.internal_resistance`.
+- **Unbounded history on long-running objects.** The advanced battery
+  model's power/SoC history and `EnergyResource`'s state history (appended
+  on every `set_power`) grew forever. Both are now capped (default 1000
+  samples, most recent kept): battery models take `max_history` as a
+  constructor/`create_battery_model` argument or a `max_history` resource
+  parameter, and `EnergyResource` takes a `max_history` argument. New
+  `BatteryModel.get_soc_history()` / `get_power_history()` return lists;
+  `get_state_history()` still returns a list (now a copy).
 
 - **Curtailed PV can be un-curtailed by dispatch.** A generation resource's
   availability was its polled output, so once the VPP had capped it (e.g.
