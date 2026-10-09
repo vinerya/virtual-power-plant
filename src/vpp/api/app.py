@@ -413,9 +413,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Device setpoint actuator + watchdog (VPP_CONTROL_ENABLED, default off;
     # validate_topology refuses it with more than one worker).
-    from vpp.control.actuator import start_control, stop_control
+    from vpp.control.actuator import restore_output_caps, start_control, stop_control
 
     control_task = start_control(settings)
+    # Output caps a previous run left on devices (output_caps table): without
+    # them a curtailed PV would look as if its capped output were all it had.
+    await restore_output_caps()
 
     # Runs calls other workers forward to the leases this process holds.
     executor = asyncio.create_task(

@@ -370,6 +370,28 @@ limit could only go away when the device's revert timer fired. So:
   `"uncurtailed": true`), which for `sunspec_123` lifts the limit
   (`WMaxLim_Ena` = 0). Capping at the estimate would pin the output there
   again, since the next poll could never show more.
+- The caps are persisted in the `output_caps` table (one row per resource:
+  cap, upper limit, profile, revert timeout, start of the limit and time of
+  the last accepted write). A row is written when a cap is set or rewritten
+  (deeper cut, deferred write, keep-alive) and deleted when the cap is
+  lifted, released (watchdog expiry, explicit release, clean shutdown) or
+  dropped because the resource went offline. At startup (with
+  `VPP_CONTROL_ENABLED=true`) the API loads the rows, so after a restart or
+  a crash a curtailed PV is still recognised as curtailed and the next
+  dispatch can lift its cap; when it writes that resource again the cap is
+  taken over with its original start time. Rows are dropped on load when
+  the resource no longer exists, or when the control profile programs a
+  device-side revert timer (`sunspec_123` / `sunspec_124` with
+  `revert_timeout_s`) and that timer has run out since the last write, so
+  the device has certainly gone back to full output; a restored cap lapses
+  the same way while the process runs. A cap without a revert timer is kept
+  until a dispatch writes the resource. Restored caps the new process has
+  not written are not released on shutdown (it has no connection to them
+  yet; the device still holds the limit). A database failure while saving
+  or loading caps is logged as a warning and never fails a dispatch; the
+  in-memory state is then authoritative for the running process. Device
+  control runs in a single API worker (see the cluster topology checks), so
+  there is no cross-worker state to share.
 
 Limitations: the estimate is only as good as the last uncurtailed reading
 (sun or wind may have changed since, and after 15 minutes of curtailment the
@@ -377,9 +399,7 @@ nameplate is used). No SunSpec point the project reads gives the real
 availability: model 103/113 report the AC and DC output, which both follow
 the cap, and model 123 only the limit itself (model 121's `WMax` and
 vendor-specific "available power" points are not read). Forecasts are not
-used. The cap state lives in the API process that wrote it: another worker,
-or a restarted process, does not know it (on a clean shutdown every cap is
-released; after a crash the device's revert timer applies).
+used.
 
 Every command is recorded in the `event_log` table (`event_type =
 device_setpoint`), stored with the dispatch (`device_deliveries` in the run

@@ -699,3 +699,28 @@ class SharedRateLimitModel(Base):
     window_start: Mapped[float] = mapped_column(Float)
     locked_until: Mapped[float] = mapped_column(Float, default=0.0)
     expires_at: Mapped[float] = mapped_column(Float, index=True)
+
+
+class OutputCapModel(Base):
+    """An output cap the setpoint actuator holds on a generation resource.
+
+    Written by :mod:`vpp.control.actuator` when a device accepts a setpoint
+    below the resource's upper limit, removed when the cap is lifted or
+    released, and loaded at startup so a restarted API still knows which
+    readings are its own curtailment (see
+    :func:`vpp.api.optimization_support.resource_to_asset`). ``started_at``
+    is when the VPP started limiting (continuously); ``updated_at`` is the
+    last accepted write, from which the device-side revert timer
+    (``revert_timeout_s``, if the control profile sets one) runs.
+    Migration: 0013_output_caps.py.
+    """
+
+    __tablename__ = "output_caps"
+
+    resource_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    cap_kw: Mapped[float] = mapped_column(Float)
+    upper_limit_kw: Mapped[float] = mapped_column(Float)
+    profile: Mapped[str] = mapped_column(String(32))
+    revert_timeout_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

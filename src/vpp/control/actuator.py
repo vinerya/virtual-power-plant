@@ -43,7 +43,15 @@ Safety rules, in the order applied:
 The output caps currently held on generation resources are exposed by
 :meth:`SetpointActuator.output_limits` / :func:`active_output_limits`: the
 optimiser needs them to tell a curtailed reading from the real availability
-(:func:`vpp.api.optimization_support.resource_to_asset`).
+(:func:`vpp.api.optimization_support.resource_to_asset`). They are persisted
+in the ``output_caps`` table (written when a cap is set or rewritten, deleted
+when it is lifted or released) and loaded at startup
+(:meth:`SetpointActuator.load_output_caps`), so a restarted API still knows
+the caps it left on devices: a restored cap counts until a dispatch writes
+that resource again (taking it over or lifting it) or, for profiles with a
+device-side revert timer, until that timer has certainly run out since the
+last write. Database failures never break control: they are logged and the
+in-memory state stays authoritative.
 
 Every command that touches (or would touch) a device is recorded in the
 ``event_log`` table (``event_type="device_setpoint"``, one row per
@@ -61,6 +69,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 from vpp.events import Event, EventType, get_event_bus
@@ -87,6 +96,8 @@ EV_PREFIX = "ev:"  # vpp.v2g.store.EV_ASSET_PREFIX (EVs are driven over OCPP)
 _MAX_RELEASE_ATTEMPTS = 3
 # Setpoints closer than this to a bound are treated as at the bound.
 _LIMIT_EPS_KW = 1e-3
+# Control profiles that program ``revert_timeout_s`` into the device.
+_REVERT_PROFILES = frozenset({"sunspec_123", "sunspec_124"})
 
 ACCEPTED = "accepted"
 UNCHANGED = "unchanged"
@@ -166,6 +177,33 @@ class OutputLimit:
 
 
 @dataclass
+class _StoredCap:
+    """An output cap as persisted in ``output_caps``."""
+
+    resource_id: str
+    cap_kw: float
+    upper_kw: float
+    profile: str
+    revert_timeout_s: float | None
+    since: float  # epoch seconds: when the VPP started limiting
+    written_at: float  # epoch seconds: last accepted write of the cap
+
+    def expired(self, now: float) -> bool:
+        """The device's revert timer has certainly fired since the last write."""
+        return self.revert_timeout_s is not None and now - self.written_at >= self.revert_timeout_s
+
+
+def _to_dt(epoch: float) -> datetime:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc)
+
+
+def _to_epoch(dt: datetime) -> float:
+    if dt.tzinfo is None:  # SQLite returns naive datetimes (stored as UTC)
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+@dataclass
 class _Target:
     """What the actuator needs to know about a resource."""
 
@@ -228,6 +266,12 @@ class SetpointActuator:
         self._active: dict[str, _Active] = {}
         self._writers: dict[tuple[str, str], SetpointWriter] = {}
         self._own_adapters: dict[str, ModbusAdapter] = {}
+        # Output caps loaded from the database that this process has not taken
+        # over (no write since the restart): they still bind on the device.
+        self._restored: dict[str, _StoredCap] = {}
+        # Resources whose persisted cap may be out of date / rows known to exist.
+        self._cap_dirty: set[str] = set()
+        self._cap_rows: set[str] = set()
         self.last_tick_at: float | None = None
         self.commands = 0
         self.failures = 0
@@ -240,7 +284,11 @@ class SetpointActuator:
         if isinstance(self._factory, async_sessionmaker):
             return self._factory
         if self._factory is not None:
-            return self._factory()
+            try:
+                return self._factory()
+            except Exception:
+                logger.warning("no database session factory", exc_info=True)
+                return None
         try:
             from vpp.db.engine import get_session_factory
 
@@ -318,6 +366,7 @@ class SetpointActuator:
                 deliveries.append(
                     await self._apply_one(target, kw, now, source=source, run_id=run_id, ttl=ttl_s)
                 )
+            await self._persist_caps()
         await self._record(deliveries, source=source, run_id=run_id, session=session)
         return deliveries
 
@@ -423,6 +472,10 @@ class SetpointActuator:
                 status=ACCEPTED, reason="written" + (" and verified" if result.verified else "")
             )
         prev = self._active.get(target.id)
+        since = prev.limit_since if prev is not None else None
+        restored = self._restored.pop(target.id, None)
+        if prev is None and restored is not None and not restored.expired(now):
+            since = restored.since  # continue the limit set before the restart
         entry = _Active(
             resource_id=target.id,
             name=target.name,
@@ -436,10 +489,11 @@ class SetpointActuator:
             source=source,
             run_id=run_id,
             curtailable=not target.is_battery,
-            limit_since=prev.limit_since if prev is not None else None,
+            limit_since=since,
         )
         entry.note_written(setpoint, now)
         self._active[target.id] = entry
+        self._cap_dirty.add(target.id)
         return d
 
     # -- fallback / release ----------------------------------------------------
@@ -458,7 +512,7 @@ class SetpointActuator:
             "run_id": a.run_id,
         }
         if a.config.simulate or a.writer is None:
-            self._active.pop(a.resource_id, None)
+            self._drop(a.resource_id)
             d.update(status=SIMULATED)
             return d
         if a.config.safe_setpoint_kw is not None:
@@ -472,16 +526,21 @@ class SetpointActuator:
         self.commands += 1
         d.update(writes=result.writes, verified=result.verified)
         if result.ok:
-            self._active.pop(a.resource_id, None)
+            self._drop(a.resource_id)
             return d
         self.failures += 1
         a.release_failures += 1
         d.update(status=FAILED, reason=f"{reason}; {result.error}")
         if a.release_failures >= _MAX_RELEASE_ATTEMPTS:
-            self._active.pop(a.resource_id, None)
+            self._drop(a.resource_id)
             d["reason"] += f"; gave up after {a.release_failures} attempts"
             logger.error("could not release control of %s: %s", a.resource_id, result.error)
         return d
+
+    def _drop(self, resource_id: str) -> None:
+        """Forget the control state of *resource_id* (and, with it, its cap)."""
+        self._active.pop(resource_id, None)
+        self._cap_dirty.add(resource_id)
 
     async def release(
         self,
@@ -499,6 +558,7 @@ class SetpointActuator:
                 for rid in ids
                 if rid in self._active
             ]
+            await self._persist_caps()
         await self._record(out, source=source, run_id=run_id)
         return out
 
@@ -527,14 +587,19 @@ class SetpointActuator:
         async with self._lock:
             now = self._clock()
             self.last_tick_at = now
+            for rid, cap in list(self._restored.items()):
+                if cap.expired(now):  # the device has reverted on its own
+                    del self._restored[rid]
+                    self._cap_dirty.add(rid)
             if not self._active:
+                await self._persist_caps()
                 return []
             online = await self._online(list(self._active))
             out: list[dict[str, Any]] = []
             for rid, a in list(self._active.items()):
                 if online.get(rid) is False:
                     # Never write to an offline device; drop local control state.
-                    self._active.pop(rid, None)
+                    self._drop(rid)
                     out.append(
                         {
                             "resource_id": rid,
@@ -556,6 +621,7 @@ class SetpointActuator:
                     and now - a.written_at >= a.config.keepalive_s
                 ):
                     out.append(await self._rewrite(a, a.setpoint_kw, now, action="keepalive"))
+            await self._persist_caps()
         if out:
             await self._record(out, source="control.watchdog")
         return out
@@ -584,6 +650,8 @@ class SetpointActuator:
                 return d
             d["status"] = ACCEPTED
         a.note_written(kw, now)
+        if a.curtailable:
+            self._cap_dirty.add(a.resource_id)  # new cap, or a fresh revert-timer start
         return d
 
     async def run_forever(self) -> None:
@@ -678,11 +746,160 @@ class SetpointActuator:
         resource's real availability (see
         :func:`vpp.api.optimization_support.resource_to_asset`).
         """
-        return {
-            rid: OutputLimit(rid, a.setpoint_kw, a.limit_since)
+        out = {
+            rid: OutputLimit(rid, cap.cap_kw, cap.since)
             for rid, a in self._active.items()
-            if a.limit_since is not None and a.writer is not None and not a.config.simulate
+            if (cap := self._cap_of(a)) is not None
         }
+        now = self._clock()
+        for rid, stored in self._restored.items():
+            if rid not in self._active and not stored.expired(now):
+                out[rid] = OutputLimit(rid, stored.cap_kw, stored.since)
+        return out
+
+    # -- cap persistence (output_caps) -----------------------------------------
+
+    @staticmethod
+    def _cap_of(a: _Active) -> _StoredCap | None:
+        """The output cap *a* holds on a real device, if any."""
+        if a.limit_since is None or a.writer is None or a.config.simulate:
+            return None
+        # Only the SunSpec profiles program a device-side revert timer.
+        rt = a.config.revert_timeout_s if a.config.profile in _REVERT_PROFILES else None
+        return _StoredCap(
+            resource_id=a.resource_id,
+            cap_kw=a.setpoint_kw,
+            upper_kw=a.hi_kw,
+            profile=a.config.profile,
+            revert_timeout_s=float(rt) if rt is not None else None,
+            since=a.limit_since,
+            written_at=a.written_at,
+        )
+
+    async def _persist_caps(self) -> None:
+        """Bring ``output_caps`` in line with the caps of the changed resources.
+
+        Called with the lock held. A database failure is logged and the
+        in-memory state kept; the resources stay marked and are retried with
+        the next change.
+        """
+        if not self._cap_dirty:
+            return
+        upserts: dict[str, _StoredCap] = {}
+        deletes: list[str] = []
+        for rid in self._cap_dirty:
+            a = self._active.get(rid)
+            cap = self._cap_of(a) if a is not None else self._restored.get(rid)
+            if cap is not None:
+                upserts[rid] = cap
+            elif rid in self._cap_rows:
+                deletes.append(rid)
+        if not upserts and not deletes:
+            self._cap_dirty.clear()
+            return
+        factory = self._sessions()
+        if factory is None:
+            return
+        try:
+            from sqlalchemy import delete
+
+            from vpp.db.models import OutputCapModel
+
+            async with factory() as session:
+                if deletes:
+                    await session.execute(
+                        delete(OutputCapModel).where(OutputCapModel.resource_id.in_(deletes))
+                    )
+                for rid, cap in upserts.items():
+                    row = await session.get(OutputCapModel, rid)
+                    if row is None:
+                        row = OutputCapModel(resource_id=rid)
+                        session.add(row)
+                    row.cap_kw = cap.cap_kw
+                    row.upper_limit_kw = cap.upper_kw
+                    row.profile = cap.profile
+                    row.revert_timeout_s = cap.revert_timeout_s
+                    row.started_at = _to_dt(cap.since)
+                    row.updated_at = _to_dt(cap.written_at)
+                await session.commit()
+        except Exception:
+            logger.warning(
+                "could not persist the output caps of %s; keeping them in memory",
+                sorted(self._cap_dirty),
+                exc_info=True,
+            )
+            self._cap_rows.update(upserts)  # may exist now: delete them when lifted
+            return
+        self._cap_rows.update(upserts)
+        self._cap_rows.difference_update(deletes)
+        self._cap_dirty.clear()
+
+    async def load_output_caps(self) -> int:
+        """Load the caps a previous process left on devices; returns how many.
+
+        Rows whose device revert timer has certainly fired since their last
+        write, or whose resource no longer exists, are deleted instead.
+        Resources this process already controls keep their in-memory state.
+        A database failure is logged and leaves no restored caps.
+        """
+        factory = self._sessions()
+        if factory is None:
+            return 0
+        caps: dict[str, _StoredCap] = {}
+        stale: list[str] = []
+        async with self._lock:
+            now = self._clock()
+            try:
+                from sqlalchemy import delete, select
+
+                from vpp.db.models import OutputCapModel, ResourceModel
+
+                async with factory() as session:
+                    rows = list((await session.execute(select(OutputCapModel))).scalars().all())
+                    ids = [r.resource_id for r in rows]
+                    existing = set(
+                        (
+                            await session.execute(
+                                select(ResourceModel.id).where(ResourceModel.id.in_(ids))
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    for r in rows:
+                        cap = _StoredCap(
+                            resource_id=r.resource_id,
+                            cap_kw=float(r.cap_kw),
+                            upper_kw=float(r.upper_limit_kw),
+                            profile=r.profile,
+                            revert_timeout_s=r.revert_timeout_s,
+                            since=_to_epoch(r.started_at),
+                            written_at=_to_epoch(r.updated_at),
+                        )
+                        if r.resource_id not in existing or cap.expired(now):
+                            stale.append(r.resource_id)
+                        else:
+                            caps[r.resource_id] = cap
+                    if stale:
+                        await session.execute(
+                            delete(OutputCapModel).where(OutputCapModel.resource_id.in_(stale))
+                        )
+                        await session.commit()
+            except Exception:
+                logger.warning("could not load the persisted output caps", exc_info=True)
+                return 0
+            restored = {rid: c for rid, c in caps.items() if rid not in self._active}
+            self._restored.update(restored)
+            self._cap_rows.update(caps)
+        if stale:
+            logger.info("dropped %d expired output cap(s): %s", len(stale), sorted(stale))
+        if restored:
+            logger.info(
+                "restored %d output cap(s) left by a previous run: %s",
+                len(restored),
+                sorted(restored),
+            )
+        return len(restored)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -693,6 +910,17 @@ class SetpointActuator:
             "commands": self.commands,
             "failures": self.failures,
             "active": [a.to_dict() for a in self._active.values()],
+            "restored_output_caps": [
+                {
+                    "resource_id": c.resource_id,
+                    "limit_kw": c.cap_kw,
+                    "profile": c.profile,
+                    "since": c.since,
+                    "written_at": c.written_at,
+                    "revert_timeout_s": c.revert_timeout_s,
+                }
+                for c in self._restored.values()
+            ],
         }
 
 
@@ -741,9 +969,8 @@ def get_setpoint_actuator() -> SetpointActuator:
 def active_output_limits() -> dict[str, OutputLimit]:
     """Output caps held by this process's actuator (``{}`` when there is none).
 
-    Never creates the actuator. The state is per process: another API worker
-    or a restarted process does not see these limits (on a clean shutdown
-    they are released; after a crash the device's revert timer applies).
+    Never creates the actuator. Includes the caps restored from the
+    ``output_caps`` table at startup (:func:`restore_output_caps`).
     """
     return _actuator.output_limits() if _actuator is not None else {}
 
@@ -760,6 +987,22 @@ def start_control(settings: Any) -> asyncio.Task | None:
     if not actuator.enabled:
         return None
     return asyncio.create_task(actuator.run_forever(), name="vpp-control-watchdog")
+
+
+async def restore_output_caps() -> int:
+    """Load the persisted output caps into the process-wide actuator (startup).
+
+    Only when control is enabled: with the kill switch off nothing can lift
+    a cap, so the rows are left for the next run with control on.
+    """
+    actuator = _actuator
+    if actuator is None or not actuator.enabled:
+        return 0
+    try:
+        return await actuator.load_output_caps()
+    except Exception:
+        logger.exception("restoring output caps failed")
+        return 0
 
 
 async def stop_control(task: asyncio.Task | None) -> None:
@@ -791,6 +1034,7 @@ __all__ = [
     "active_output_limits",
     "build_actuator",
     "get_setpoint_actuator",
+    "restore_output_caps",
     "set_setpoint_actuator",
     "start_control",
     "stop_control",
