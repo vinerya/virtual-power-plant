@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
@@ -28,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
+
+_T = TypeVar("_T")
 
 
 def create_engine_from_settings(database_url: str, echo: bool = False) -> AsyncEngine:
@@ -182,12 +185,22 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with _session_factory() as session:
         try:
             yield session
-            await session.commit()
+            # Commit and the post-commit audit write run shielded, so a
+            # cancelled request cannot interrupt them mid-statement.
+            await run_shielded(lambda: _commit_and_write_deferred(session))
         except Exception:
-            await session.rollback()
-            await _write_deferred(session, failed=True)
+            await run_shielded(lambda: _rollback_and_write_deferred(session))
             raise
-        await _write_deferred(session, failed=False)
+
+
+async def _commit_and_write_deferred(session: AsyncSession) -> None:
+    await session.commit()
+    await _write_deferred(session, failed=False)
+
+
+async def _rollback_and_write_deferred(session: AsyncSession) -> None:
+    await session.rollback()
+    await _write_deferred(session, failed=True)
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
@@ -195,6 +208,74 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
     if _session_factory is None:
         raise RuntimeError("Database not initialised. Call init_db() during application startup.")
     return _session_factory
+
+
+# ---------------------------------------------------------------------------
+# Cancellation-safe units of DB work (background tasks)
+# ---------------------------------------------------------------------------
+
+
+async def run_shielded(work: Callable[[], Awaitable[_T]]) -> _T:
+    """Run one unit of DB work to completion even if the caller is cancelled.
+
+    Cancelling a task while it awaits a DB call interrupts SQLAlchemy
+    mid-statement: the connection is invalidated without a rollback and, on
+    SQLite, keeps the database write lock until it is garbage collected, so
+    every other writer fails with "database is locked" (on PostgreSQL it
+    leaves a connection "idle in transaction" holding row locks).
+
+    ``work()`` therefore runs in its own task. When the caller is cancelled,
+    it waits (ignoring further cancellations) for that task to finish -- its
+    session commits or rolls back and closes -- and then re-raises the
+    ``CancelledError``. Use it around each *single* transaction (or a short,
+    bounded sequence of them), never around a long-running loop, so a
+    cancelled background task still stops promptly.
+    """
+    task = asyncio.ensure_future(work())
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue  # cancelled again (or the work itself was): keep waiting
+            except Exception:
+                break
+        if not task.cancelled() and task.exception() is not None:
+            logger.warning(
+                "DB work finished with an error after its caller was cancelled",
+                exc_info=task.exception(),
+            )
+        raise
+
+
+async def run_in_session(
+    session_factory: Callable[[], AsyncSession],
+    work: Callable[[AsyncSession], Awaitable[_T]],
+    *,
+    commit: bool = True,
+) -> _T:
+    """Run ``work(session)`` in a fresh session as one cancellation-safe transaction.
+
+    Commits when ``work`` returns (unless ``commit=False``), rolls back when
+    it raises, and always closes the session -- all before a cancellation of
+    the caller proceeds (see :func:`run_shielded`).
+    """
+
+    async def unit() -> _T:
+        async with session_factory() as session:
+            try:
+                result = await work(session)
+                if commit:
+                    await session.commit()
+                return result
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await session.rollback()
+                raise
+
+    return await run_shielded(unit)
 
 
 async def close_db() -> None:

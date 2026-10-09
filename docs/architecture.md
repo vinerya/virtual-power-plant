@@ -221,6 +221,18 @@ Still per process:
 Each worker logs the effective topology at startup (`API topology: ...`)
 and warns about the per-process limits above.
 
+**Background tasks and DB sessions.** Background loops (ingestion, alert
+evaluation, DR, retention, leases, forwarded calls, the relay) are cancelled
+at shutdown and when their lease is lost. Cancelling SQLAlchemy
+mid-statement invalidates the connection without a rollback; on SQLite it
+then keeps the write lock until garbage collected and every other writer
+gets "database is locked". So each write transaction in a background task
+runs through `vpp.db.engine.run_in_session(factory, work)` (or
+`run_shielded(...)` around an existing unit): it runs in its own task, and a
+cancelled caller waits for it to commit or roll back and close its session
+before the cancellation proceeds. Only single transactions are shielded,
+never the loops, so shutdown stays prompt.
+
 ## Web console (`web/`)
 
 Next.js 15 App Router, TanStack Query, Tailwind/shadcn-style components,

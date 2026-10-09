@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Table, case, delete, literal, select, update
 
+from vpp.db.engine import run_in_session, run_shielded
 from vpp.db.models import SharedRateLimitModel
 
 if TYPE_CHECKING:
@@ -122,6 +123,12 @@ class SharedLimitStore:
 
     async def hit(self, key: str, limit: int, window_s: float = 60.0) -> bool:
         """Count one request under *key*; False (and not counted) when over *limit*."""
+        # Every write here is shielded (vpp.db.engine.run_shielded): a request
+        # cancelled mid-commit must not leak a connection that keeps SQLite's
+        # write lock and blocks every other request.
+        return await run_shielded(lambda: self._hit(key, limit, window_s))
+
+    async def _hit(self, key: str, limit: int, window_s: float) -> bool:
         now = self._clock()
         start = math.floor(now / window_s) * window_s
         t = _TABLE
@@ -181,6 +188,9 @@ class SharedLimitStore:
 
     async def login_failure(self, key: str, max_failures: int, window_s: float) -> None:
         """Record one failure; lock *key* for *window_s* after *max_failures* in the window."""
+        await run_shielded(lambda: self._login_failure(key, max_failures, window_s))
+
+    async def _login_failure(self, key: str, max_failures: int, window_s: float) -> None:
         now = self._clock()
         t = _TABLE
         async with self._sessions()() as session:
@@ -214,19 +224,22 @@ class SharedLimitStore:
         await self._maybe_purge(now)
 
     async def clear(self, key: str) -> None:
-        async with self._sessions()() as session:
+        async def work(session: AsyncSession) -> None:
             await session.execute(delete(_TABLE).where(_TABLE.c.key == key))
-            await session.commit()
+
+        await run_in_session(self._sessions(), work)
 
     # -- Housekeeping ----------------------------------------------------
 
     async def purge(self, now: float | None = None) -> int:
         """Delete rows whose ``expires_at`` has passed; returns how many."""
-        now = self._clock() if now is None else now
-        async with self._sessions()() as session:
-            result = await session.execute(delete(_TABLE).where(_TABLE.c.expires_at < now))
-            await session.commit()
-        return int(getattr(result, "rowcount", 0) or 0)
+        cutoff = self._clock() if now is None else now
+
+        async def work(session: AsyncSession) -> int:
+            result = await session.execute(delete(_TABLE).where(_TABLE.c.expires_at < cutoff))
+            return int(getattr(result, "rowcount", 0) or 0)
+
+        return await run_in_session(self._sessions(), work)
 
     async def _maybe_purge(self, now: float) -> None:
         if now < self._next_purge:

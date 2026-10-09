@@ -34,6 +34,7 @@ from sqlalchemy import and_, delete, func, select
 
 from vpp.cluster.lease import TaskRole
 from vpp.cluster.node import utcnow
+from vpp.db.engine import run_in_session
 from vpp.db.models import (
     AlertModel,
     AuditLogModel,
@@ -148,12 +149,16 @@ async def _delete_batch(
     """Delete at most *batch_size* old rows in one short transaction."""
     pk = rule.model.id
     ids = select(pk).where(rule.older_than(cutoff)).limit(batch_size).scalar_subquery()
-    async with factory() as session:
+
+    async def work(session: AsyncSession) -> int:
         result = await session.execute(
             delete(rule.model).where(pk.in_(ids)).execution_options(synchronize_session=False)
         )
-        await session.commit()
-    return int(getattr(result, "rowcount", 0) or 0)
+        return int(getattr(result, "rowcount", 0) or 0)
+
+    # Shielded: losing the lease / shutdown mid-batch must not leak a
+    # connection holding SQLite's write lock. Only one batch is waited for.
+    return await run_in_session(factory, work)
 
 
 async def prune(

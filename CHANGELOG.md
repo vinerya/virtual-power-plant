@@ -566,6 +566,18 @@ changes** before upgrading.
   was garbage collected ("database is locked" for every other writer). The
   poll's database write now runs to completion (commit or rollback, session
   closed) before the cancellation proceeds.
+- **Other background writers could leave SQLite locked the same way** when
+  cancelled at shutdown or on lease loss: MQTT telemetry ingestion, the
+  alert evaluator, the DR orchestrator's dispatch/release records, OCPP
+  vehicle sync, the degradation updater, retention pruning, the trading
+  market-data tick, device-setpoint audit records, the cluster lease
+  renewal, forwarded-call executor and WebSocket relay, and the shared rate
+  limit store (also the request commit and post-commit audit write). Each
+  write transaction now goes through one shared helper
+  (`vpp.db.engine.run_in_session` / `run_shielded`) that finishes it (commit
+  or rollback, session closed) before the cancellation proceeds; the loops
+  around them still stop promptly. A forwarded call the executor claimed
+  now always gets its final status written instead of staying `running`.
 - **SunSpec register maps verified against the official SunSpec model
   definitions** (the sunspec/models JSON bundled with pysunspec2 1.3.6);
   still untested on physical hardware. `tests/test_sunspec_models.py`

@@ -39,6 +39,7 @@ from sqlalchemy import case, delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from vpp.cluster.node import as_utc, holder_is_dead_local_process, node_id, utcnow
+from vpp.db.engine import run_in_session, run_shielded
 from vpp.db.models import ClusterLeaseModel
 
 if TYPE_CHECKING:
@@ -64,7 +65,23 @@ async def try_acquire(
     *,
     now: datetime | None = None,
 ) -> bool:
-    """Acquire or renew lease *name* for *holder*. True when *holder* now holds it."""
+    """Acquire or renew lease *name* for *holder*. True when *holder* now holds it.
+
+    Runs shielded (:func:`~vpp.db.engine.run_shielded`): the elector's loop
+    is cancelled on shutdown, and an interrupted commit would otherwise leak
+    a connection holding SQLite's write lock.
+    """
+    return await run_shielded(lambda: _try_acquire(session_factory, name, holder, ttl_s, now=now))
+
+
+async def _try_acquire(
+    session_factory: async_sessionmaker[AsyncSession],
+    name: str,
+    holder: str,
+    ttl_s: float,
+    *,
+    now: datetime | None = None,
+) -> bool:
     now = now or utcnow()
     expires = now + timedelta(seconds=ttl_s)
     lease = ClusterLeaseModel
@@ -121,14 +138,16 @@ async def release(
     session_factory: async_sessionmaker[AsyncSession], name: str, holder: str
 ) -> bool:
     """Give up lease *name* if *holder* holds it (so a follower takes over at once)."""
-    async with session_factory() as session:
+
+    async def work(session: AsyncSession) -> bool:
         result = await session.execute(
             delete(ClusterLeaseModel)
             .where(ClusterLeaseModel.name == name, ClusterLeaseModel.holder == holder)
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
         return _rowcount(result) == 1
+
+    return await run_in_session(session_factory, work)
 
 
 async def lease_holders(

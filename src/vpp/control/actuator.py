@@ -645,9 +645,9 @@ class SetpointActuator:
             else:
                 factory = self._sessions()
                 if factory is not None:
-                    async with factory() as own:
-                        await _write(own)
-                        await own.commit()
+                    from vpp.db.engine import run_in_session
+
+                    await run_in_session(factory, _write)
         except Exception:
             logger.warning("failed to record device setpoint commands", exc_info=True)
         counts: dict[str, int] = {}
