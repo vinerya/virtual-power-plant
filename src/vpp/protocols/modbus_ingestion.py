@@ -34,8 +34,6 @@ to :meth:`ModbusAdapter.configure`.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -106,20 +104,12 @@ class ModbusResourcePersister:
         if kw is None and soc is None:
             return
 
-        # Cancelling a task while it awaits a DB call interrupts SQLAlchemy
-        # mid-statement: the connection is invalidated without a rollback and
-        # (on SQLite) keeps the write lock until it is garbage collected,
-        # blocking every other writer. So the write runs in its own task that
-        # a cancelled poll (e.g. the ingestion loop stopping) waits for: it
-        # commits or rolls back and closes its session, then the
-        # cancellation proceeds.
-        write = asyncio.ensure_future(self._persist(message, kw, soc))
-        try:
-            await asyncio.shield(write)
-        except asyncio.CancelledError:
-            with contextlib.suppress(Exception):
-                await write
-            raise
+        # Stopping the ingestion loop cancels this poll; the write must still
+        # commit or roll back and close its session first, or (on SQLite) the
+        # connection keeps the write lock and blocks every other writer.
+        from vpp.db.engine import run_shielded
+
+        await run_shielded(lambda: self._persist(message, kw, soc))
 
     async def _persist(
         self, message: ProtocolMessage, kw: float | None, soc: float | None

@@ -56,7 +56,7 @@ from .simulation import OrderRejected, SimulatedExchange
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from .simulation import Fill
 
@@ -1084,9 +1084,14 @@ def reset_trading_service(config: TradingServiceConfig | None = None) -> Trading
     return _service
 
 
+async def _tick_once(factory: async_sessionmaker[AsyncSession]) -> None:
+    async with factory() as session:
+        await get_trading_service().tick(session)
+
+
 async def run_market_data_loop(interval_seconds: float) -> None:
     """Background task: tick the simulated venue and publish market data."""
-    from vpp.db.engine import get_session_factory
+    from vpp.db.engine import get_session_factory, run_shielded
 
     factory = get_session_factory()
     while True:
@@ -1094,8 +1099,9 @@ async def run_market_data_loop(interval_seconds: float) -> None:
         # construction, and short-lived app lifespans need not touch the DB.
         await asyncio.sleep(interval_seconds)
         try:
-            async with factory() as session:
-                await get_trading_service().tick(session)
+            # Shielded: losing the lease / shutdown mid-tick must not leak a
+            # connection holding SQLite's write lock (only this tick waits).
+            await run_shielded(lambda: _tick_once(factory))
         except asyncio.CancelledError:
             raise
         except Exception:

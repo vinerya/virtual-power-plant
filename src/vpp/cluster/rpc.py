@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import enum
+import functools
 import json
 import logging
 import uuid
@@ -38,6 +39,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import and_, delete, select, update
 
 from vpp.cluster.node import node_id, utcnow
+from vpp.db.engine import run_in_session, run_shielded
 from vpp.db.models import ClusterCallModel
 
 if TYPE_CHECKING:
@@ -172,7 +174,8 @@ async def submit(
     """Persist a pending call for the *target* leader. Returns the call id."""
     now = utcnow()
     call_id = str(uuid.uuid4())
-    async with _factory(session_factory)() as session:
+
+    async def work(session: AsyncSession) -> None:
         session.add(
             ClusterCallModel(
                 id=call_id,
@@ -185,7 +188,8 @@ async def submit(
                 deadline_at=now + timedelta(seconds=timeout_s),
             )
         )
-        await session.commit()
+
+    await run_in_session(_factory(session_factory), work)
     return call_id
 
 
@@ -250,15 +254,16 @@ def _outcome(row: ClusterCallModel) -> Any:
 
 
 async def _cancel_if_pending(factory: async_sessionmaker[AsyncSession], call_id: str) -> bool:
-    async with factory() as session:
+    async def work(session: AsyncSession) -> bool:
         result = await session.execute(
             update(ClusterCallModel)
             .where(ClusterCallModel.id == call_id, ClusterCallModel.status == "pending")
             .values(status="cancelled", completed_at=utcnow())
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
         return int(getattr(result, "rowcount", 0) or 0) == 1
+
+    return await run_in_session(factory, work)
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +282,8 @@ async def execute_pending(
     if not targets:
         return 0
     now = utcnow()
-    async with session_factory() as session:
+
+    async def expire_and_list(session: AsyncSession) -> list[str]:
         # Calls nobody claimed in time: their callers have given up.
         await session.execute(
             update(ClusterCallModel)
@@ -290,7 +296,7 @@ async def execute_pending(
             .execution_options(synchronize_session=False)
         )
         await session.commit()
-        ids = list(
+        return list(
             (
                 await session.execute(
                     select(ClusterCallModel.id)
@@ -305,9 +311,14 @@ async def execute_pending(
             .scalars()
             .all()
         )
+
+    ids = await run_in_session(session_factory, expire_and_list, commit=False)
     ran = 0
     for call_id in ids:
-        if await _run_one(session_factory, call_id):
+        # One claimed call runs to its final status write even when the
+        # executor is cancelled: otherwise it would stay ``running`` forever
+        # and an interrupted commit could leak SQLite's write lock.
+        if await run_shielded(functools.partial(_run_one, session_factory, call_id)):
             ran += 1
     return ran
 
@@ -392,7 +403,8 @@ async def purge_finished(
     session_factory: async_sessionmaker[AsyncSession], *, older_than: timedelta = RETENTION
 ) -> int:
     cutoff = utcnow() - older_than
-    async with session_factory() as session:
+
+    async def work(session: AsyncSession) -> int:
         result = await session.execute(
             delete(ClusterCallModel)
             .where(
@@ -401,8 +413,9 @@ async def purge_finished(
             )
             .execution_options(synchronize_session=False)
         )
-        await session.commit()
         return int(getattr(result, "rowcount", 0) or 0)
+
+    return await run_in_session(session_factory, work)
 
 
 async def run_executor(

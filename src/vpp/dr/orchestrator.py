@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from vpp.db.engine import run_in_session, run_shielded
 from vpp.db.models import DREventResponseModel, V2GVehicleModel
 from vpp.dr.translate import (
     DRDirective,
@@ -186,7 +187,8 @@ class DROrchestrator:
         details: dict[str, Any] | None = None,
     ) -> None:
         try:
-            async with self._sessions()() as session:
+
+            async def work(session: AsyncSession) -> None:
                 await self._record(
                     session,
                     protocol=directive.protocol,
@@ -202,7 +204,8 @@ class DROrchestrator:
                     reason=reason if reason is not None else directive.reason,
                     details=details or {"directive": directive.to_dict()},
                 )
-                await session.commit()
+
+            await run_in_session(self._sessions(), work)
         except Exception:
             logger.exception("failed to record DR %s for %s", action, directive.source_id)
 
@@ -518,71 +521,87 @@ class DROrchestrator:
         interval_min = max(1, min(_MAX_INTERVAL_MIN, math.ceil(horizon_s / 60.0)))
         target = float(directive.target_kw or 0.0)
 
-        async with self._sessions()() as session:
-            assets, constraints, vehicles = await self._load(session)
-            result = await execute_dispatch(
-                session,
-                assets,
-                target,
-                interval_minutes=interval_min,
-                constraints=constraints,
-                problem_type="dr_dispatch",
-                extra_inputs={"dr": directive.to_dict()},
-                apply=True,
-                actuator=self.actuator(),
-                source="dr",
-            )
-            device_deliveries = result.get("device_deliveries") or []
-            ev_alloc = {
-                rid[len(EV_ASSET_PREFIX) :]: float(kw)
-                for rid, kw in result["allocations"].items()
-                if rid.startswith(EV_ASSET_PREFIX)
-            }
-            participants = [v for v in vehicles if v.id in ev_alloc]
-            # Allocation is export-positive; OCPP/scheduler power is charge-positive.
-            slots = {
-                ev_id: setpoint_slots(-kw, interval_min * 60.0, start=now)
-                for ev_id, kw in ev_alloc.items()
-            }
-            deliveries = (
-                await deliver_slots(
-                    ocpp_adapter_from(self.registry.get("ocpp")),
-                    participants,
-                    slots,
-                    profile_id=DR_PROFILE_ID,
-                    stack_level=DR_STACK_LEVEL,
-                    max_periods=self.policy.max_profile_periods,
+        async def unit() -> tuple[Any, ...]:
+            async with self._sessions()() as session:
+                assets, constraints, vehicles = await self._load(session)
+                result = await execute_dispatch(
+                    session,
+                    assets,
+                    target,
+                    interval_minutes=interval_min,
+                    constraints=constraints,
+                    problem_type="dr_dispatch",
+                    extra_inputs={"dr": directive.to_dict()},
+                    apply=True,
+                    actuator=self.actuator(),
+                    source="dr",
                 )
-                if participants
-                else []
-            )
-            failed = result["status"] == "failed"
-            row = await self._record(
-                session,
-                protocol=directive.protocol,
-                source_id=directive.source_id,
-                revision=directive.revision,
-                action="failed" if failed else "dispatched",
-                signal_type=directive.signal_type,
-                signal_level=directive.signal_level,
-                target_kw=target,
-                delivered_kw=result["delivered_kw"],
-                window_start=ts_to_dt(now),
-                window_end=ts_to_dt(now + interval_min * 60.0),
-                run_id=result["run_id"],
-                reason=directive.reason if not failed else result["message"],
-                details={
-                    "directive": directive.to_dict(),
-                    "redispatch": redispatch,
-                    "status": result["status"],
-                    "method": result["method"],
-                    "shortfall_kw": result["shortfall_kw"],
-                    "allocations": result["allocations"],
-                    "ev_deliveries": deliveries,
-                    "device_deliveries": device_deliveries,
-                },
-            )
-            await session.commit()
+                device_deliveries = result.get("device_deliveries") or []
+                ev_alloc = {
+                    rid[len(EV_ASSET_PREFIX) :]: float(kw)
+                    for rid, kw in result["allocations"].items()
+                    if rid.startswith(EV_ASSET_PREFIX)
+                }
+                participants = [v for v in vehicles if v.id in ev_alloc]
+                # Allocation is export-positive; OCPP/scheduler power is charge-positive.
+                slots = {
+                    ev_id: setpoint_slots(-kw, interval_min * 60.0, start=now)
+                    for ev_id, kw in ev_alloc.items()
+                }
+                deliveries = (
+                    await deliver_slots(
+                        ocpp_adapter_from(self.registry.get("ocpp")),
+                        participants,
+                        slots,
+                        profile_id=DR_PROFILE_ID,
+                        stack_level=DR_STACK_LEVEL,
+                        max_periods=self.policy.max_profile_periods,
+                    )
+                    if participants
+                    else []
+                )
+                failed = result["status"] == "failed"
+                row = await self._record(
+                    session,
+                    protocol=directive.protocol,
+                    source_id=directive.source_id,
+                    revision=directive.revision,
+                    action="failed" if failed else "dispatched",
+                    signal_type=directive.signal_type,
+                    signal_level=directive.signal_level,
+                    target_kw=target,
+                    delivered_kw=result["delivered_kw"],
+                    window_start=ts_to_dt(now),
+                    window_end=ts_to_dt(now + interval_min * 60.0),
+                    run_id=result["run_id"],
+                    reason=directive.reason if not failed else result["message"],
+                    details={
+                        "directive": directive.to_dict(),
+                        "redispatch": redispatch,
+                        "status": result["status"],
+                        "method": result["method"],
+                        "shortfall_kw": result["shortfall_kw"],
+                        "allocations": result["allocations"],
+                        "ev_deliveries": deliveries,
+                        "device_deliveries": device_deliveries,
+                    },
+                )
+                await session.commit()
+            return result, row, participants, vehicles, deliveries, device_deliveries, ev_alloc
+
+        # Shielded: one dispatch (optimise, write setpoints, record) runs to its
+        # commit even when the orchestrator is stopped, so a cancelled task
+        # neither half-applies it nor leaks a connection holding the SQLite
+        # write lock.
+        (
+            result,
+            row,
+            participants,
+            vehicles,
+            deliveries,
+            device_deliveries,
+            ev_alloc,
+        ) = await run_shielded(unit)
 
         self.dispatch_count += 1
         self._active = {
@@ -662,36 +681,41 @@ class DROrchestrator:
             except Exception:
                 logger.exception("failed to release device setpoints")
         try:
-            async with self._sessions()() as session:
-                vehicles = []
-                if active["ev_ids"]:
-                    vehicles = list(
-                        (
-                            await session.execute(
-                                select(V2GVehicleModel).where(
-                                    V2GVehicleModel.id.in_(active["ev_ids"])
+
+            async def unit() -> list[dict[str, Any]]:
+                async with self._sessions()() as session:
+                    vehicles = []
+                    if active["ev_ids"]:
+                        vehicles = list(
+                            (
+                                await session.execute(
+                                    select(V2GVehicleModel).where(
+                                        V2GVehicleModel.id.in_(active["ev_ids"])
+                                    )
                                 )
                             )
+                            .scalars()
+                            .all()
                         )
-                        .scalars()
-                        .all()
+                    cleared = await clear_profiles(adapter, vehicles, profile_id=DR_PROFILE_ID)
+                    directive: DRDirective = active["directive"]
+                    await self._record(
+                        session,
+                        protocol=directive.protocol,
+                        source_id=directive.source_id,
+                        revision=directive.revision,
+                        action="released",
+                        signal_type=directive.signal_type,
+                        target_kw=None,
+                        window_end=ts_to_dt(self._clock()),
+                        run_id=active["run_id"],
+                        reason=reason,
+                        details={"cleared_ev_profiles": cleared, "device_releases": released},
                     )
-                cleared = await clear_profiles(adapter, vehicles, profile_id=DR_PROFILE_ID)
-                directive: DRDirective = active["directive"]
-                await self._record(
-                    session,
-                    protocol=directive.protocol,
-                    source_id=directive.source_id,
-                    revision=directive.revision,
-                    action="released",
-                    signal_type=directive.signal_type,
-                    target_kw=None,
-                    window_end=ts_to_dt(self._clock()),
-                    run_id=active["run_id"],
-                    reason=reason,
-                    details={"cleared_ev_profiles": cleared, "device_releases": released},
-                )
-                await session.commit()
+                    await session.commit()
+                return cleared
+
+            cleared = await run_shielded(unit)
         except Exception:
             logger.exception("failed to release DR dispatch")
         summary = {

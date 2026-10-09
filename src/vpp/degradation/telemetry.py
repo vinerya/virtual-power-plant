@@ -123,10 +123,11 @@ class DegradationUpdater:
             return None
 
         # Local import to avoid circular dependency at module load.
+        from vpp.db.engine import run_in_session
         from vpp.db.models import ResourceModel
         from vpp.db.repositories import BatteryDegradationRepository
 
-        async with self._session_factory() as session:
+        async def work(session: AsyncSession) -> SOHUpdate | None:
             obj: ResourceModel | None = await session.get(ResourceModel, window.battery_id)
             if obj is None or obj.resource_type != "battery":
                 return None
@@ -171,8 +172,6 @@ class DegradationUpdater:
                 ts=ts,
                 loss_fraction=loss,
             )
-            await session.commit()
-
             return SOHUpdate(
                 battery_id=obj.id,
                 previous_soh=previous_soh,
@@ -183,6 +182,10 @@ class DegradationUpdater:
                 cumulative_throughput_kwh=new_throughput_kwh,
                 timestamp=ts,
             )
+
+        # Shielded: stopping the updater (shutdown, lease loss) mid-commit must
+        # not leak a connection holding SQLite's write lock.
+        return await run_in_session(self._session_factory, work)
 
     async def run_periodic(
         self,

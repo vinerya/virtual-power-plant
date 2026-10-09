@@ -33,6 +33,7 @@ from sqlalchemy import delete, func, select
 
 from vpp.cluster.node import node_id, utcnow
 from vpp.cluster.rpc import dumps
+from vpp.db.engine import run_in_session
 from vpp.db.models import ClusterEventModel
 
 if TYPE_CHECKING:
@@ -123,12 +124,15 @@ class WebSocketRelay:
 
     async def _insert(self, batch: list[tuple[str, str]]) -> None:
         now = utcnow()
-        async with self._factory() as session:
+
+        async def work(session: AsyncSession) -> None:
             session.add_all(
                 ClusterEventModel(origin=self.origin, channel=ch, payload_json=p, created_at=now)
                 for ch, p in batch
             )
-            await session.commit()
+
+        # Shielded: stop() cancels the writer; see vpp.db.engine.run_shielded.
+        await run_in_session(self._factory, work)
 
     # -- inbound -----------------------------------------------------------
 
@@ -171,14 +175,15 @@ class WebSocketRelay:
         self._seen_set.add(event_id)
 
     async def purge(self) -> int:
-        async with self._factory() as session:
+        async def work(session: AsyncSession) -> int:
             result = await session.execute(
                 delete(ClusterEventModel)
                 .where(ClusterEventModel.created_at < utcnow() - RETENTION)
                 .execution_options(synchronize_session=False)
             )
-            await session.commit()
             return int(getattr(result, "rowcount", 0) or 0)
+
+        return await run_in_session(self._factory, work)
 
     async def _reader(self) -> None:
         loop = asyncio.get_running_loop()

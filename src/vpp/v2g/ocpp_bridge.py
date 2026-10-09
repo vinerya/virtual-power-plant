@@ -168,9 +168,11 @@ class OCPPVehicleBridge:
         }.get(kind)
         if handler is None:
             return
-        async with self._sessions()() as session:
-            events = await handler(session, msg.payload)
-            await session.commit()
+        from vpp.db.engine import run_in_session
+
+        # Shielded: an adapter shutting down mid-commit must not leak a
+        # connection holding SQLite's write lock.
+        events = await run_in_session(self._sessions(), lambda s: handler(s, msg.payload))
         for event_type, data in events:
             await publish(event_type, data, "v2g.ocpp")
 

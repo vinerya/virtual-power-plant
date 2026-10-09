@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy import Select, and_, func, or_, select
 
 from vpp.alerts import Alert, AlertManager, AlertRule, AlertSeverity, RuleType
+from vpp.db.engine import run_in_session
 from vpp.db.models import AlertModel, AlertRuleModel, ResourceModel
 from vpp.events.bus import Event, EventBus, EventType
 from vpp.metrics import normalise_soc, record_alert_fired
@@ -411,9 +412,7 @@ class AlertService:
 
     async def start(self, bus: EventBus, *, seed_defaults: bool = False) -> None:
         if seed_defaults:
-            async with self._session_factory() as session:
-                added = await AlertRepository.seed_default_rules(session)
-                await session.commit()
+            added = await run_in_session(self._session_factory, AlertRepository.seed_default_rules)
             if added:
                 logger.info("Seeded %d default alert rules", added)
         await self.reload_rules()
@@ -494,8 +493,8 @@ class AlertService:
             return []
         resource_id = str(resource_id)
 
-        fired: list[tuple[Alert, AlertModel]] = []
-        async with self._session_factory() as session:
+        async def evaluate(session: AsyncSession) -> list[tuple[Alert, AlertModel]]:
+            fired: list[tuple[Alert, AlertModel]] = []
             for metric in self._metrics_of_interest:
                 value = _numeric(data.get(metric))
                 if value is None:
@@ -509,8 +508,12 @@ class AlertService:
                         fired.append((alert, row))
 
                 await self._auto_resolve(session, metric, value, resource_id)
-            await session.commit()
-            payloads = [(alert, serialize_alert(row)) for alert, row in fired]
+            return fired
+
+        # Shielded: stopping the evaluator mid-commit must not leak a
+        # connection holding SQLite's write lock.
+        fired = await run_in_session(self._session_factory, evaluate)
+        payloads = [(alert, serialize_alert(row)) for alert, row in fired]
 
         out: list[dict[str, Any]] = []
         for alert, payload in payloads:

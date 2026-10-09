@@ -91,23 +91,28 @@ class MQTTTelemetryIngestor:
 
         # Local imports to avoid a hard import-time dependency between
         # protocols and db/events for callers that only need the parser.
+        from vpp.db.engine import run_in_session
         from vpp.db.repositories import BatteryStateRepository, ResourceRepository
         from vpp.events import Event, EventType, get_event_bus
 
-        async with self._session_factory() as session:
+        async def write(session: AsyncSession) -> bool:
             resource = await ResourceRepository.get_by_id(session, parsed.resource_id)
             if resource is None or resource.resource_type != "battery":
-                logger.warning(
-                    "MQTT telemetry for unknown/non-battery resource %r on topic=%s; dropping",
-                    parsed.resource_id,
-                    message.topic,
-                )
                 return False
-
             await BatteryStateRepository.record(
                 session, resource_id=parsed.resource_id, soc=soc, **kwargs
             )
-            await session.commit()
+            return True
+
+        # Shielded: stopping ingestion (shutdown, lease loss) mid-commit must
+        # not leak a connection that still holds SQLite's write lock.
+        if not await run_in_session(self._session_factory, write):
+            logger.warning(
+                "MQTT telemetry for unknown/non-battery resource %r on topic=%s; dropping",
+                parsed.resource_id,
+                message.topic,
+            )
+            return False
 
         try:
             await get_event_bus().publish(
