@@ -541,8 +541,8 @@ changes** before upgrading.
   availability was its polled output, so once the VPP had capped it (e.g.
   `WMaxLimPct` 40 % -> 4 kW) every later dispatch saw only 4 kW and never
   raised the limit until the device's revert timer expired. The actuator
-  now tracks the output caps it holds (accepted, read-back-verified writes;
-  per process), and while a resource's output sits at such a cap the
+  now tracks the output caps it holds (accepted, read-back-verified writes),
+  and while a resource's output sits at such a cap the
   optimiser estimates its availability from the newest reading taken before
   the cap (at most 15 min old, `availability_basis`
   `pre_curtailment_telemetry`) or else its nameplate
@@ -552,6 +552,16 @@ changes** before upgrading.
   a setpoint of 100 % or more as no limit and writes only `WMaxLim_Ena` = 0.
   The run's asset summary records `output_limit_kw`. See
   [docs/protocols.md](docs/protocols.md) for the limitations.
+- **Curtailment survives an API restart.** The output caps were kept in
+  process memory only, so after a restart or crash a curtailed PV looked as
+  if its capped output were all it had, and dispatch could not lift the cap
+  until the device's revert timer expired. Caps are now persisted in the new
+  `output_caps` table (migration `0013_output_caps`): written when a cap is
+  set or rewritten, deleted when it is lifted or released (including on a
+  clean shutdown), and loaded at startup when `VPP_CONTROL_ENABLED=true`.
+  Rows whose SunSpec revert timer (`revert_timeout_s`) has run out since the
+  last write, or whose resource was deleted, are dropped on load. A database
+  error while saving or loading caps is logged and never fails a dispatch.
 - **Modbus scale-factor tearing.** Polling read each value and its SunSpec
   scale-factor register in separate requests, so a device changing a scale
   factor in between yielded a value off by a power of ten. The polled

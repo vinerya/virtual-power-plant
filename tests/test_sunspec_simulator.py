@@ -526,6 +526,38 @@ async def test_dispatch_apply_end_to_end_against_the_simulator(client, auth_head
             dev.step(1.0)
             await _wait_for(curtailed)
 
+            # 2d. API restart: a fresh actuator loads the cap from output_caps, so
+            # the polled 4 kW is still recognised as the VPP's own limit and the
+            # dispatch can lift it (without the table it would see 4 kW only).
+            actuator = SetpointActuator(enabled=True, registry=get_registry())
+            set_setpoint_actuator(actuator)
+            assert actuator.output_limits() == {}
+            assert await actuator.load_output_caps() == 1
+            assert actuator.output_limits()[solar].limit_kw == pytest.approx(4.0)
+            resp = await client.post(
+                "/api/v1/optimization/dispatch",
+                json={"target_power_kw": 10.0, "resource_ids": [solar], "apply": True},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert body["allocations"][0]["availability_basis"] == "pre_curtailment_telemetry"
+            assert body["allocations"][0]["allocated_power_kw"] == pytest.approx(6.0)
+            assert body["device_deliveries"][0]["uncurtailed"] is True
+            assert dev.raw(123, "WMaxLim_Ena") == [0]
+            assert actuator.output_limits() == {}
+            dev.step(1.0)
+            await _wait_for(restored)
+            resp = await client.post(  # and curtail to 4 kW again for what follows
+                "/api/v1/optimization/dispatch",
+                json={"target_power_kw": 4.0, "resource_ids": [solar], "apply": True},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200, resp.text
+            assert dev.raw(123, "WMaxLim_Ena") == [1]
+            dev.step(1.0)
+            await _wait_for(curtailed)
+
             # 3. Charge the battery at 2 kW (model 124, forced charge).
             resp = await client.post(
                 "/api/v1/optimization/dispatch",

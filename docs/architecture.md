@@ -216,7 +216,10 @@ Still per process:
   expiry watchdog live in the process that issued it, so
   `VPP_CONTROL_ENABLED=true` with `VPP_API_WORKERS > 1` is refused at
   startup for the same reason: two workers could send conflicting commands
-  to one device.
+  to one device. The output caps it holds on generation resources are
+  also saved in `output_caps` and reloaded at startup, so a restarted
+  process still recognises its own curtailment (see
+  [protocols](protocols.md#curtailed-generation-and-its-availability)).
 
 Each worker logs the effective topology at startup (`API topology: ...`)
 and warns about the per-process limits above.
@@ -259,9 +262,9 @@ Tables: `users`, `api_keys`, `resources`, `battery_states`,
 `v2g_charging_sessions`, `v2g_schedules`, `v2g_flexibility_bids`,
 `dr_event_responses`, and the multi-worker coordination tables
 `cluster_leases`, `cluster_calls`, `cluster_events`, `shared_rate_limits`,
-`audit_log`.
+`audit_log`, and the device-control table `output_caps`.
 
-Migrations live in `src/vpp/migrations/versions/` (0001-0012) and ship in
+Migrations live in `src/vpp/migrations/versions/` (0001-0013) and ship in
 the wheel.
 `tests/test_alembic_drift.py` upgrades a fresh database to head and fails if
 the models and migrations differ, and checks there is a single head.

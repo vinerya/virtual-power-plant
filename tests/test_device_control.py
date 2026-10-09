@@ -17,8 +17,8 @@ import pytest
 from _v2g_helpers import tmp_session_factory
 from sqlalchemy import select
 
-from vpp.control.actuator import SetpointActuator
-from vpp.db.models import EventLogModel, ResourceModel
+from vpp.control.actuator import SetpointActuator, _to_epoch
+from vpp.db.models import EventLogModel, OutputCapModel, ResourceModel
 from vpp.events import EventType, get_event_bus
 from vpp.optimization.planning import FleetAsset
 from vpp.protocols.modbus import (
@@ -640,6 +640,215 @@ async def test_curtailed_reading_is_not_taken_as_availability(db):
         assert (reported.available_kw, reported.availability_basis) == (5.5, "reported")
         uncapped = await resource_to_asset(s, rows["fresh"])
         assert (uncapped.available_kw, uncapped.availability_basis) == (4.0, "telemetry")
+
+
+async def _caps_in_db(db) -> dict[str, OutputCapModel]:
+    async with db() as s:
+        rows = (await s.execute(select(OutputCapModel))).scalars().all()
+    return {r.resource_id: r for r in rows}
+
+
+async def _solar_row(db, rid: str, current_kw: float = 4.0, rated: float = 10.0) -> None:
+    async with db() as s:
+        s.add(
+            ResourceModel(
+                id=rid,
+                name=rid,
+                resource_type="solar",
+                rated_power=rated,
+                current_power=current_kw,
+            )
+        )
+        await s.commit()
+
+
+def _pv(rid: str = "pv", available: float | None = 6.0, **control) -> FleetAsset:
+    pv = _asset(rid, rtype="solar", rated=10.0, **control)
+    pv.available_kw = available
+    return pv
+
+
+SUNSPEC = {"profile": "sunspec_123", "model_base": 40000, "min_interval_s": 0}
+
+
+async def test_output_cap_survives_a_restart_and_is_lifted_from_pre_curtailment_data(db):
+    """A new actuator (restarted API) loads the cap; availability is not the cap."""
+    from datetime import datetime, timedelta, timezone
+
+    from vpp.api.optimization_support import resource_to_asset
+    from vpp.portal.telemetry import record_samples
+
+    now = datetime.now(timezone.utc)
+    await _solar_row(db, "pv")
+    async with db() as s:
+        await record_samples(s, "pv", [(now - timedelta(seconds=90), 6.0, None)], source="t")
+        await s.commit()
+    clock = Clock(now.timestamp() - 60)
+    act, _ = _actuator(clock, db)
+    [d] = await act.apply([_pv(revert_timeout_s=900, **SUNSPEC)], {"pv": 4.0}, source="t")
+    assert d["status"] == "accepted"
+    [row] = (await _caps_in_db(db)).values()
+    assert (row.resource_id, row.cap_kw, row.upper_limit_kw) == ("pv", 4.0, 10.0)
+    assert (row.profile, row.revert_timeout_s) == ("sunspec_123", 900.0)
+    async with db() as s:
+        await record_samples(s, "pv", [(now - timedelta(seconds=30), 4.0, None)], source="t")
+        await s.commit()
+
+    # "Restart": the old actuator is gone without releasing anything.
+    clock2 = Clock(now.timestamp())
+    act2, writers2 = _actuator(clock2, db)
+    assert act2.output_limits() == {}
+    assert await act2.load_output_caps() == 1
+    [limit] = act2.output_limits().values()
+    assert (limit.resource_id, limit.limit_kw) == ("pv", 4.0)
+    assert limit.since == pytest.approx(now.timestamp() - 60)
+    assert act2.status()["restored_output_caps"][0]["limit_kw"] == 4.0
+    async with db() as s:
+        asset = await resource_to_asset(s, await s.get(ResourceModel, "pv"), act2.output_limits())
+    assert (asset.available_kw, asset.availability_basis) == (6.0, "pre_curtailment_telemetry")
+
+    # Dispatch can now lift the cap: allocated all 6 kW -> upper limit written.
+    pv = _pv(available=asset.available_kw, revert_timeout_s=900, **SUNSPEC)
+    [d] = await act2.apply([pv], {"pv": 6.0}, source="t")
+    assert d["status"] == "accepted" and d["uncurtailed"] is True
+    assert writers2["pv"].calls == [("write", 10.0)]
+    assert act2.output_limits() == {}
+    assert await _caps_in_db(db) == {}
+
+
+async def test_restored_cap_keeps_its_start_and_nameplate_fallback(db):
+    from vpp.api.optimization_support import resource_to_asset
+
+    await _solar_row(db, "pv")  # no telemetry at all
+    act, _ = _actuator(Clock(1_000.0), db)
+    await act.apply([_pv(**SUNSPEC)], {"pv": 4.0}, source="t")
+    # No revert timer: the cap holds however long the VPP was down.
+    act2, _ = _actuator(Clock(1_000_000.0), db)
+    assert await act2.load_output_caps() == 1
+    async with db() as s:
+        asset = await resource_to_asset(s, await s.get(ResourceModel, "pv"), act2.output_limits())
+    assert (asset.available_kw, asset.availability_basis) == (10.0, "nameplate_curtailed")
+    # A deeper cut taken over by the new process continues the same limit period.
+    await act2.apply([_pv(**SUNSPEC)], {"pv": 3.0}, source="t")
+    assert act2.output_limits()["pv"].since == 1_000.0
+    [row] = (await _caps_in_db(db)).values()
+    assert row.cap_kw == 3.0
+    assert _to_epoch(row.started_at) == pytest.approx(1_000.0)
+
+
+async def test_lifted_released_and_shutdown_caps_remove_their_rows(db):
+    for rid in ("pv1", "pv2", "pv3"):
+        await _solar_row(db, rid)
+    clock = Clock(1_000.0)
+    act, _ = _actuator(clock, db)
+    assets = [_pv(rid, **SUNSPEC) for rid in ("pv1", "pv2", "pv3")]
+    await act.apply(assets, {"pv1": 4.0, "pv2": 4.0, "pv3": 4.0}, source="t")
+    assert set(await _caps_in_db(db)) == {"pv1", "pv2", "pv3"}
+    await act.apply([assets[0]], {"pv1": 10.0}, source="t")  # raised to the upper limit
+    assert set(await _caps_in_db(db)) == {"pv2", "pv3"}
+    await act.release(["pv2"], reason="t")
+    assert set(await _caps_in_db(db)) == {"pv3"}
+    await act.shutdown()  # clean shutdown releases every cap
+    assert await _caps_in_db(db) == {}
+    # Batteries never get a row.
+    await act.apply([_asset("b1")], {"b1": 2.0}, source="t")
+    assert await _caps_in_db(db) == {}
+
+
+async def test_keepalive_refreshes_the_cap_row_and_watchdog_expiry_deletes_it(db):
+    await _solar_row(db, "pv")
+    clock = Clock(1_000.0)
+    act, _ = _actuator(clock, db)
+    await act.apply([_pv(revert_timeout_s=60, **SUNSPEC)], {"pv": 4.0}, source="t", ttl_s=600)
+    clock.t += 31  # keepalive_s defaults to revert_timeout_s / 2
+    [d] = await act.tick()
+    assert d["action"] == "keepalive"
+    [row] = (await _caps_in_db(db)).values()
+    assert _to_epoch(row.updated_at) == pytest.approx(1_031.0)
+    assert _to_epoch(row.started_at) == pytest.approx(1_000.0)
+    clock.t += 600
+    [d] = await act.tick()
+    assert d["action"] == "expire"
+    assert await _caps_in_db(db) == {}
+
+
+async def test_caps_past_the_revert_timer_or_without_resource_are_dropped_on_load(db):
+    for rid in ("short", "long", "forever"):
+        await _solar_row(db, rid)
+    clock = Clock(1_000.0)
+    act, _ = _actuator(clock, db)
+    await act.apply(
+        [
+            _pv("short", revert_timeout_s=60, **SUNSPEC),
+            _pv("long", revert_timeout_s=900, **SUNSPEC),
+            _pv("forever", **SUNSPEC),
+            _pv("gone", **SUNSPEC),
+            # register profile: revert_timeout_s is not programmed into the device
+            _pv("reg", revert_timeout_s=60, min_interval_s=0),
+        ],
+        {"short": 4.0, "long": 4.0, "forever": 4.0, "gone": 4.0, "reg": 4.0},
+        source="t",
+    )
+    await _solar_row(db, "reg")
+    assert set(await _caps_in_db(db)) == {"short", "long", "forever", "gone", "reg"}
+    clock2 = Clock(1_120.0)  # 2 minutes later: the 60 s timer has fired
+    act2, _ = _actuator(clock2, db)
+    assert await act2.load_output_caps() == 3
+    assert set(act2.output_limits()) == {"long", "forever", "reg"}
+    assert set(await _caps_in_db(db)) == {"long", "forever", "reg"}
+    # A restored cap whose timer runs out while nobody rewrites it lapses too.
+    clock2.t = 1_000.0 + 900
+    assert set(act2.output_limits()) == {"forever", "reg"}
+    await act2.tick()
+    assert set(await _caps_in_db(db)) == {"forever", "reg"}
+    restored = act2.status()["restored_output_caps"]
+    assert sorted(c["resource_id"] for c in restored) == ["forever", "reg"]
+
+
+async def test_database_errors_never_break_control(tmp_path, caplog):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    # A database without the tables: every query fails.
+    broken = async_sessionmaker(create_async_engine(f"sqlite+aiosqlite:///{tmp_path}/empty.db"))
+    clock = Clock(1_000.0)
+    act, _ = _actuator(clock, broken)
+    with caplog.at_level("WARNING", logger="vpp.control.actuator"):
+        [d] = await act.apply([_pv(**SUNSPEC)], {"pv": 4.0}, source="t")
+        assert d["status"] == "accepted"
+        assert act.output_limits()["pv"].limit_kw == 4.0  # kept in memory
+        assert await act.load_output_caps() == 0
+        assert act.output_limits()["pv"].limit_kw == 4.0
+        [d] = await act.apply([_pv(**SUNSPEC)], {"pv": 6.0}, source="t")
+        assert d["status"] == "accepted" and act.output_limits() == {}
+    assert "could not persist the output caps" in caplog.text
+    assert "could not load the persisted output caps" in caplog.text
+
+    def no_factory():
+        raise RuntimeError("database not initialised")
+
+    act2, _ = _actuator(clock, no_factory)
+    [d] = await act2.apply([_pv(**SUNSPEC)], {"pv": 4.0}, source="t")
+    assert d["status"] == "accepted" and "pv" in act2.output_limits()
+    assert await act2.load_output_caps() == 0
+
+
+async def test_restore_output_caps_only_with_control_enabled(db):
+    from vpp.control import actuator as mod
+
+    await _solar_row(db, "pv")
+    act, _ = _actuator(Clock(1_000.0), db)
+    await act.apply([_pv(**SUNSPEC)], {"pv": 4.0}, source="t")
+    try:
+        off, _ = _actuator(Clock(1_000.0), db, enabled=False)
+        mod.set_setpoint_actuator(off)
+        assert await mod.restore_output_caps() == 0
+        assert mod.active_output_limits() == {}
+        on, _ = _actuator(Clock(1_000.0), db)
+        mod.set_setpoint_actuator(on)
+        assert await mod.restore_output_caps() == 1
+        assert set(mod.active_output_limits()) == {"pv"}
+    finally:
+        mod.set_setpoint_actuator(None)
 
 
 async def test_deadband_rate_limit_and_deferred_write(db):
