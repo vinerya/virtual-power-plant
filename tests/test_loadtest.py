@@ -165,3 +165,18 @@ def test_cli_lists_the_command():
     bad = CliRunner().invoke(cli, ["loadtest", "--server-env", "NOEQUALS"])
     assert bad.exit_code != 0
     assert "KEY=VALUE" in bad.output
+
+
+def test_mqtt_messages_missed_by_the_probe_but_persisted_are_not_errors(tmp_path: Path):
+    from vpp.loadtest.runner import LoadRun
+
+    run = LoadRun(LoadConfig(output_dir=tmp_path))
+    run.published = 100
+    run.pending = {("r", float(i)): 0.0 for i in range(7)}  # never seen on the socket
+    run.timeline = [{"rows": {"battery_states": 10}}]
+    run._count_lost_mqtt({"rows": {"battery_states": 107}})  # 97 of 100 persisted
+    assert run.mqtt_lost == 3
+    assert run.mqtt_unobserved == 4
+    rec = run.rec["ingest_mqtt_e2e"]
+    assert rec.errors == 3
+    assert rec.error_kinds == {"not persisted": 3}

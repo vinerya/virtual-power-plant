@@ -278,6 +278,8 @@ class LoadRun:
         # MQTT end-to-end matching: (resource_id, soc) -> publish time.
         self.pending: dict[tuple[str, float], float] = {}
         self.published = 0
+        self.mqtt_lost = 0
+        self.mqtt_unobserved = 0
         self.modbus_last_seen: dict[str, float] = {}
         self.ws_messages = 0
         self.ws_connected = 0
@@ -879,10 +881,7 @@ class LoadRun:
                 await asyncio.gather(*tasks, sampler, return_exceptions=True)
                 metrics_text = await self._scrape_metrics(client)
             final_db = await probe.sample()
-            lost = len(self.pending)
-            if lost:
-                self.recorder("ingest_mqtt_e2e").errors += lost
-                self.recorder("ingest_mqtt_e2e").error_kinds["not persisted/broadcast"] += lost
+            self._count_lost_mqtt(final_db)
         finally:
             if self.server is not None:
                 await self.server.stop()
@@ -890,6 +889,30 @@ class LoadRun:
                 await sim.stop(5)
             await probe.close()
         return self._report(duration, final_db, metrics_text)
+
+    def _count_lost_mqtt(self, final_db: dict[str, Any]) -> None:
+        """Messages never persisted are errors; persisted ones the probe missed are not.
+
+        The probe socket can miss broadcasts while it reconnects (its session
+        expires after VPP_JWT_EXPIRE_MINUTES), so the database decides.
+        """
+        if self.cfg.ingest != "mqtt" or not self.published:
+            return
+        start = (
+            (self.timeline[0].get("rows") or {}).get("battery_states") if self.timeline else None
+        )
+        end = (final_db.get("rows") or {}).get("battery_states")
+        unmatched = len(self.pending)
+        if start is None or end is None:
+            lost = unmatched
+        else:
+            lost = max(0, self.published - (end - start))
+        self.mqtt_lost = lost
+        self.mqtt_unobserved = max(0, unmatched - lost)
+        if lost:
+            rec = self.recorder("ingest_mqtt_e2e")
+            rec.errors += lost
+            rec.error_kinds["not persisted"] += lost
 
     async def _scrape_metrics(self, client: httpx.AsyncClient) -> str:
         with contextlib.suppress(Exception):
@@ -932,7 +955,9 @@ class LoadRun:
             "endpoints": endpoints,
             "mqtt": {
                 "published": self.published,
-                "unmatched_after_drain": len(self.pending),
+                "not_persisted": self.mqtt_lost,
+                # Persisted, but the probe socket missed the broadcast (reconnecting).
+                "persisted_not_observed": self.mqtt_unobserved,
             },
             "websocket": {
                 "clients": cfg.ws_clients,
