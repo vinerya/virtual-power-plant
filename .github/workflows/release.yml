@@ -52,8 +52,8 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Tag must match the package version
@@ -89,7 +89,7 @@ jobs:
             exit 1
           fi
           echo "Release notes: $(wc -l < release-notes.md) lines"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-notes
           path: release-notes.md
@@ -100,8 +100,8 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: Build sdist and wheel
@@ -123,7 +123,7 @@ jobs:
           test "$(smoke/bin/python -c 'import vpp; print(vpp.__version__)')" = "${VERSION}"
           # The alembic migrations must ship inside the wheel.
           VPP_DATABASE_URL="sqlite+aiosqlite:///${RUNNER_TEMP}/smoke.db" smoke/bin/vpp migrate
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
@@ -139,7 +139,7 @@ jobs:
     permissions:
       id-token: write # OIDC token for PyPI trusted publishing
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
@@ -153,17 +153,17 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Image tags and OCI labels
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           # metadata-action lower-cases the image name as GHCR requires.
           images: ghcr.io/${{ github.repository }}
@@ -178,7 +178,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.verify.outputs.version }}
             org.opencontainers.image.licenses=MIT
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -194,10 +194,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-notes
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
