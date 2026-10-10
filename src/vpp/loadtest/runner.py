@@ -219,7 +219,7 @@ class DbProbe:
         self.engine = create_engine_from_settings(database_url)
 
     async def sample(self) -> dict[str, Any]:
-        from sqlalchemy import text
+        from sqlalchemy import func, select, table, text
 
         out: dict[str, Any] = {"rows": {}}
         try:
@@ -229,12 +229,13 @@ class DbProbe:
                         await conn.execute(text("SELECT pg_database_size(current_database())"))
                     ).scalar()
                     out["db_bytes"] = int(size or 0)
-                for table in COUNTED_TABLES:
+                for name in COUNTED_TABLES:
                     try:
-                        n = (await conn.execute(text(f"SELECT count(*) FROM {table}"))).scalar()
-                        out["rows"][table] = int(n or 0)
+                        query = select(func.count()).select_from(table(name))
+                        n = (await conn.execute(query)).scalar()
+                        out["rows"][name] = int(n or 0)
                     except Exception:
-                        out["rows"][table] = None
+                        out["rows"][name] = None
                         await conn.rollback()
         except Exception as exc:  # the sample is best effort
             out["error"] = f"{type(exc).__name__}: {exc}"
