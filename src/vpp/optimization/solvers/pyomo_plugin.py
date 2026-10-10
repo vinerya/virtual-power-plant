@@ -43,6 +43,43 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+#: Set by :func:`disable_solver_fd_capture`.
+_fd_capture_disabled = False
+
+
+def disable_solver_fd_capture() -> bool:
+    """Stop Pyomo solver interfaces from redirecting the process stdout/stderr.
+
+    Pyomo's appsi HiGHS interface wraps every solve in
+    ``capture_output(capture_fd=True)``: it ``dup2``-redirects file
+    descriptors 1 and 2 *process-wide* and temporarily re-points every
+    ``logging.StreamHandler`` writing to them. The API runs solves in worker
+    threads while the event loop keeps logging, so a log line emitted during
+    a solve races that swap: found under load (``vpp loadtest``), it can
+    deadlock the solve ("possible output stream deadlock") and leave the
+    root log handler writing to a closed stream, after which every log call
+    fails and the server dies.
+
+    This switches Pyomo to stream-only capture (``sys.stdout``/``sys.stderr``
+    are still swapped during a solve, but no file descriptor or handler is
+    touched) and, for solvers created afterwards, turns HiGHS's own console
+    output off (it would otherwise go straight to the process stdout).
+    Process-wide; the API calls it at startup. Returns False when the
+    installed Pyomo has no such switch.
+    """
+    global _fd_capture_disabled
+    try:
+        import pyomo.common.tee as tee
+    except Exception:
+        return False
+    modes = getattr(tee, "CaptureOutputMode", None)
+    if modes is None or not hasattr(tee, "OVERRIDE_CAPTURE_OUTPUT"):
+        return False
+    tee.OVERRIDE_CAPTURE_OUTPUT = modes.ENABLE_STREAM_CAPTURE
+    _fd_capture_disabled = True
+    return True
+
+
 def _classic_solver_factory(pyo: Any, name: str) -> Callable[[float | None], Any]:
     """Return a ``SolverFactory(name)`` builder that applies an optional time limit."""
 
@@ -82,6 +119,10 @@ def _try_import_pyomo():
 
         def _factory(time_limit_s: float | None):
             s = _AppsiHighs()
+            if _fd_capture_disabled:
+                # Without fd capture HiGHS would print to the process stdout.
+                with contextlib.suppress(Exception):
+                    s.highs_options["output_flag"] = False
             if time_limit_s is not None:
                 s.config.time_limit = float(time_limit_s)
             return s

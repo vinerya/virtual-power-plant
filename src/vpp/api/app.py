@@ -464,6 +464,12 @@ def create_app(
     """
     settings = get_settings()
 
+    # Solves run in worker threads while the event loop logs; keep Pyomo from
+    # redirecting the process stdout/stderr under the log handlers.
+    from vpp.optimization.solvers.pyomo_plugin import disable_solver_fd_capture
+
+    disable_solver_fd_capture()
+
     app = FastAPI(
         title="Virtual Power Plant Platform",
         description=(
