@@ -1,9 +1,13 @@
 """Single source of truth for the package version.
 
-The version is declared once, in ``pyproject.toml``.  At runtime it is read
-from the installed distribution's metadata; when the package is imported
-from a source checkout that was never installed (e.g. ``PYTHONPATH=src``),
-it falls back to parsing ``pyproject.toml`` directly.
+The version is declared once, in ``pyproject.toml``.
+
+* Imported from a source checkout (an editable install, or ``PYTHONPATH=src``)
+  the checkout's ``pyproject.toml`` is authoritative: an editable install's
+  metadata is only refreshed on reinstall, so after a version bump it would
+  still report the previous release.
+* Imported from an installed wheel (no ``pyproject.toml`` next to the
+  sources), the version comes from the distribution's metadata.
 """
 
 from __future__ import annotations
@@ -59,11 +63,14 @@ def _version_from_pyproject(path: Path | None = None) -> str | None:
 
 
 def get_version() -> str:
-    """Return the installed package version, or the pyproject value as fallback."""
+    """Return the source checkout's version, else the installed distribution's."""
+    from_source = _version_from_pyproject()
+    if from_source is not None:
+        return from_source
     try:
         return version(DISTRIBUTION_NAME)
     except PackageNotFoundError:
-        return _version_from_pyproject() or UNKNOWN_VERSION
+        return UNKNOWN_VERSION
 
 
 __version__ = get_version()

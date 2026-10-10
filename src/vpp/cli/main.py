@@ -7,9 +7,13 @@ import sys
 
 import click
 
+from vpp._version import __version__
+
 
 @click.group()
-@click.version_option(package_name="virtual-power-plant")
+# ``version=`` rather than ``package_name=``: click would read the installed
+# metadata, which is stale in an editable install after a version bump.
+@click.version_option(version=__version__, prog_name="vpp")
 def cli() -> None:
     """Virtual Power Plant — production-grade energy management platform."""
 
