@@ -144,6 +144,17 @@ stops startup with an error, rather than connecting in plain text.
 | `VPP_MQTT_TLS_INSECURE` | `false` | Skip broker certificate and host-name verification. Testing only; logged as a warning at every connect. |
 | `VPP_MODBUS_INGESTION_ENABLED` | `false` | Poll Modbus TCP/RTU devices for every resource whose `metadata.modbus` block configures one (host, port, mode, device profile, poll interval, power register, optional `soc_register`). Discovery runs once at startup. See `src/vpp/protocols/modbus_ingestion.py`. |
 
+## Generation availability (dispatch)
+
+How much a solar or wind resource may be planned to export when the VPP is
+not curtailing it. See
+[connecting-real-data.md](connecting-real-data.md#generation-availability).
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VPP_GENERATION_TELEMETRY_MAX_AGE_S` | `300` | Telemetry is fresh while the resource's newest `resource_telemetry` sample is at most this many seconds old. Fresh telemetry is used as measured (`availability_basis` `telemetry`; 0 kW at night is 0 kW available). |
+| `VPP_GENERATION_AVAILABILITY_FALLBACK` | `zero` | Without fresh telemetry: `zero` plans 0 kW (`no_data`); `forecast` uses the current point of the resource's `metadata.generation_forecast` (`forecast`), else 0 kW (`no_data`); `nameplate` assumes the rated power (`nameplate_fallback`, the behaviour up to 3.0). |
+
 ## OCPP 1.6-J Central System
 
 See [protocols.md](protocols.md#ocpp-16-j-central-system).

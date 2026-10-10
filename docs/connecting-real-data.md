@@ -234,12 +234,48 @@ and every other call refer to resources by this id; names must be unique
 but are only labels. Change a resource with `PUT /api/v1/resources/{id}`
 (send only the fields to change; `metadata` is replaced as a whole).
 
-A generation resource (solar, wind) is available up to its **measured
-output** (`current_power`). When that is 0 or no telemetry has arrived, the
-optimizer assumes the full `rated_power` is available
-(`availability_basis: "nameplate"`). That includes PV at night. Send
-telemetry before you rely on a dispatch, and leave generators out of
-`resource_ids` (or set them `"online": false`) when they cannot produce.
+### Generation availability
+
+Dispatch plans a generation resource (solar, wind) to export at most its
+**availability**. Each allocation in the dispatch response, and each
+resource in the stored run's inputs, says where that number came from in
+`availability_basis`. The rules, in order:
+
+| Situation | Availability | `availability_basis` |
+|---|---|---|
+| `available_kw` set in the resource's `metadata` (or config) | that value | `reported` |
+| the VPP is curtailing the resource and its output is at the cap | newest reading taken before the cap (at most 15 min old), else `rated_power` ([details](protocols.md#curtailed-generation-and-its-availability)) | `pre_curtailment_telemetry` / `nameplate_curtailed` |
+| fresh telemetry: the newest sample is at most `VPP_GENERATION_TELEMETRY_MAX_AGE_S` (300 s) old | the measured output `current_power`. **0 kW at night means 0 kW available** | `telemetry` |
+| no telemetry, or only stale telemetry | depends on `VPP_GENERATION_AVAILABILITY_FALLBACK` (below) | `no_data`, `forecast` or `nameplate_fallback` |
+
+Freshness is judged by the timestamp of the newest stored telemetry sample
+(HTTP endpoint or Modbus polling), not by when `current_power` was last
+changed. A `current_power` typed in by hand, without telemetry, is not
+trusted.
+
+`VPP_GENERATION_AVAILABILITY_FALLBACK` decides what an unobserved
+generator is worth:
+
+- `zero` (default): 0 kW (`no_data`). Dispatch never plans export that
+  nobody has seen the resource produce.
+- `forecast`: the current point of a forecast you store on the resource,
+  else 0 kW (`no_data`). The platform does not compute forecasts itself;
+  push yours (from a weather service or your own model) into the
+  resource's `metadata` as `generation_forecast`, a list of points:
+
+    ```json
+    {"generation_forecast": [
+      {"timestamp": "2026-10-10T12:00:00Z", "power_kw": 6.5},
+      {"timestamp": "2026-10-10T13:00:00Z", "power_kw": 7.1}
+    ]}
+    ```
+
+    The newest point at or before now is used if it is at most one hour
+    old, capped at `rated_power` (`forecast`). Remember that `metadata` is
+    replaced as a whole by `PUT /api/v1/resources/{id}`.
+- `nameplate`: `rated_power` (`nameplate_fallback`). This was the
+  behaviour up to 3.0 (then labelled `nameplate`, and also applied to a
+  measured 0 kW); choose it only if you knowingly rely on it.
 
 ### Sites
 
@@ -779,7 +815,10 @@ curl -s -X POST localhost:8000/api/v1/ws/token -H "X-API-Key: $VPP_KEY"
 **Staleness.** The platform does **not** mark a resource offline when its
 data stops: `online` changes only when you set it
 (`PUT /api/v1/resources/{id}` with `{"online": false}`), and `current_power`
-keeps its last value. There is no built-in alert rule for missing data.
+keeps its last value. (Dispatch does stop counting on a generator whose
+telemetry is older than 5 minutes: see
+[generation availability](#generation-availability).) There is no
+built-in alert rule for missing data.
 Watch it from Prometheus instead: `/metrics` exports
 `vpp_resource_last_update_timestamp_seconds` per resource, and
 `time() - vpp_resource_last_update_timestamp_seconds > 300` is a good
@@ -800,8 +839,9 @@ curl -s -X POST localhost:8000/api/v1/optimization/dispatch -H "X-API-Key: $VPP_
 deliver power, negative asks it to absorb (batteries charge). Leave out
 `resource_ids` to use every online resource. The response has
 `"applied": false`, a `run_id`, and one allocation per resource with the
-inputs it used: `available_power_kw` and `availability_basis` (`telemetry`
-or `nameplate`) for generators, `state_of_charge` and `soc_source` for
+inputs it used: `available_power_kw` and `availability_basis` (`telemetry`,
+`no_data`, ... see [generation availability](#generation-availability)) for
+generators, `state_of_charge` and `soc_source` for
 batteries. A `soc_source` of `assumed` means the battery has no SoC at all
 and the optimizer used 50 %.
 
@@ -974,6 +1014,7 @@ default in production). Set `VPP_LOG_LEVEL=DEBUG` for more detail.
 | power 1000× off | wrong unit | HTTP and MQTT take kW; Modbus `power_register` must be in W |
 | Modbus resource never updates | polling enabled after the resource was configured, wrong host/port/unit id, firewall | restart the API (discovery runs at startup); look for `Modbus connect failed` and `Error reading register` in the log and `errors` on `modbus:<id>` in `/api/v1/protocols/` |
 | Modbus values wrong by a power of ten, or `0` | wrong profile or base address, scale-factor register missing | compare with the device display; for SunSpec devices use `model_base: "auto"` for control and check the base address of `custom_registers` |
+| generator planned at 0 kW, `availability_basis: "no_data"` | no telemetry sample in the last `VPP_GENERATION_TELEMETRY_MAX_AGE_S` (300 s) | send telemetry, or choose a fallback ([generation availability](#generation-availability)) |
 | device unplugged but the resource still shows power | no staleness detection | see [Staleness](#8-verify-before-you-dispatch); set `"online": false` while it is out |
 | dispatch delivery `disabled` | `VPP_CONTROL_ENABLED` is false, or `control.enabled` is false | the `reason` field says which |
 | dispatch delivery `not_configured` | no `metadata.modbus.control` block | add one ([step 9](#9-turn-on-device-control-safely)) |

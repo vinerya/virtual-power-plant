@@ -626,6 +626,7 @@ async def test_curtailed_reading_is_not_taken_as_availability(db):
         await record_samples(s, "fresh", [(now - timedelta(seconds=60), 6.0, None)], source="t")
         await record_samples(s, "fresh", [(now - timedelta(seconds=5), 4.0, None)], source="t")
         await record_samples(s, "stale", [(now - timedelta(hours=2), 7.0, None)], source="t")
+        await record_samples(s, "below", [(now - timedelta(seconds=5), 2.5, None)], source="t")
         await s.commit()
         limits = {rid: OutputLimit(rid, 4.0, since) for rid in rows}
 

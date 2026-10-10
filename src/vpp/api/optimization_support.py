@@ -47,6 +47,8 @@ _DEFAULT_C_RATE_HOURS = 4.0
 #: Oldest reading taken before a VPP output cap that still estimates a
 #: curtailed generator's availability; after that the nameplate is used.
 PRE_CURTAILMENT_MAX_AGE_S = 900.0
+#: How long one point of a resource's ``generation_forecast`` holds.
+FORECAST_POINT_MAX_AGE_S = 3600.0
 
 
 # ---------------------------------------------------------------------------
@@ -181,11 +183,107 @@ async def resource_to_asset(
             else:
                 asset.available_kw = asset.rated_power_kw
                 asset.availability_basis = "nameplate_curtailed"
-        elif polled > 0:
-            asset.available_kw, asset.availability_basis = polled, "telemetry"
         else:
-            asset.available_kw, asset.availability_basis = asset.rated_power_kw, "nameplate"
+            await _uncurtailed_availability(session, row, asset, polled, cfg, meta)
     return asset
+
+
+async def _uncurtailed_availability(
+    session: AsyncSession,
+    row: ResourceModel,
+    asset: FleetAsset,
+    polled: float,
+    cfg: dict[str, Any],
+    meta: dict[str, Any],
+) -> None:
+    """Availability of a generator the VPP is not curtailing.
+
+    Fresh telemetry is taken as is: a PV at night measuring 0 kW has 0 kW
+    available. Without fresh telemetry nothing is known about the output,
+    so the nameplate is never assumed by default; see
+    ``VPP_GENERATION_AVAILABILITY_FALLBACK``.
+    """
+    from vpp.settings import get_settings
+
+    now = datetime.now(timezone.utc)
+    last = await _last_telemetry_at(session, row.id)
+    if telemetry_is_fresh(last, now=now):
+        asset.available_kw, asset.availability_basis = max(0.0, polled), "telemetry"
+        return
+    fallback = get_settings().generation_availability_fallback
+    if fallback == "nameplate":
+        asset.available_kw = asset.rated_power_kw
+        asset.availability_basis = "nameplate_fallback"
+        return
+    if fallback == "forecast":
+        forecast = _forecast_kw(meta, cfg, now)
+        if forecast is not None:
+            asset.available_kw = max(0.0, min(asset.rated_power_kw, forecast))
+            asset.availability_basis = "forecast"
+            return
+    asset.available_kw, asset.availability_basis = 0.0, "no_data"
+
+
+async def _last_telemetry_at(session: AsyncSession, resource_id: str) -> datetime | None:
+    """Timestamp of the newest ``resource_telemetry`` sample of a resource."""
+    from vpp.db.models import ResourceTelemetryModel
+    from vpp.portal.telemetry import as_utc
+
+    rt = ResourceTelemetryModel
+    ts = (
+        await session.execute(
+            select(rt.timestamp)
+            .where(rt.resource_id == resource_id)
+            .order_by(rt.timestamp.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    return as_utc(ts) if ts is not None else None
+
+
+def telemetry_is_fresh(last: datetime | None, *, now: datetime | None = None) -> bool:
+    """Whether telemetry last received at *last* still describes the resource.
+
+    Fresh means at most ``VPP_GENERATION_TELEMETRY_MAX_AGE_S`` old (a sample
+    slightly in the future, from clock skew, counts as fresh).
+    """
+    if last is None:
+        return False
+    from vpp.settings import get_settings
+
+    now = now or datetime.now(timezone.utc)
+    age = (now - last).total_seconds()
+    return age <= get_settings().generation_telemetry_max_age_s
+
+
+def _forecast_kw(meta: dict[str, Any], cfg: dict[str, Any], now: datetime) -> float | None:
+    """Forecast output (kW) for *now* from ``generation_forecast``, if any.
+
+    The forecast is a list of ``{"timestamp": ISO-8601, "power_kw": n}``
+    points in the resource's ``metadata`` (or ``config``); each point holds
+    until the next one, for at most :data:`FORECAST_POINT_MAX_AGE_S`.
+    """
+    from vpp.portal.telemetry import as_utc
+
+    raw = meta.get("generation_forecast", cfg.get("generation_forecast"))
+    if not isinstance(raw, list):
+        return None
+    best: tuple[datetime, float] | None = None
+    for point in raw:
+        if not isinstance(point, dict):
+            continue
+        kw = _first_number(point.get("power_kw"))
+        ts_raw = point.get("timestamp")
+        if kw is None or not isinstance(ts_raw, str):
+            continue
+        try:
+            ts = as_utc(datetime.fromisoformat(ts_raw.replace("Z", "+00:00")))
+        except ValueError:
+            continue
+        current = ts <= now and (now - ts).total_seconds() <= FORECAST_POINT_MAX_AGE_S
+        if current and (best is None or ts > best[0]):
+            best = (ts, kw)
+    return best[1] if best is not None else None
 
 
 def _curtailed_tolerance_kw(asset: FleetAsset) -> float:
@@ -668,5 +766,6 @@ __all__ = [
     "resource_to_asset",
     "run_to_dict",
     "start_run",
+    "telemetry_is_fresh",
     "unpack_solution",
 ]

@@ -76,6 +76,12 @@ async def test_dispatch_uses_db_resources_and_solver(client, auth_headers, captu
     b1 = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.8)
     b2 = await _make_resource(client, auth_headers, "battery", 50.0, capacity_kwh=200, soc=0.8)
     s1 = await _make_resource(client, auth_headers, "solar", 20.0)
+    ingest = await client.post(
+        f"/api/v1/resources/{s1}/telemetry",
+        json={"samples": [{"power_kw": 20.0}]},
+        headers=auth_headers,
+    )
+    assert ingest.status_code == 202, ingest.text
 
     resp = await client.post(
         "/api/v1/optimization/dispatch",
@@ -96,7 +102,7 @@ async def test_dispatch_uses_db_resources_and_solver(client, auth_headers, captu
     assert alloc[b1]["allocated_power_kw"] == pytest.approx(20.0, abs=0.5)
     assert alloc[b2]["allocated_power_kw"] == pytest.approx(20.0, abs=0.5)
     assert alloc[b1]["soc_source"] == "config"
-    assert alloc[s1]["availability_basis"] == "nameplate"
+    assert alloc[s1]["availability_basis"] == "telemetry"
 
     # Persisted as a run and announced on the EventBus.
     run = (
