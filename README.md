@@ -11,7 +11,7 @@ transparent optimization you can read, test and change.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#what-works-today)
 
-[What works](#what-works-today) · [Quick start](#quick-start) · [Architecture](#architecture) · [API](#api-overview) · [Security](#security-model) · [Docs](https://vinerya.github.io/virtual-power-plant/) ([source](docs/)) · [Contributing](CONTRIBUTING.md)
+[What works](#what-works-today) · [Quick start](#quick-start) · [Your own data](#connecting-your-own-data-onboarding) · [Architecture](#architecture) · [API](#api-overview) · [Security](#security-model) · [Docs](https://vinerya.github.io/virtual-power-plant/) ([source](docs/)) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -228,6 +228,74 @@ vpp benchmark run PEAK_SHAVING
 Demos and benchmarks run on synthetic data and ship in the package
 (`vpp.demos`, `vpp.benchmarks`), so they work from any directory.
 
+## Connecting your own data (onboarding)
+
+The path from a fresh install to a dispatch that reaches a real device.
+The full guide, with every option and a troubleshooting table, is
+[docs/connecting-real-data.md](docs/connecting-real-data.md). Remember the
+project is beta: the SunSpec register maps are checked against the
+specification but not yet on physical hardware, and device control is off
+until you turn it on for the platform and for each device.
+
+1. **Deploy.** SQLite for a home or a pilot, PostgreSQL beyond that. In
+   production set `VPP_ENV=production` and a random `VPP_SECRET_KEY`, put
+   a TLS reverse proxy in front, and set `VPP_TRUSTED_PROXIES` to its
+   address. Keep one API worker if you control devices or run OCPP.
+
+2. **Create an API key** for your integration (role `operator` to write
+   telemetry; `viewer` for read-only dashboards). Send it as `X-API-Key`.
+
+   ```bash
+   curl -s -X POST localhost:8000/api/v1/auth/api-key -H "Authorization: Bearer $TOKEN" \
+     -H 'Content-Type: application/json' -d '{"name": "telemetry-bridge", "role": "operator"}'
+   export VPP_KEY='vpp_...'    # the "key" field, shown once
+   ```
+
+3. **Describe your fleet.** Resource types are `battery`, `solar` and
+   `wind_turbine`; EVs come in through OCPP chargers. Then group resources
+   into a site with its time zone (`POST /api/v1/sites`).
+
+   ```bash
+   curl -s -X POST localhost:8000/api/v1/resources -H "X-API-Key: $VPP_KEY" \
+     -H 'Content-Type: application/json' -d '{"name": "home-battery", "resource_type": "battery",
+       "rated_power": 5, "capacity_kwh": 13.5, "soc_min": 0.1, "soc_max": 0.95, "chemistry": "lfp"}'
+   ```
+
+4. **Send telemetry** over HTTP (below), MQTT (`VPP_MQTT_INGESTION_ENABLED`,
+   topic `vpp/{site_id}/battery/{resource_id}/{metric}`, payload
+   `{"soc": 72.5}` in percent) or Modbus TCP polling
+   (`VPP_MODBUS_INGESTION_ENABLED` and a `metadata.modbus` block per
+   resource with a profile such as `solaredge_se`; try it on
+   `vpp simulate sunspec` first). Power is in kW; HTTP SoC is a 0-1
+   fraction.
+
+   ```bash
+   curl -s -X POST localhost:8000/api/v1/resources/<id>/telemetry -H "X-API-Key: $VPP_KEY" \
+     -H 'Content-Type: application/json' -d '{"samples": [{"power_kw": -1.2, "state_of_charge": 0.64}]}'
+   ```
+
+5. **Add prices and grid signals** if you need them: tariffs from presets
+   or OpenEI URDB, OpenADR 2.0b and IEEE 2030.5 (demand-response
+   auto-response stays off until you enable it), OCPP 1.6-J for chargers
+   at `wss://<host>/ocpp/<charge_point_id>`.
+
+6. **Check, then dry-run.** Every battery should show
+   `"state_of_charge_source": "telemetry"` in `GET /api/v1/resources`.
+   A dispatch without `"apply": true` computes and records a plan and
+   writes nothing:
+
+   ```bash
+   curl -s -X POST localhost:8000/api/v1/optimization/dispatch -H "X-API-Key: $VPP_KEY" \
+     -H 'Content-Type: application/json' -d '{"target_power_kw": 4}'
+   ```
+
+7. **Control one device.** Set `VPP_CONTROL_ENABLED=true`, add a
+   `control` block (start with `"simulate": true`, always set
+   `revert_timeout_s`) to one device's `metadata.modbus`, dispatch with
+   `"apply": true`, and check `device_deliveries` and
+   `GET /api/v1/optimization/setpoints`. Setting `control.enabled` to
+   `false` hands that device back within seconds.
+
 ## Configuration
 
 All API settings are `VPP_*` environment variables (or a `.env` file);
@@ -388,6 +456,7 @@ for the repository (see [docs/releasing.md](docs/releasing.md#one-time-setup));
 until then, read the Markdown below or build the site locally
 (`pip install -e ".[docs]" && mkdocs serve`).
 
+- [Connecting real data and devices](docs/connecting-real-data.md): onboarding a real fleet, step by step
 - [Architecture](docs/architecture.md)
 - [Configuration reference](docs/configuration.md)
 - [Deployment](docs/deployment.md)

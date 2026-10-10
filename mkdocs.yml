@@ -120,6 +120,7 @@ nav:
       - Installation: getting-started/installation.md
       - First run: getting-started/first-run.md
       - "Tutorial: simulated inverter": getting-started/tutorial.md
+      - Connecting real data: connecting-real-data.md
   - Guides:
       - Architecture: architecture.md
       - Deployment: deployment.md

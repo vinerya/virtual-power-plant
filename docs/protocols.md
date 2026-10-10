@@ -322,7 +322,10 @@ SunSpec, and is not covered by that check.
 ### Safety rules
 
 1. `VPP_CONTROL_ENABLED=false` (default) writes nothing (`disabled`);
-   `control.enabled` must also be true.
+   `control.enabled` must also be true. Setting `control.enabled` to
+   `false` on a resource that holds an active setpoint releases it at the
+   next watchdog check (within `VPP_CONTROL_WATCHDOG_INTERVAL_S`), instead
+   of keeping it alive until the dispatch expires.
 2. Offline resources are never written (`offline`), including by the
    watchdog.
 3. Setpoints are clamped to the resource limits (battery: −charge ..
@@ -505,17 +508,17 @@ TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token -d username=admin -d pa
   | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 AUTH="Authorization: Bearer $TOKEN"
 
-curl -s -X POST localhost:8000/api/v1/resources/ -H "$AUTH" -H 'Content-Type: application/json' -d '{
+curl -s -X POST localhost:8000/api/v1/resources -H "$AUTH" -H 'Content-Type: application/json' -d '{
   "name": "sim-pv", "resource_type": "solar", "rated_power": 10,
   "metadata": {"modbus": {"host": "127.0.0.1", "port": 5020, "unit_id": 1,
     "device_profile": "solaredge_se", "poll_interval_s": 2,
     "control": {"enabled": true, "profile": "sunspec_123", "model_base": "auto",
                 "reference_kw": 10, "revert_timeout_s": 300}}}}'
 
-curl -s -X POST localhost:8000/api/v1/resources/ -H "$AUTH" -H 'Content-Type: application/json' -d '{
-  "name": "sim-battery", "resource_type": "battery", "rated_power": 5,
-  "metadata": {"capacity_kwh": 10, "modbus": {"host": "127.0.0.1", "port": 5020, "unit_id": 1,
-    "device_profile": "sunspec_storage", "poll_interval_s": 2,
+curl -s -X POST localhost:8000/api/v1/resources -H "$AUTH" -H 'Content-Type: application/json' -d '{
+  "name": "sim-battery", "resource_type": "battery", "rated_power": 5, "capacity_kwh": 10,
+  "metadata": {"modbus": {"host": "127.0.0.1", "port": 5020, "unit_id": 1,
+    "device_profile": "custom", "poll_interval_s": 2,
     "soc_register": "cha_state",
     "custom_registers": {
       "cha_state": {"address": 40155, "data_type": "uint16", "unit": "%",

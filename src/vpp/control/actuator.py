@@ -204,6 +204,18 @@ def _to_epoch(dt: datetime) -> float:
     return dt.timestamp()
 
 
+def _control_switched_off(metadata_json: str | None) -> bool:
+    """True when stored resource metadata has a ``modbus.control`` block
+    with ``"enabled": false`` (a missing block or unreadable JSON is not)."""
+    try:
+        metadata = json.loads(metadata_json) if metadata_json else {}
+    except (TypeError, ValueError):
+        return False
+    modbus = metadata.get("modbus") if isinstance(metadata, dict) else None
+    control = modbus.get("control") if isinstance(modbus, dict) else None
+    return isinstance(control, dict) and control.get("enabled", False) is False
+
+
 @dataclass
 class _Target:
     """What the actuator needs to know about a resource."""
@@ -596,10 +608,12 @@ class SetpointActuator:
 
     # -- watchdog ----------------------------------------------------------------
 
-    async def _online(self, ids: list[str]) -> dict[str, bool]:
+    async def _resource_state(self, ids: list[str]) -> tuple[dict[str, bool], set[str]]:
+        """Stored ``online`` flag per resource, and the ids whose stored
+        ``metadata.modbus.control`` has ``"enabled": false``."""
         factory = self._sessions()
         if factory is None or not ids:
-            return {}
+            return {}, set()
         from sqlalchemy import select
 
         from vpp.db.models import ResourceModel
@@ -607,12 +621,20 @@ class SetpointActuator:
         try:
             async with factory() as session:
                 rows = await session.execute(
-                    select(ResourceModel.id, ResourceModel.online).where(ResourceModel.id.in_(ids))
+                    select(
+                        ResourceModel.id, ResourceModel.online, ResourceModel.metadata_json
+                    ).where(ResourceModel.id.in_(ids))
                 )
-                return {rid: bool(online) for rid, online in rows.all()}
+                online: dict[str, bool] = {}
+                disabled: set[str] = set()
+                for rid, is_online, metadata_json in rows.all():
+                    online[rid] = bool(is_online)
+                    if _control_switched_off(metadata_json):
+                        disabled.add(rid)
+                return online, disabled
         except Exception:
             logger.warning("control watchdog could not read resource status", exc_info=True)
-            return {}
+            return {}, set()
 
     async def tick(self) -> list[dict[str, Any]]:
         """Expire, flush deferred and keep-alive setpoints once."""
@@ -626,7 +648,7 @@ class SetpointActuator:
             if not self._active:
                 await self._persist_caps()
                 return []
-            online = await self._online(list(self._active))
+            online, switched_off = await self._resource_state(list(self._active))
             out: list[dict[str, Any]] = []
             for rid, a in list(self._active.items()):
                 if online.get(rid) is False:
@@ -642,6 +664,15 @@ class SetpointActuator:
                             "nothing written",
                             "run_id": a.run_id,
                         }
+                    )
+                elif rid in switched_off:
+                    # The operator set control.enabled=false: stop keeping the
+                    # setpoint alive and hand the device back now, rather
+                    # than refreshing it until the dispatch expires.
+                    out.append(
+                        await self._fallback(
+                            a, "modbus.control.enabled set to false", action="release"
+                        )
                     )
                 elif now >= a.expires_at:
                     out.append(await self._fallback(a, "dispatch expired", action="expire"))

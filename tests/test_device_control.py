@@ -936,6 +936,60 @@ async def test_watchdog_never_writes_to_resource_gone_offline(db):
     assert writers[rid].calls == [("write", 2.0)]  # no keepalive, no release write
 
 
+async def test_watchdog_releases_when_operator_disables_device_control(db):
+    """Setting metadata.modbus.control.enabled=false on a resource with an
+    active setpoint used to leave the setpoint in force (refreshed by
+    keep-alives) until the dispatch expired; now the watchdog releases it."""
+    control = {"enabled": True, "address": 1, "keepalive_s": 5}
+    async with db() as s:
+        row = ResourceModel(
+            name="bess",
+            resource_type="battery",
+            rated_power=10.0,
+            online=True,
+            metadata_json=json.dumps({"modbus": {"host": "x", "control": control}}),
+        )
+        s.add(row)
+        await s.commit()
+        rid = row.id
+    clock = Clock()
+    act, writers = _actuator(clock, db)
+    await act.apply([_asset(rid, keepalive_s=5)], {rid: 2.0}, source="t", ttl_s=600)
+
+    clock.t += 1
+    assert await act.tick() == []  # still enabled: nothing to do yet
+
+    async with db() as s:
+        (await s.get(ResourceModel, rid)).metadata_json = json.dumps(
+            {"modbus": {"host": "x", "control": {**control, "enabled": False}}}
+        )
+        await s.commit()
+    clock.t += 10
+    [d] = await act.tick()
+    assert d["action"] == "release" and d["status"] == "accepted"
+    assert d["reason"] == "modbus.control.enabled set to false"
+    assert writers[rid].calls == [("write", 2.0), ("release", None)]  # no keepalive
+    assert act.status()["active"] == []
+    clock.t += 10
+    assert await act.tick() == []
+    assert writers[rid].calls[-1] == ("release", None)
+
+
+async def test_watchdog_keeps_setpoint_when_stored_metadata_has_no_control_block(db):
+    async with db() as s:
+        row = ResourceModel(name="bess", resource_type="battery", rated_power=10.0, online=True)
+        s.add(row)
+        await s.commit()
+        rid = row.id
+    clock = Clock()
+    act, writers = _actuator(clock, db)
+    await act.apply([_asset(rid, keepalive_s=5)], {rid: 2.0}, source="t", ttl_s=600)
+    clock.t += 6
+    [d] = await act.tick()
+    assert d["action"] == "keepalive"
+    assert writers[rid].calls == [("write", 2.0), ("write", 2.0)]
+
+
 async def test_simulated_shutdown_release_and_audit_trail(db):
     events: list = []
 

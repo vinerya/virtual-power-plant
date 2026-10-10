@@ -391,6 +391,19 @@ def test_queue_full_drops_are_counted_and_logged_once_per_interval(caplog):
     assert len([r for r in caplog.records if "queue full" in r.getMessage()]) == 1
 
 
+def test_received_messages_are_counted_in_adapter_metrics():
+    """GET /api/v1/protocols reported messages_received=0 for MQTT however
+    much telemetry arrived, which hid whether a broker was delivering."""
+    adapter = MQTTAdapter()
+    assert adapter.metrics.messages_received == 0
+    assert adapter.metrics.last_message_at is None
+    for i in range(3):
+        adapter._enqueue(ProtocolMessage(topic=f"vpp/s/battery/B{i}/state", payload={"soc": 50}))
+    assert adapter.metrics.messages_received == 3
+    assert adapter.metrics.last_message_at is not None
+    assert adapter.receive_nowait(10)[0].topic == "vpp/s/battery/B0/state"
+
+
 @pytest.mark.asyncio
 async def test_ingest_batch_writes_valid_rows_in_one_transaction(db_session, app):
     """Regression for the ingestion throughput hot spot found by `vpp loadtest`:

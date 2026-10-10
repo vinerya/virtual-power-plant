@@ -140,12 +140,16 @@ curl -s localhost:8000/api/v1/optimization/setpoints -H "$AUTH"
 curl -s "localhost:8000/api/v1/optimization/runs?limit=5" -H "$AUTH"
 ```
 
-`GET /api/v1/optimization/runs/{run_id}/explain` explains a single run. In
-the web console ([First run](first-run.md#start-the-web-console)) the same
+`GET /api/v1/optimization/runs/{run_id}` returns one run with its stored
+inputs and result (`/explain` on the same path compares a *schedule* run
+with idling and the rule-based dispatcher; for a dispatch run it answers
+`204 No Content`). In the web console ([First run](first-run.md#start-the-web-console)) the same
 history is under **Trading → Dispatches**.
 
 ## Where to go next
 
+- Connect your own devices and data:
+  [Connecting real data and devices](../connecting-real-data.md).
 - Add the battery side of the simulator (model 124 storage control) and
   dispatch charge and discharge: the full example is in
   [Protocols: by hand, against a running API](../protocols.md#by-hand-against-a-running-api).

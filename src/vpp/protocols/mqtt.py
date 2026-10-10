@@ -219,6 +219,10 @@ class MQTTAdapter(ProtocolAdapter):
             loop.call_soon_threadsafe(self._enqueue, msg)
 
     def _enqueue(self, msg: ProtocolMessage) -> None:
+        # Every message the broker delivered, including any dropped below,
+        # so GET /api/v1/protocols shows whether telemetry is arriving.
+        self._metrics.messages_received += 1
+        self._metrics.last_message_at = time.time()
         try:
             self._message_queue.put_nowait(msg)
         except asyncio.QueueFull:

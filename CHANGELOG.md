@@ -24,6 +24,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.github/workflows/docs.yml` runs `mkdocs build --strict` on pull
   requests and deploys from `main` only when the repository variable
   `DOCS_PAGES_ENABLED` is `true`.
+- **Onboarding guide for real data and devices** (docs):
+  [docs/connecting-real-data.md](docs/connecting-real-data.md), linked
+  under Getting started, and a short "Connecting your own data" section in
+  the README. It covers deployment choices, API keys and roles, the
+  resource and site fields that matter for dispatch, telemetry over HTTP,
+  MQTT and Modbus/SunSpec (payloads, units, timestamps, limits), history
+  backfill, tariffs, OpenADR / IEEE 2030.5 / OCPP setup, checks before
+  dispatching, turning on device control one device at a time and rolling
+  it back, operations and troubleshooting. Every command in it was run
+  end to end against a fresh install, an MQTT broker and the SunSpec
+  simulator. It also states current limits plainly: MQTT does not update a
+  resource's live power and has no TLS setting, resources are not marked
+  offline when their data stops, and a generator with no or zero output
+  counts as available at nameplate.
+
+### Fixed
+
+- **Disabling control on one device now releases it.** Setting
+  `metadata.modbus.control.enabled` to `false` on a resource with an
+  active setpoint used to leave that setpoint in force, refreshed by
+  keep-alive writes, until the dispatch expired (15 minutes and more). The
+  control watchdog now releases it (or writes `safe_setpoint_kw`) at its
+  next check.
+- **MQTT adapter metrics count received messages.** `GET /api/v1/protocols`
+  reported `messages_received: 0` for `mqtt` however much telemetry
+  arrived; it now counts every message the broker delivers and sets
+  `last_message_at`.
+- Docs: the battery example in *Protocols: by hand* put `capacity_kwh` in
+  `metadata` instead of the typed field and named a register map that does
+  not exist; the tutorial said `/explain` explains any run (dispatch runs
+  answer `204`).
 
 ## [3.0.0] - 2026-10-10
 
