@@ -72,6 +72,7 @@ try:
         Gauge,
         Histogram,
         Info,
+        ProcessCollector,
         generate_latest,
     )
 
@@ -89,6 +90,9 @@ if _HAS_PROMETHEUS:
     # -- Platform info
     VPP_INFO = Info("vpp", "VPP platform information", registry=REGISTRY)
     VPP_INFO.info({"version": __version__})
+    # process_resident_memory_bytes, process_cpu_seconds_total, open fds...
+    # (Linux): watch RSS for growth over days (docs/operations.md).
+    ProcessCollector(registry=REGISTRY)
 
     # -- Resource metrics
     RESOURCE_COUNT = Gauge(

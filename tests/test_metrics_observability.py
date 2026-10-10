@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import uuid
 
 import pytest
@@ -386,3 +387,11 @@ async def test_prometheus_middleware_counts_500s():
 
 def test_route_template_without_route():
     assert route_template({"type": "http"}) == "<unmatched>"
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/stat"), reason="Linux only")
+def test_process_metrics_are_exposed():
+    """RSS / CPU of the API process, for watching memory growth over time."""
+    text = vpp_metrics.metrics_collector.get_metrics_text().decode()
+    assert "process_resident_memory_bytes" in text
+    assert "process_cpu_seconds_total" in text
