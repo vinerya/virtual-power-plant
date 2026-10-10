@@ -91,6 +91,28 @@ changes** before upgrading.
 
 ### Added
 
+**HTTP security headers and dependency updates**
+- API: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` and `Content-Security-Policy: default-src
+  'none'; frame-ancestors 'none'` on every response (a looser CSP for
+  `/docs` and `/redoc`, which load Swagger UI / ReDoc from jsDelivr),
+  `Cache-Control: no-store` on `/api/*`, and `Strict-Transport-Security` on
+  HTTPS requests (direct TLS or `X-Forwarded-Proto: https` from a trusted
+  proxy) or on every response with `VPP_HSTS_ENABLED=true`. Settings:
+  `VPP_SECURITY_HEADERS_ENABLED`, `VPP_CONTENT_SECURITY_POLICY`,
+  `VPP_DOCS_CONTENT_SECURITY_POLICY`, `VPP_HSTS_*`. WebSocket handshakes and
+  CORS are unaffected. See docs/security.md#http-security-headers.
+- Console: nonce-based Content-Security-Policy (`'strict-dynamic'`, no
+  `'unsafe-eval'`, no un-nonced inline scripts) built per request by the
+  middleware, plus `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` and
+  `Permissions-Policy`; `X-Powered-By` removed. `CSP_CONNECT_SRC` adds
+  origins, `HSTS_ENABLED=1` sends HSTS. Every page is now rendered per
+  request (it must carry its nonce). The Playwright suite fails on any CSP
+  violation.
+- `.github/dependabot.yml`: weekly updates for pip, the console's npm/pnpm
+  packages, GitHub Actions and the Docker base images, minor/patch grouped
+  per ecosystem (see CONTRIBUTING.md).
+
 **SunSpec device simulator**
 - `vpp simulate sunspec` / `python -m vpp.simulators.sunspec`: a pymodbus
   Modbus TCP server serving a SunSpec PV + battery hybrid inverter ("SunS"
@@ -403,6 +425,14 @@ changes** before upgrading.
 
 ### Changed
 
+- The config editor validates against the JSON Schema with
+  `@cfworker/json-schema` instead of Ajv, which compiles schemas with
+  `new Function` and so cannot run under the console's CSP. Messages read
+  differently (e.g. `Instance type "string" is invalid. Expected
+  "integer".`).
+- Dependency floors raised to what the code needs: `pulp>=2.8` (the
+  highspy-backed `HiGHS` solver used by the V2G scheduler; 2.7 only has
+  `HiGHS_CMD`) and `paho-mqtt>=2.0` (`CallbackAPIVersion.VERSION2`).
 - **`examples/` are linted and tested.** CI's lint job (and CONTRIBUTING's
   checks) now run `ruff check` / `ruff format --check` on `examples/`, and
   `tests/test_examples.py` runs every example as a subprocess from an empty
@@ -715,6 +745,9 @@ changes** before upgrading.
 
 ### Security
 
+- Security response headers on the API and the console (see Added), and
+  `Cache-Control: no-store` on API and proxied API responses so tokens, API
+  keys and per-user data are not cached by browsers or proxies.
 - The failed-login lockout and the per-IP rate limit are no longer
   multiplied by the number of API workers (shared through the database).
 - Login no longer reveals whether a username exists through response

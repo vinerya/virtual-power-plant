@@ -48,6 +48,8 @@ async function proxy(
   const body = await upstream.text();
   const resHeaders: Record<string, string> = {
     "content-type": upstream.headers.get("content-type") || "application/json",
+    // Per-user data behind the session cookie: never cache it.
+    "cache-control": "no-store",
   };
   // List endpoints report the unpaginated total here (vpp.api.pagination).
   const total = upstream.headers.get("x-total-count");

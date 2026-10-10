@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { api, json, signInAs } from "./support";
 
 const TS = "2026-09-28T12:00:00";

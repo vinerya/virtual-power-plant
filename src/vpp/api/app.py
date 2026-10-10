@@ -511,6 +511,30 @@ def create_app(
             backend=resolve_backend(settings),
         )
 
+    # Security headers wrap CORS and the rate limiter, so preflights and 429s
+    # carry them too; WebSocket scopes pass through untouched.
+    if settings.security_headers_enabled:
+        from vpp.api.security_headers import (
+            DEFAULT_API_CSP,
+            DEFAULT_DOCS_CSP,
+            SecurityHeadersMiddleware,
+        )
+
+        docs_paths = [app.docs_url, app.redoc_url]
+        if app.docs_url and app.swagger_ui_oauth2_redirect_url:
+            docs_paths.append(app.swagger_ui_oauth2_redirect_url)
+        app.add_middleware(
+            SecurityHeadersMiddleware,
+            csp=settings.content_security_policy or DEFAULT_API_CSP,
+            docs_csp=settings.docs_content_security_policy or DEFAULT_DOCS_CSP,
+            docs_paths=[p for p in docs_paths if p],
+            hsts=settings.hsts_enabled,
+            hsts_max_age=settings.hsts_max_age_seconds,
+            hsts_include_subdomains=settings.hsts_include_subdomains,
+            hsts_preload=settings.hsts_preload,
+            trusted_proxies=settings.trusted_proxies,
+        )
+
     # Request-id, access log, Prometheus middleware (outermost), plus the
     # /metrics and /api/v1/alerts routes.
     install_observability(app, settings)

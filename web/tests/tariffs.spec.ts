@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Route } from "@playwright/test";
+import { test, expect, type Page, type Route } from "./fixtures";
 
 // Every response below is shaped exactly like the FastAPI tariff API
 // (src/vpp/schemas/tariffs.py): TariffRead with derived components /

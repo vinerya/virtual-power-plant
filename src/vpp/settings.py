@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     # whose X-Forwarded-For / X-Real-IP headers identify the client for rate
     # limiting. Empty (default): those headers are ignored.
     trusted_proxies: list[str] = Field(default_factory=list)
+    # Security response headers (vpp.api.security_headers): nosniff,
+    # X-Frame-Options, Referrer-Policy, CSP, Cache-Control: no-store on
+    # /api/*, and HSTS. Empty CSP strings fall back to the built-in defaults.
+    security_headers_enabled: bool = True
+    content_security_policy: str = ""
+    docs_content_security_policy: str = ""
+    # Strict-Transport-Security: unset (default) = only on requests that
+    # arrived over HTTPS (uvicorn TLS, or X-Forwarded-Proto: https from a
+    # VPP_TRUSTED_PROXIES peer); true = on every response; false = never.
+    hsts_enabled: bool | None = None
+    hsts_max_age_seconds: int = Field(31_536_000, ge=0)
+    hsts_include_subdomains: bool = False
+    hsts_preload: bool = False
     # WebSocket (/ws, /api/v1/ws). When true (default) a socket must present
     # a valid JWT (``token`` query param, ``bearer, <jwt>`` subprotocol pair,
     # or Authorization header) or it is refused with close code 1008.

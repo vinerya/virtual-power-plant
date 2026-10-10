@@ -1,4 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  contentSecurityPolicy,
+  generateNonce,
+  hstsHeader,
+} from "@/lib/security-headers";
 
 const COOKIE = process.env.AUTH_COOKIE_NAME || "vpp_session";
 const PUBLIC_PATHS = [
@@ -37,7 +42,7 @@ function decodeAudience(token: string): string | null {
   }
 }
 
-export function middleware(request: NextRequest) {
+function route(request: NextRequest, next: () => NextResponse): NextResponse {
   const { pathname } = request.nextUrl;
 
   if (
@@ -48,7 +53,7 @@ export function middleware(request: NextRequest) {
     // Self-hosted Monaco editor assets (public/monaco, not sensitive).
     pathname.startsWith("/monaco/")
   ) {
-    return NextResponse.next();
+    return next();
   }
 
   const token = request.cookies.get(COOKIE)?.value;
@@ -70,7 +75,26 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next();
+  return next();
+}
+
+export function middleware(request: NextRequest) {
+  // Per-request CSP nonce: Next.js reads it from the *request* header and
+  // stamps it on the scripts it renders; the browser enforces the response
+  // header. See lib/security-headers.ts.
+  const nonce = generateNonce();
+  const csp = contentSecurityPolicy(nonce);
+
+  const response = route(request, () => {
+    const headers = new Headers(request.headers);
+    headers.set("content-security-policy", csp);
+    headers.set("x-nonce", nonce);
+    return NextResponse.next({ request: { headers } });
+  });
+  response.headers.set("Content-Security-Policy", csp);
+  const hsts = hstsHeader();
+  if (hsts) response.headers.set("Strict-Transport-Security", hsts);
+  return response;
 }
 
 export const config = {

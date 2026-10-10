@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { api, signInAs } from "./support";
 
 const NOW = new Date().toISOString();

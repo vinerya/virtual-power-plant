@@ -97,6 +97,31 @@ Knobs: `E2E_PORT` (port of the auto-started server), `E2E_BASE_URL` (test an
 already running app), `E2E_NO_SERVER=1`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE`
 (use a preinstalled Chromium).
 
+## Dependency updates
+
+Dependabot (`.github/dependabot.yml`) checks every Monday for updates to the
+Python dependencies (`pyproject.toml`), the console's packages
+(`web/package.json` / `pnpm-lock.yaml`), the GitHub Actions and the Docker
+base images (`Dockerfile`, `web/Dockerfile`). Minor and patch updates of an
+ecosystem arrive as one grouped PR; each major update gets its own PR, as do
+`next` + `eslint-config-next` (always together). PRs are labelled
+`dependencies` plus the ecosystem.
+
+When reviewing one:
+
+- CI must pass, including the web e2e suite (it fails on Content-Security-
+  Policy violations, which a new library version can introduce).
+- `pyproject.toml` only declares lower bounds; Dependabot raises one only
+  when needed. Raise a floor by hand when code starts relying on a newer
+  API, and say why in a comment next to it.
+- `ruff` and `mypy` are pinned and ignored by Dependabot: bump them together
+  in `pyproject.toml`, `.github/workflows/ci.yml` and
+  `.pre-commit-config.yaml`.
+- `monaco-editor` is pinned exactly (self-hosted by
+  `web/scripts/copy-monaco.mjs`); Dependabot proposes patch releases only.
+- A new Python minor in the `Dockerfile` base image changes the runtime the
+  image ships; check it against the CI test matrix.
+
 ## Code style
 
 - Python: ruff for linting, import sorting and formatting (line length

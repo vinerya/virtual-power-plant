@@ -60,6 +60,14 @@ def _is_trusted(addr: IPAddress, trusted: Sequence[IPNetwork]) -> bool:
     return any(addr.version == net.version and addr in net for net in trusted)
 
 
+def is_trusted_peer(peer: str | None, trusted: Sequence[IPNetwork]) -> bool:
+    """Whether the TCP peer address ``peer`` is one of the trusted proxies."""
+    if peer is None or not trusted:
+        return False
+    addr = _parse_ip(peer)
+    return addr is not None and _is_trusted(addr, trusted)
+
+
 def resolve_client_ip(
     peer: str | None,
     forwarded_for: str | None,
