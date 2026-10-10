@@ -1,4 +1,4 @@
-import { test, expect, type Page, type Request } from "@playwright/test";
+import { test, expect, type Page, type Request } from "./fixtures";
 import { api, json, signInAs } from "./support";
 
 const NOW = new Date().toISOString();

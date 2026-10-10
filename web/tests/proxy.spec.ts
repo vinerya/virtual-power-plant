@@ -1,5 +1,5 @@
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 /**
  * The server-side proxy (/api/proxy/*) and auth routes forward the client

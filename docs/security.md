@@ -129,6 +129,86 @@ enabled) and the V2G/OCPP routes send setpoints to equipment.
   actions hidden from viewers in the UI are also refused by the API.
 - Monaco (the config editor) is self-hosted; the console loads no scripts
   from third-party CDNs. Map tiles come from OpenFreeMap.
+- The console sends a nonce-based Content-Security-Policy and the other
+  security headers listed under
+  [HTTP security headers](#http-security-headers).
+
+## HTTP security headers
+
+### API
+
+`vpp.api.security_headers.SecurityHeadersMiddleware` (on by default,
+`VPP_SECURITY_HEADERS_ENABLED`) adds to every HTTP response, unless the
+route set the header itself:
+
+| Header | Value |
+|---|---|
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `no-referrer` |
+| `Content-Security-Policy` | `default-src 'none'; frame-ancestors 'none'` (`VPP_CONTENT_SECURITY_POLICY`). A JSON response never loads anything and must not be framed. |
+| `Content-Security-Policy` on `/docs`, `/docs/oauth2-redirect`, `/redoc` | `default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://fastapi.tiangolo.com https://cdn.redoc.ly; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'` (`VPP_DOCS_CONTENT_SECURITY_POLICY`). FastAPI renders these pages with Swagger UI / ReDoc from jsDelivr, ReDoc's fonts from Google Fonts and an inline bootstrap script; ReDoc searches in a `blob:` worker. |
+| `Cache-Control` | `no-store` on everything under `/api/` (tokens from `/api/v1/auth/*`, new API keys, per-user data). |
+| `Strict-Transport-Security` | `max-age=31536000` (`VPP_HSTS_MAX_AGE_SECONDS`, plus `includeSubDomains` / `preload` when enabled), see below. |
+
+HSTS is sent only when it means something: by default on requests that
+arrived over HTTPS, i.e. uvicorn terminated TLS, or the TCP peer is in
+`VPP_TRUSTED_PROXIES` and its `X-Forwarded-Proto` (nearest entry) is
+`https`. `X-Forwarded-Proto` from any other peer is ignored, since clients
+can send it. `VPP_HSTS_ENABLED=true` sends it on every response (for a
+deployment only ever reached over HTTPS through a proxy you have not listed);
+`false` never sends it (when the proxy already does). Because TLS is
+normally terminated at the proxy, setting HSTS there is the usual choice.
+
+WebSocket handshakes (`/api/v1/ws`, `/ws`, `/ocpp/{id}`) are not touched, and
+CORS is unaffected: preflights and `Access-Control-Expose-Headers:
+X-Total-Count` work as before (the CORS middleware runs inside this one).
+
+The docs pages keep `'unsafe-inline'` for their scripts because FastAPI
+generates the bootstrap inline. If that matters to you, hide `/docs` and
+`/redoc` at the proxy (see [Network exposure](#network-exposure)), or serve
+Swagger UI yourself and set `VPP_DOCS_CONTENT_SECURITY_POLICY` to match.
+
+### Web console
+
+`web/next.config.ts` sets `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`
+and `Permissions-Policy: camera=(), microphone=(), geolocation=(),
+payment=(), usb=()` on every response, and drops `X-Powered-By`.
+
+`web/middleware.ts` (with `web/lib/security-headers.ts`) builds the
+Content-Security-Policy per request with a fresh nonce:
+
+```
+default-src 'self';
+script-src 'self' 'nonce-<random>' 'strict-dynamic';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob: https://tiles.openfreemap.org;
+font-src 'self' data:;
+connect-src 'self' <WebSocket origin> https://tiles.openfreemap.org [CSP_CONNECT_SRC];
+worker-src 'self' blob:; child-src 'self' blob:;
+object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
+
+- Next.js puts the nonce on the inline scripts it renders, and
+  `'strict-dynamic'` extends trust to the chunks they load (including
+  Monaco's loader under `/monaco/vs`). No inline script without the nonce
+  runs, and there is no `'unsafe-eval'` (only `next dev` adds it, for React
+  Refresh). The config editor validates against the JSON Schema with an
+  interpreting validator (`@cfworker/json-schema`) rather than one that
+  compiles to code.
+- Pages are rendered per request (`dynamic = "force-dynamic"` in
+  `app/layout.tsx`); a prerendered page could not carry the nonce.
+- `style-src` keeps `'unsafe-inline'`: React `style` attributes, Monaco,
+  Recharts and the toast library inject styles at run time.
+- The WebSocket origin is derived like the URL the browser dials
+  (`WS_PUBLIC_URL`, else `NEXT_PUBLIC_WS_URL`, else `API_BASE_URL` as
+  `ws(s)://`). Add other origins with `CSP_CONNECT_SRC`.
+- HSTS from the console only with `HSTS_ENABLED=1`; normally the TLS proxy
+  sets it.
+
+The Playwright suite fails any test whose page logs a CSP violation
+(`web/tests/fixtures.ts`).
 
 ## Secrets and configuration
 
@@ -155,7 +235,8 @@ enabled) and the V2G/OCPP routes send setpoints to equipment.
 - `/metrics` is unauthenticated unless `VPP_METRICS_BEARER_TOKEN` is set;
   either set it or keep `/metrics` off the public proxy.
 - `/docs`, `/redoc` and `/openapi.json` are public; hide them at the proxy
-  if you do not want the API surface advertised.
+  if you do not want the API surface advertised (the docs pages also need a
+  looser CSP, see [HTTP security headers](#http-security-headers)).
 - Do not publish PostgreSQL. The compose file keeps it on the internal
   network.
 - Set `VPP_CORS_ORIGINS` to the exact console origin(s).
@@ -264,3 +345,7 @@ The coordination tables `cluster_calls`, `cluster_events` and
 
 CI runs `bandit` over `src/vpp`. Python dependencies use lower-bound pins in
 `pyproject.toml`; the web console installs from a frozen `pnpm-lock.yaml`.
+Dependabot (`.github/dependabot.yml`) proposes updates weekly for the Python
+dependencies, the console's npm packages, the GitHub Actions and the Docker
+base images; enable Dependabot security updates in the repository settings
+as well.

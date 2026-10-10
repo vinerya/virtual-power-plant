@@ -1,0 +1,96 @@
+# Dependabot version updates. Security updates are switched on in the
+# repository settings and are not limited by these groups / PR limits.
+#
+# Every ecosystem is checked weekly (Monday). Minor and patch updates of one
+# ecosystem arrive as one grouped PR; a major update gets a PR of its own,
+# because that is the one whose changelog needs reading. See CONTRIBUTING.md.
+version: 2
+
+updates:
+  # Python: the root pyproject.toml (runtime dependencies and extras).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    # pyproject only declares lower bounds (">=x"): a new release already
+    # satisfies them, so only raise a floor when the old one would exclude it.
+    versioning-strategy: "increase-if-necessary"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "build(deps)"
+    ignore:
+      # Pinned linters: bump by hand together with .github/workflows/ci.yml
+      # and .pre-commit-config.yaml so local, pre-commit and CI agree.
+      - dependency-name: "ruff"
+      - dependency-name: "mypy"
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+
+  # Web console. pnpm projects use the "npm" ecosystem; Dependabot updates
+  # web/package.json and web/pnpm-lock.yaml together.
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "javascript"]
+    commit-message:
+      prefix: "build(web)"
+    ignore:
+      # Exact pin: scripts/copy-monaco.mjs self-hosts monaco's min/vs build,
+      # and a 0.x minor release can break the AMD loader @monaco-editor/react
+      # uses. Patch releases are fine; upgrade minors deliberately.
+      - dependency-name: "monaco-editor"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    groups:
+      # next and eslint-config-next must stay on the same version: one PR
+      # for them whatever the update type.
+      nextjs:
+        patterns: ["next", "eslint-config-next", "@next/*"]
+      web-minor-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns: ["next", "eslint-config-next", "@next/*"]
+
+  # Workflow actions (.github/workflows/*.yml).
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "github_actions"]
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      # Actions are pinned to major tags (actions/checkout@v4), so almost
+      # every update is a major one; group them all into one weekly PR.
+      github-actions:
+        patterns: ["*"]
+
+  # Base images: python:3.x-slim (Dockerfile) and node:2x-alpine
+  # (web/Dockerfile). A Python minor (3.11 -> 3.12) changes the runtime the
+  # image ships: check it against the CI test matrix before merging.
+  - package-ecosystem: "docker"
+    directories: ["/", "/web"]
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]
+    commit-message:
+      prefix: "build(docker)"
+    groups:
+      docker-minor-patch:
+        update-types: ["minor", "patch"]

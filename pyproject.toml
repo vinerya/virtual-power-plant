@@ -30,7 +30,9 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.24.0",
-    "pulp>=2.7.0",
+    # 2.8 added the highspy-backed "HiGHS" solver that vpp.v2g.scheduler
+    # asks for (2.7 only has HiGHS_CMD, so getSolver("HiGHS") raises).
+    "pulp>=2.8.0",
     # Dispatch, MPC and stochastic optimization (and `import vpp` itself)
     # use Pyomo + HiGHS, so they are core, not optional.
     "pyomo>=6.7",
@@ -63,7 +65,8 @@ migrations = [
     "psycopg2-binary>=2.9",
 ]
 protocols = [
-    "paho-mqtt>=1.6.0",
+    # vpp.protocols.mqtt uses CallbackAPIVersion.VERSION2 (paho-mqtt 2.0+).
+    "paho-mqtt>=2.0.0",
     "pymodbus>=3.6.0",
     "lxml>=5.0.0",
     "httpx>=0.26.0",  # OpenADR 2.0b VEN + IEEE 2030.5 HTTPS clients

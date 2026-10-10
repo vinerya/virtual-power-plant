@@ -18,6 +18,8 @@ const PORT = Number(process.env.E2E_PORT || 3000);
 // Fake FastAPI for specs that exercise the server-side proxy itself
 // (proxy.spec.ts); every other spec stubs /api/proxy/* in the browser.
 const E2E_BACKEND_PORT = Number(process.env.E2E_BACKEND_PORT || PORT + 1);
+// WebSocket URL the console's CSP allows; specs stub it (backend.test).
+const E2E_WS_URL = "ws://backend.test/api/v1/ws";
 const BASE_URL = process.env.E2E_BASE_URL || `http://localhost:${PORT}`;
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
@@ -52,7 +54,13 @@ export default defineConfig({
             ? `pnpm start --port ${PORT}`
             : `pnpm dev --port ${PORT}`,
           url: `${BASE_URL}/login`,
-          env: { API_BASE_URL: `http://127.0.0.1:${E2E_BACKEND_PORT}` },
+          env: {
+            API_BASE_URL: `http://127.0.0.1:${E2E_BACKEND_PORT}`,
+            // The CSP's connect-src is derived from it (lib/security-headers.ts;
+            // checked by security-headers.spec.ts). The live-update specs stub
+            // this socket in the page with page.routeWebSocket().
+            WS_PUBLIC_URL: E2E_WS_URL,
+          },
           reuseExistingServer: !process.env.CI,
           timeout: 180_000,
         },

@@ -47,6 +47,8 @@ See `.env.example` for the annotated list; also in
 | `API_BASE_URL` | falls back to `NEXT_PUBLIC_API_BASE_URL`, then `http://localhost:8000` | Server-side FastAPI URL, e.g. `http://vpp-api:8000` in Docker. |
 | `AUTH_COOKIE_NAME` | `vpp_session` | Name of the httpOnly JWT cookie. |
 | `WS_PUBLIC_URL` (runtime) / `NEXT_PUBLIC_WS_URL` (build time) | derived from `API_BASE_URL` → `ws(s)://…/api/v1/ws` | WebSocket URL the **browser** dials. Set it whenever `API_BASE_URL` is not reachable from the browser. |
+| `CSP_CONNECT_SRC` (runtime) | unset | Extra `connect-src` origins for the Content-Security-Policy (space/comma separated). The WebSocket origin above and the map tiles are already allowed. |
+| `HSTS_ENABLED`, `HSTS_MAX_AGE_SECONDS` (runtime) | off, one year | Send `Strict-Transport-Security` from the console (usually the TLS proxy does). |
 | `NEXT_PUBLIC_USE_MOCKS` | unset | `1` enables demo mode: failed API calls for the customer portal, alerts and sites fall back to bundled demo data and live updates are disabled. **Never** set in real deployments. |
 
 `NEXT_PUBLIC_*` values are inlined at build time.
@@ -119,6 +121,14 @@ backend enforces every permission anyway.
 - **No silent mocks.** A failing endpoint renders an error state
   (`components/ui/error-state.tsx`) with the HTTP status and Retry. Demo
   data only with `NEXT_PUBLIC_USE_MOCKS=1`.
+- **Security headers.** `next.config.ts` sets `nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy` and `Permissions-Policy`;
+  `middleware.ts` adds a Content-Security-Policy with a per-request nonce
+  and `'strict-dynamic'` (`lib/security-headers.ts`), so every page is
+  rendered per request (`dynamic = "force-dynamic"` in `app/layout.tsx`).
+  No `'unsafe-eval'` outside `next dev`: don't add code that compiles
+  strings to functions (hence `@cfworker/json-schema` rather than Ajv for
+  the config editor). See [docs/security.md](../docs/security.md#http-security-headers).
 - **Monaco is self-hosted.** `scripts/copy-monaco.mjs` (run by
   `predev`/`prebuild`) copies `monaco-editor/min/vs` to `public/monaco`.
 - **Standalone output.** `next.config.ts` sets `output: "standalone"` for the
@@ -136,6 +146,9 @@ pnpm build
 pnpm exec playwright install chromium   # once
 pnpm test:e2e
 ```
+
+Specs import `test` from `tests/fixtures.ts`, which fails a test whose page
+logs a Content-Security-Policy violation.
 
 The Playwright specs (`tests/*.spec.ts`) stub every backend call with
 `page.route()` / `page.routeWebSocket()`, so no FastAPI server is needed;

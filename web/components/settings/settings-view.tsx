@@ -15,6 +15,22 @@ import type { ConfigValidationError } from "@/lib/api/types";
 import { apiDetail, apiErrorMessage, apiStatus } from "@/lib/api/errors";
 import { pointerToLine } from "@/lib/yaml-pointer";
 
+// Applicator keywords whose failure only says "a subschema had errors"; the
+// subschema's own (leaf) error is reported separately.
+const WRAPPER_KEYWORDS = new Set([
+  "properties",
+  "patternProperties",
+  "items",
+  "prefixItems",
+  "allOf",
+  "$ref",
+  "$dynamicRef",
+  "$recursiveRef",
+  "dependentSchemas",
+  "then",
+  "else",
+]);
+
 /** `{message, errors}` from a 422 PUT /config, or null for other failures. */
 function serverConfigErrors(
   e: unknown,
@@ -80,16 +96,18 @@ export function SettingsView() {
     }
     if (errs.length === 0 && schema.data && parsed !== null) {
       try {
-        const Ajv = (await import("ajv")).default;
-        const ajv = new Ajv({ allErrors: true, strict: false });
-        const validate = ajv.compile(schema.data);
-        if (!validate(parsed)) {
-          for (const e of validate.errors ?? []) {
-            errs.push({
-              path: e.instancePath || "$",
-              message: e.message ?? "invalid",
-            });
-          }
+        // @cfworker/json-schema interprets the schema instead of compiling
+        // it to code with `new Function` (as Ajv does), so it runs under the
+        // console's Content-Security-Policy, which has no 'unsafe-eval'.
+        const { Validator } = await import("@cfworker/json-schema");
+        const result = new Validator(schema.data, "2020-12", false).validate(parsed);
+        for (const e of result.errors) {
+          // Skip the "a subschema had errors" wrappers; keep the leaf errors.
+          if (WRAPPER_KEYWORDS.has(e.keyword)) continue;
+          // "#/service/port" -> "/service/port" (a JSON pointer, as the
+          // editor markers expect); "#" -> "$".
+          const pointer = e.instanceLocation.replace(/^#/, "");
+          errs.push({ path: pointer || "$", message: e.error });
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "schema check failed";
