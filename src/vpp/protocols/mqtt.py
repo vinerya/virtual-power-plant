@@ -8,6 +8,7 @@ Supports QoS 0/1/2, TLS, and automatic reconnection.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: Minimum seconds between "queue full" warnings.
+DROP_LOG_INTERVAL_S = 10.0
+
 
 class MQTTAdapter(ProtocolAdapter):
     """Paho-MQTT async wrapper implementing the VPP ``ProtocolAdapter`` ABC.
@@ -38,6 +42,12 @@ class MQTTAdapter(ProtocolAdapter):
         self._client: Any | None = None
         self._listen_task: asyncio.Task | None = None
         self._message_queue: asyncio.Queue[ProtocolMessage] = asyncio.Queue(maxsize=1000)
+        # Paho calls back from its own network thread; messages are handed to
+        # the queue on this loop (asyncio.Queue is not thread-safe).
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self.dropped = 0  # messages dropped because the queue was full
+        self._drop_logged_at = 0.0
+        self._drops_since_log = 0
 
     # -- Lifecycle -----------------------------------------------------------
 
@@ -51,6 +61,7 @@ class MQTTAdapter(ProtocolAdapter):
             ) from exc
 
         self._status = ProtocolStatus.CONNECTING
+        self._loop = asyncio.get_running_loop()
 
         broker = self._config.get("broker_host", "localhost")
         port = int(self._config.get("broker_port", 1883))
@@ -94,6 +105,8 @@ class MQTTAdapter(ProtocolAdapter):
         logger.info("MQTT connected to %s:%d", broker, port)
 
     async def disconnect(self) -> None:
+        # Set first: paho reports our own disconnect through _on_disconnect.
+        self._status = ProtocolStatus.DISCONNECTED
         if self._client is not None:
             self._client.loop_stop()
             self._client.disconnect()
@@ -134,6 +147,16 @@ class MQTTAdapter(ProtocolAdapter):
         """
         while True:
             yield await self._message_queue.get()
+
+    def receive_nowait(self, limit: int) -> list[ProtocolMessage]:
+        """Up to ``limit`` messages that are already queued (never waits)."""
+        out: list[ProtocolMessage] = []
+        while len(out) < limit:
+            try:
+                out.append(self._message_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        return out
 
     # -- MQTT-specific -------------------------------------------------------
 
@@ -185,8 +208,35 @@ class MQTTAdapter(ProtocolAdapter):
             source="mqtt",
             qos=mqtt_msg.qos,
         )
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            self._enqueue(msg)  # no loop to hand over to (tests calling this directly)
+            return
+        # put_nowait from this (paho) thread would not wake the event loop:
+        # the message would sit in the queue until something else did.
+        # RuntimeError: the loop closed meanwhile (shutdown).
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(self._enqueue, msg)
+
+    def _enqueue(self, msg: ProtocolMessage) -> None:
         try:
             self._message_queue.put_nowait(msg)
         except asyncio.QueueFull:
             self._metrics.errors += 1
-            logger.warning("MQTT message queue full, dropping message on %s", mqtt_msg.topic)
+            self.dropped += 1
+            self._drops_since_log += 1
+            from vpp.metrics import record_protocol_error
+
+            record_protocol_error("mqtt")
+            # At most one line per interval: under sustained overload a line
+            # per message would flood the log (and cost the CPU it lacks).
+            now = time.monotonic()
+            if now - self._drop_logged_at >= DROP_LOG_INTERVAL_S:
+                logger.warning(
+                    "MQTT message queue full (ingestion not keeping up); dropped %d "
+                    "message(s) since the last report, e.g. on %s",
+                    self._drops_since_log,
+                    msg.topic,
+                )
+                self._drop_logged_at = now
+                self._drops_since_log = 0
