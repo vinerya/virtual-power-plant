@@ -246,6 +246,8 @@ until you turn it on for the platform and for each device.
    telemetry; `viewer` for read-only dashboards). Send it as `X-API-Key`.
 
    ```bash
+   TOKEN=$(curl -s -X POST localhost:8000/api/v1/auth/token -d username=admin -d password="$VPP_ADMIN_PASSWORD" \
+     | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
    curl -s -X POST localhost:8000/api/v1/auth/api-key -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' -d '{"name": "telemetry-bridge", "role": "operator"}'
    export VPP_KEY='vpp_...'    # the "key" field, shown once
