@@ -244,3 +244,5 @@ def test_solves_in_threads_do_not_break_concurrent_logging():
     assert int(line.split()[0].split("=")[1]) > 0
     assert "Logging error" not in result.stderr
     assert "deadlock" not in result.stderr
+    # HiGHS's console output is off, so nothing bypasses the JSON log stream.
+    assert "Running HiGHS" not in result.stdout + result.stderr

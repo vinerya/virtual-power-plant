@@ -117,10 +117,24 @@ def _try_import_pyomo():
         if not avail:
             raise RuntimeError("appsi Highs reports unavailable")
 
+        class _QuietHighs(_AppsiHighs):
+            """Without fd capture HiGHS would print to the process stdout.
+
+            A new highspy model prints a banner on its first change unless
+            ``output_flag`` is already off, and appsi only applies
+            ``highs_options`` when it runs, so switch it off as soon as
+            ``set_instance`` has created the model (before it adds the block).
+            """
+
+            def add_block(self, block: Any) -> None:
+                if _fd_capture_disabled:
+                    with contextlib.suppress(Exception):
+                        self._solver_model.setOptionValue("output_flag", False)
+                super().add_block(block)
+
         def _factory(time_limit_s: float | None):
-            s = _AppsiHighs()
+            s = _QuietHighs()
             if _fd_capture_disabled:
-                # Without fd capture HiGHS would print to the process stdout.
                 with contextlib.suppress(Exception):
                     s.highs_options["output_flag"] = False
             if time_limit_s is not None:
