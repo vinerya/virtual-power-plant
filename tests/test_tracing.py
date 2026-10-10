@@ -89,10 +89,14 @@ def test_missing_extra_logs_a_warning_and_continues(monkeypatch, caplog):
 
 
 def test_core_package_does_not_import_opentelemetry():
+    # Only the SDK, exporters and instrumentation are ours to load lazily:
+    # FastAPI >= 0.143 imports the OpenTelemetry *API* itself when installed.
     code = (
         "import sys, vpp, vpp.tracing, vpp.logging, vpp.api.app, vpp.cluster.rpc, "
         "vpp.control.actuator, vpp.optimization.planning; "
-        "bad = sorted(m for m in sys.modules if m.startswith('opentelemetry')); "
+        "prefixes = ('opentelemetry.sdk', 'opentelemetry.exporter', "
+        "'opentelemetry.instrumentation'); "
+        "bad = sorted(m for m in sys.modules if m.startswith(prefixes)); "
         "assert not bad, bad"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
