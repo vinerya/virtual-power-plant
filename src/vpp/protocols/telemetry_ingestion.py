@@ -11,9 +11,11 @@ updater never had a real window to work with.
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,6 +28,19 @@ logger = logging.getLogger(__name__)
 # Payload fields, beyond the required ``soc``, that map 1:1 onto
 # BatteryStateRepository.record() keyword arguments.
 _OPTIONAL_NUMERIC_FIELDS = ("soh", "temperature", "voltage", "current", "power")
+#: Column values for fields a payload leaves out (as BatteryStateRepository.record).
+_DEFAULTS = {"soh": 100.0, "temperature": 25.0, "voltage": 0.0, "current": 0.0, "power": 0.0}
+
+#: Most messages :meth:`MQTTTelemetryIngestor.run` writes in one transaction.
+MAX_BATCH = 500
+
+
+@dataclass
+class _Sample:
+    message: ProtocolMessage
+    resource_id: str
+    soc: float
+    fields: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -68,13 +83,16 @@ class MQTTTelemetryIngestor:
 
     async def ingest_message(self, message: ProtocolMessage) -> bool:
         """Parse and persist one message. Returns True if a row was written."""
+        return await self.ingest_batch([message]) == 1
+
+    def _parse(self, message: ProtocolMessage) -> _Sample | None:
         parsed = parse_telemetry_topic(message.topic)
         if parsed is None or parsed.resource_type != "battery":
-            return False
+            return None
 
         payload = message.payload
         if not isinstance(payload, dict) or "soc" not in payload:
-            return False
+            return None
 
         try:
             soc = float(payload["soc"])
@@ -87,56 +105,112 @@ class MQTTTelemetryIngestor:
             logger.warning(
                 "Malformed MQTT telemetry payload on topic=%s: %r", message.topic, payload
             )
-            return False
+            return None
+        return _Sample(message, parsed.resource_id, soc, kwargs)
+
+    async def ingest_batch(self, messages: list[ProtocolMessage]) -> int:
+        """Persist several messages in one transaction; returns rows written.
+
+        One ``SELECT`` resolves every resource in the batch and one commit
+        writes all rows, instead of a lookup and a commit per message: under
+        load those per-message round trips, not the database, capped MQTT
+        ingestion at ~90 messages/s on SQLite (``vpp loadtest``, see
+        docs/performance.md). Messages that are malformed, not battery
+        telemetry, or for an unknown or non-battery resource are skipped (and
+        logged), as before. Each row is stamped with the time its message was
+        received.
+        """
+        samples = [s for s in (self._parse(m) for m in messages) if s is not None]
+        if not samples:
+            return 0
 
         # Local imports to avoid a hard import-time dependency between
         # protocols and db/events for callers that only need the parser.
+        from sqlalchemy import select
+
         from vpp.db.engine import run_in_session
-        from vpp.db.repositories import BatteryStateRepository, ResourceRepository
+        from vpp.db.models import BatteryStateModel, ResourceModel
         from vpp.events import Event, EventType, get_event_bus
 
-        async def write(session: AsyncSession) -> bool:
-            resource = await ResourceRepository.get_by_id(session, parsed.resource_id)
-            if resource is None or resource.resource_type != "battery":
-                return False
-            await BatteryStateRepository.record(
-                session, resource_id=parsed.resource_id, soc=soc, **kwargs
+        async def write(session: AsyncSession) -> list[_Sample]:
+            ids = {s.resource_id for s in samples}
+            batteries = set(
+                (
+                    await session.execute(
+                        select(ResourceModel.id).where(
+                            ResourceModel.id.in_(ids), ResourceModel.resource_type == "battery"
+                        )
+                    )
+                ).scalars()
             )
-            return True
+            written = [s for s in samples if s.resource_id in batteries]
+            session.add_all(
+                BatteryStateModel(
+                    resource_id=s.resource_id,
+                    soc=s.soc,
+                    timestamp=datetime.fromtimestamp(s.message.timestamp, tz=timezone.utc),
+                    **{**_DEFAULTS, **s.fields},
+                )
+                for s in written
+            )
+            return written
 
         # Shielded: stopping ingestion (shutdown, lease loss) mid-commit must
         # not leak a connection that still holds SQLite's write lock.
-        if not await run_in_session(self._session_factory, write):
-            logger.warning(
-                "MQTT telemetry for unknown/non-battery resource %r on topic=%s; dropping",
-                parsed.resource_id,
-                message.topic,
-            )
-            return False
+        written = await run_in_session(self._session_factory, write)
+        if len(written) < len(samples):
+            stored = {id(s) for s in written}
+            for s in samples:
+                if id(s) not in stored:
+                    logger.warning(
+                        "MQTT telemetry for unknown/non-battery resource %r on topic=%s; dropping",
+                        s.resource_id,
+                        s.message.topic,
+                    )
 
-        try:
-            await get_event_bus().publish(
-                Event(
-                    event_type=EventType.RESOURCE_UPDATED,
-                    data={"resource_id": parsed.resource_id, "soc": soc, **kwargs},
-                    source="mqtt.telemetry_ingestion",
+        bus = get_event_bus()
+        for s in written:
+            try:
+                await bus.publish(
+                    Event(
+                        event_type=EventType.RESOURCE_UPDATED,
+                        data={"resource_id": s.resource_id, "soc": s.soc, **s.fields},
+                        source="mqtt.telemetry_ingestion",
+                    )
                 )
-            )
-        except Exception:  # a broadcast failure must not drop the DB write
-            logger.exception("Failed to publish RESOURCE_UPDATED for %s", parsed.resource_id)
+            except Exception:  # a broadcast failure must not drop the DB write
+                logger.exception("Failed to publish RESOURCE_UPDATED for %s", s.resource_id)
 
-        return True
+        return len(written)
 
-    async def run(self) -> None:
-        """Drain the adapter's queue forever, persisting each message.
+    async def run(self, *, max_batch: int = MAX_BATCH) -> None:
+        """Drain the adapter's queue forever, persisting what has arrived.
 
-        A single malformed or DB-erroring message is logged and skipped --
-        matching the degradation loop's "one bad tick doesn't kill the
-        loop" convention -- so it never takes down the whole ingestion
-        stream.
+        Waits for one message, then takes whatever else is already queued
+        (up to ``max_batch``) and writes it in one transaction, so a backlog
+        is worked off in a few commits while a quiet stream still writes each
+        message as soon as it arrives. If a batch fails, its messages are
+        retried one by one, so a single malformed or DB-erroring message is
+        logged and skipped -- matching the degradation loop's "one bad tick
+        doesn't kill the loop" convention -- and never takes down the whole
+        ingestion stream.
         """
         async for message in self._adapter.receive_forever():
+            batch = [message, *self._adapter.receive_nowait(max_batch - 1)]
             try:
-                await self.ingest_message(message)
+                await self.ingest_batch(batch)
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                logger.exception("MQTT telemetry ingestion failed for topic=%s", message.topic)
+                if len(batch) == 1:
+                    logger.exception("MQTT telemetry ingestion failed for topic=%s", message.topic)
+                    continue
+                for item in batch:
+                    try:
+                        await self.ingest_message(item)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception(
+                            "MQTT telemetry ingestion failed for topic=%s", item.topic
+                        )

@@ -267,7 +267,7 @@ Tables: `users`, `api_keys`, `resources`, `battery_states`,
 `cluster_leases`, `cluster_calls`, `cluster_events`, `shared_rate_limits`,
 `audit_log`, and the device-control table `output_caps`.
 
-Migrations live in `src/vpp/migrations/versions/` (0001-0013) and ship in
+Migrations live in `src/vpp/migrations/versions/` (0001-0014) and ship in
 the wheel.
 `tests/test_alembic_drift.py` upgrades a fresh database to head and fails if
 the models and migrations differ, and checks there is a single head.

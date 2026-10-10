@@ -31,7 +31,7 @@ customer portal. Several defaults changed for safety; read **Upgrading from
      `alembic -x url="$VPP_DATABASE_URL" stamp 0001_baseline`; from an
      installed wheel:
      `python -c "from alembic import command; from vpp.db.engine import alembic_config; from vpp.settings import get_settings; command.stamp(alembic_config(get_settings().database_url), '0001_baseline')"`.
-     Then `vpp migrate` applies 0002-0013.
+     Then `vpp migrate` applies 0002-0014.
    - A database already under alembic (a pre-release build of 3.0) just
      runs `vpp migrate`.
    - New revisions: `0002` battery degradation columns and
@@ -43,7 +43,8 @@ customer portal. Several defaults changed for safety; read **Upgrading from
      `users.last_login_at`, `api_keys.key_prefix`, `api_keys.last_used_at`,
      `0010` `cluster_leases`, `cluster_calls`, `cluster_events` and
      `v2g_flexibility_bids`, `0011` `shared_rate_limits`, `0012`
-     `audit_log`, `0013` `output_caps`.
+     `audit_log`, `0013` `output_caps`, `0014` an index on
+     `resource_telemetry` (index only).
    - Optionally set `VPP_USE_ALEMBIC=1` so the API upgrades the schema at
      startup instead of running `create_all`.
 3. **Settings you must review:**
@@ -168,6 +169,31 @@ customer portal. Several defaults changed for safety; read **Upgrading from
   of another class (see **Fixed**).
 
 ### Added
+
+**Capacity and soak testing**
+- `vpp loadtest`: starts a real `vpp serve` (fresh SQLite file or any
+  `--database-url`) and SunSpec simulators, then concurrently runs MQTT or
+  HTTP telemetry ingestion (latency publish -> persisted -> WebSocket
+  broadcast), authenticated dashboard reads (JWT and API key), WebSocket
+  subscribers, periodic dispatch over K resources and Modbus polling.
+  Reports throughput, p50/p95/p99, errors, server RSS/CPU, database growth
+  and latency creep to `report.json` / `report.md`; exits 1 on errors. The
+  CI job `perf` runs `vpp loadtest --smoke` and fails only on errors.
+- [docs/performance.md](docs/performance.md): measured capacity of one API
+  worker on SQLite and PostgreSQL 16 (15- and 60-minute soaks, 60-second
+  ramps, one 4-vCPU host), bottlenecks found, reproduction commands and
+  sizing guidance.
+- [docs/operations.md](docs/operations.md): SQLite online backups and
+  PostgreSQL `pg_dump`/`pg_restore` (executed end to end), verifying a
+  backup, upgrades and rollback by restore (with the lossy downgrade
+  migrations listed), rotating `VPP_SECRET_KEY` and API keys, revoking
+  sessions, retention, probes and monitoring.
+- `/metrics` exposes the standard process metrics
+  (`process_resident_memory_bytes`, `process_cpu_seconds_total`, ...) and
+  `vpp_alert_evaluation_dropped_total`.
+- Migration `0014_telemetry_soc_index`: covering partial index on
+  `resource_telemetry (resource_id, timestamp, state_of_charge) WHERE
+  state_of_charge IS NOT NULL`.
 
 **HTTP security headers and dependency updates**
 - API: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
@@ -496,7 +522,7 @@ customer portal. Several defaults changed for safety; read **Upgrading from
   `X-Total-Count` (exposed through CORS and the console proxy).
 - `POST /api/v1/auth/token` accepts an OAuth2 form body or JSON.
 - Collection routes are served with or without a trailing slash (no `307`).
-- Alembic migrations (`0001_baseline` to `0013_output_caps`, see
+- Alembic migrations (`0001_baseline` to `0014_telemetry_soc_index`, see
   **Upgrading from 2.x**) and a working `vpp migrate` (`alembic upgrade
   head`); a drift test compares models and migrations against SQLite and,
   in CI, PostgreSQL and checks for a single head.
@@ -525,8 +551,10 @@ customer portal. Several defaults changed for safety; read **Upgrading from
 
 **Docs**
 - `docs/`: architecture, configuration reference (every `VPP_*` setting),
-  deployment, protocols/V2G/DR, API guide, tariffs, security, and
-  [releasing](docs/releasing.md).
+  deployment, protocols/V2G/DR, API guide, tariffs, security,
+  [operations runbook](docs/operations.md),
+  [performance](docs/performance.md), [observability](docs/observability.md)
+  and [releasing](docs/releasing.md).
 
 ### Changed
 
@@ -623,6 +651,41 @@ customer portal. Several defaults changed for safety; read **Upgrading from
 - Tracked `web/tsconfig.tsbuildinfo`.
 
 ### Fixed
+
+Found with `vpp loadtest` (numbers in docs/performance.md):
+
+- **The API could deadlock and die under load when a dispatch solved
+  while the event loop logged.** Pyomo's HiGHS interface redirected the
+  process stdout/stderr file descriptors and re-pointed every log handler
+  for each solve, from the solver's worker thread; a concurrent log line
+  could deadlock the solve and leave the root handler writing to a closed
+  stream, after which every log call raised. The API now switches Pyomo to
+  stream-only capture and turns HiGHS's console output off.
+- **MQTT telemetry waited for an unrelated timer before it was
+  processed.** The paho callback put messages on an `asyncio.Queue` from
+  its own thread without waking the event loop: 79 ms median / 285 ms p95
+  publish-to-persist at 1 message/s, now 8 ms / 11 ms.
+- **MQTT ingestion topped out at about 90 messages/s on SQLite and then
+  dropped telemetry.** Each message was its own lookup and commit; queued
+  messages are now written in batches: 800 messages/s with no loss and a
+  p95 under 60 ms on one worker. Rows are stamped with the time the message
+  was received rather than the commit time.
+- **`GET /api/v1/resources` (and resource detail, sites, dispatch) slowed
+  down linearly as telemetry accumulated.** The newest-SOC lookup read every
+  sample of every listed battery (~190 ms at 1M rows on SQLite, 84 ms on
+  PostgreSQL); it now seeks the newest row per resource (3 ms / 6 ms).
+- **Alert rules saw only part of the telemetry above ~200 events/s.** The
+  evaluator now evaluates everything queued in one transaction (retrying
+  event by event if that fails) and skips the auto-resolve query for
+  rule/resource pairs with no open alert: at 800 messages/s every event is
+  evaluated (before: about a third).
+- Every HTTP request walked the whole route table in the trailing-slash
+  middleware (~0.8 ms); the per-path answer is now cached.
+- A full MQTT or alert-evaluation queue logged one warning per dropped
+  message; both now log at most every 10 s with a count, and the drops are
+  counted in metrics.
+- The API's own MQTT disconnect at shutdown was logged as "disconnected
+  unexpectedly".
 
 **API and platform**
 - EventBus publishes now reach connected WebSocket clients (previously two

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -172,11 +173,32 @@ class TrailingSlashMiddleware:
     different method, i.e. a 405) is never touched, so explicit routes win.
     """
 
+    #: Paths whose "does any route match?" answer is remembered. Matching
+    #: walks every route (each a regex plus FastAPI bookkeeping), which cost
+    #: ~0.8 ms per request -- ~10 % of a worker's CPU at ~100 requests/s
+    #: (found with ``vpp loadtest``). Routes do not change after startup and
+    #: the answer depends only on the path (any method counts as a match),
+    #: so it is cached; bounded, as paths carry resource ids.
+    CACHE_SIZE = 4096
+
     def __init__(self, app: ASGIApp, *, router: Any) -> None:
         self.app = app
         self.router = router
+        self._cache: OrderedDict[tuple[str, str], bool] = OrderedDict()
 
     def _matches(self, scope: Scope) -> bool:
+        key = (scope.get("root_path", ""), scope["path"])
+        cached = self._cache.get(key)
+        if cached is not None:
+            self._cache.move_to_end(key)
+            return cached
+        result = self._match_routes(scope)
+        self._cache[key] = result
+        if len(self._cache) > self.CACHE_SIZE:
+            self._cache.popitem(last=False)
+        return result
+
+    def _match_routes(self, scope: Scope) -> bool:
         from starlette.routing import Match
 
         for route in self.router.routes:

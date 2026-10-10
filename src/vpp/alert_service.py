@@ -44,6 +44,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -53,7 +54,7 @@ from vpp.alerts import Alert, AlertManager, AlertRule, AlertSeverity, RuleType
 from vpp.db.engine import run_in_session
 from vpp.db.models import AlertModel, AlertRuleModel, ResourceModel
 from vpp.events.bus import Event, EventBus, EventType
-from vpp.metrics import normalise_soc, record_alert_fired
+from vpp.metrics import normalise_soc, record_alert_evaluation_dropped, record_alert_fired
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -65,6 +66,10 @@ logger = logging.getLogger(__name__)
 ALERTS_CHANNEL = "alerts"
 FRACTION_METRICS = frozenset({"soc", "soh"})
 OPEN_STATUSES = ("active", "acknowledged", "snoozed")
+#: Minimum seconds between "evaluation queue full" warnings.
+DROP_LOG_INTERVAL_S = 10.0
+#: Most queued telemetry events evaluated in one transaction.
+EVALUATION_BATCH = 200
 
 DEFAULT_RULES: tuple[dict[str, Any], ...] = (
     {
@@ -407,6 +412,17 @@ class AlertService:
         self._subscription_id: str | None = None
         self._metrics_of_interest: frozenset[str] = frozenset()
         self.dropped_events = 0
+        # (rule id, resource id) pairs known to have no open alert, so
+        # auto-resolve need not query for them on every in-range sample. Only
+        # this service creates alerts, so the set can only become stale by an
+        # alert this service persists, which removes the pair. Updated after
+        # a batch commits (``_pending_clear``), so a rolled-back batch cannot
+        # leave a pair marked clear while its alert is still open.
+        self._clear: set[tuple[str, str]] = set()
+        self._pending_clear: dict[tuple[str, str], bool] = {}
+        self._evaluating = asyncio.Lock()  # one batch at a time (_pending_clear)
+        self._drop_logged_at = 0.0
+        self._drops_since_log = 0
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -452,6 +468,7 @@ class AlertService:
                 self.manager.add_rule(engine_rule)
         self._rule_meta = {r.id: r for r in rows}
         self._metrics_of_interest = frozenset(self.manager.metric_names())
+        self._clear.clear()
 
     async def drain(self) -> None:
         """Wait until every queued event has been processed (tests, shutdown)."""
@@ -467,52 +484,80 @@ class AlertService:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
             self.dropped_events += 1
-            logger.warning(
-                "Alert evaluation queue full; dropped telemetry for %s (total dropped=%d)",
-                data.get("resource_id"),
-                self.dropped_events,
-            )
+            self._drops_since_log += 1
+            record_alert_evaluation_dropped()
+            # At most one line per interval: under sustained overload a line
+            # per event flooded the log (found with `vpp loadtest`).
+            now = time.monotonic()
+            if now - self._drop_logged_at >= DROP_LOG_INTERVAL_S:
+                logger.warning(
+                    "Alert evaluation queue full; dropped %d telemetry event(s) since the "
+                    "last report, e.g. for %s (total dropped=%d)",
+                    self._drops_since_log,
+                    data.get("resource_id"),
+                    self.dropped_events,
+                )
+                self._drop_logged_at = now
+                self._drops_since_log = 0
 
     async def _run(self) -> None:
         while True:
-            event = await self._queue.get()
+            batch = [await self._queue.get()]
+            while len(batch) < EVALUATION_BATCH and not self._queue.empty():
+                batch.append(self._queue.get_nowait())
             try:
-                await self.process_event(event)
+                await self.process_events(batch)
             except Exception:
-                logger.exception("Alert evaluation failed for event %s", event.event_id)
+                # Retry one by one, so one bad event does not lose the batch.
+                for event in batch:
+                    try:
+                        await self.process_event(event)
+                    except Exception:
+                        logger.exception("Alert evaluation failed for event %s", event.event_id)
             finally:
-                self._queue.task_done()
+                for _ in batch:
+                    self._queue.task_done()
 
     # -- evaluation ------------------------------------------------------------
 
     async def process_event(self, event: Event) -> list[dict[str, Any]]:
         """Evaluate one telemetry event. Returns newly fired alerts (serialised)."""
-        data = event.data or {}
-        resource_id = data.get("resource_id") or data.get("id")
-        if not resource_id:
-            return []
-        resource_id = str(resource_id)
+        return await self.process_events([event])
+
+    async def process_events(self, events: Sequence[Event]) -> list[dict[str, Any]]:
+        """Evaluate telemetry events in order, in one transaction.
+
+        Returns the newly fired alerts (serialised). The worker hands over
+        everything queued at once: one session and one commit per batch
+        instead of per event, and no auto-resolve query for a (rule,
+        resource) known to have no open alert. Before, the evaluator dropped
+        telemetry above ~200 events/s on one worker (found with
+        ``vpp loadtest``, see docs/performance.md).
+        """
 
         async def evaluate(session: AsyncSession) -> list[tuple[Alert, AlertModel]]:
             fired: list[tuple[Alert, AlertModel]] = []
-            for metric in self._metrics_of_interest:
-                value = _numeric(data.get(metric))
-                if value is None:
+            for event in events:
+                data = event.data or {}
+                resource_id = data.get("resource_id") or data.get("id")
+                if not resource_id:
                     continue
-                if metric in FRACTION_METRICS:
-                    value = normalise_soc(value)
-
-                for alert in self.manager.check(metric, value, source=resource_id):
-                    row, is_new = await self._persist(session, alert, metric, resource_id)
-                    if is_new:
-                        fired.append((alert, row))
-
-                await self._auto_resolve(session, metric, value, resource_id)
+                fired.extend(await self._evaluate(session, data, str(resource_id)))
             return fired
 
         # Shielded: stopping the evaluator mid-commit must not leak a
         # connection holding SQLite's write lock.
-        fired = await run_in_session(self._session_factory, evaluate)
+        async with self._evaluating:
+            self._pending_clear = {}
+            try:
+                fired = await run_in_session(self._session_factory, evaluate)
+            finally:
+                pending, self._pending_clear = self._pending_clear, {}
+            for key, clear in pending.items():  # committed: apply
+                if clear:
+                    self._clear.add(key)
+                else:
+                    self._clear.discard(key)
         payloads = [(alert, serialize_alert(row)) for alert, row in fired]
 
         out: list[dict[str, Any]] = []
@@ -529,6 +574,25 @@ class AlertService:
             out.append(payload)
         return out
 
+    async def _evaluate(
+        self, session: AsyncSession, data: dict[str, Any], resource_id: str
+    ) -> list[tuple[Alert, AlertModel]]:
+        fired: list[tuple[Alert, AlertModel]] = []
+        for metric in self._metrics_of_interest:
+            value = _numeric(data.get(metric))
+            if value is None:
+                continue
+            if metric in FRACTION_METRICS:
+                value = normalise_soc(value)
+
+            for alert in self.manager.check(metric, value, source=resource_id):
+                row, is_new = await self._persist(session, alert, metric, resource_id)
+                if is_new:
+                    fired.append((alert, row))
+
+            await self._auto_resolve(session, metric, value, resource_id)
+        return fired
+
     async def _persist(
         self,
         session: AsyncSession,
@@ -539,6 +603,7 @@ class AlertService:
         rule_id = alert.rule_name  # engine rule name == DB rule id
         meta = self._rule_meta.get(rule_id)
         now = utcnow()
+        self._pending_clear[(rule_id, resource_id)] = False
         open_rows = await AlertRepository.find_open(session, rule_id, resource_id)
         if open_rows:
             row = open_rows[0]
@@ -591,8 +656,12 @@ class AlertService:
                 continue
             if rule.condition_met(value):
                 continue
+            key = (rule.name, resource_id)
+            if self._pending_clear.get(key, key in self._clear):
+                continue  # known to have no open alert: no query per sample
             for row in await AlertRepository.find_open(session, rule.name, resource_id):
                 AlertRepository.resolve(row, by="auto")
+            self._pending_clear[key] = True
 
 
 def _rule_signature(rule: AlertRule) -> tuple[Any, ...]:

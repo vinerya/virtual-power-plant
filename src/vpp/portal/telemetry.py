@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Integer, and_, case, cast, func, literal, select
 
-from vpp.db.models import BatteryStateModel, ResourceTelemetryModel
+from vpp.db.models import BatteryStateModel, ResourceModel, ResourceTelemetryModel
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -204,7 +204,7 @@ async def latest_soc(session: AsyncSession, resource_ids: list[str]) -> dict[str
     """Most recent state of charge (0-1) per resource across both telemetry tables."""
     if not resource_ids:
         return {}
-    newest: dict[str, tuple[datetime, float]] = {}
+    newest_soc: dict[str, tuple[datetime, float]] = {}
 
     def _offer(rid: str, ts: datetime | None, soc: float | None) -> None:
         if ts is None or soc is None:
@@ -212,37 +212,42 @@ async def latest_soc(session: AsyncSession, resource_ids: list[str]) -> dict[str
         ts = as_utc(ts)
         soc = float(soc)
         soc = soc / 100.0 if soc > 1.0 else soc
-        cur = newest.get(rid)
+        cur = newest_soc.get(rid)
         if cur is None or ts > cur[0]:
-            newest[rid] = (ts, soc)
+            newest_soc[rid] = (ts, soc)
 
+    # One index seek per resource and table: correlated "newest row" lookups
+    # (ORDER BY timestamp DESC LIMIT 1 on the (resource_id, timestamp)
+    # indexes). A GROUP BY max(timestamp) instead read every sample of every
+    # listed resource, so GET /resources slowed down linearly as telemetry
+    # accumulated (~190 ms for 50 batteries at 1M rows on SQLite; found
+    # with `vpp loadtest`, see docs/performance.md).
     bs = BatteryStateModel
-    sub = (
-        select(bs.resource_id, func.max(bs.timestamp).label("ts"))
-        .where(bs.resource_id.in_(resource_ids))
-        .group_by(bs.resource_id)
-        .subquery()
-    )
-    stmt = select(bs.resource_id, bs.timestamp, bs.soc).join(
-        sub, and_(bs.resource_id == sub.c.resource_id, bs.timestamp == sub.c.ts)
-    )
-    for rid, ts, soc in (await session.execute(stmt)).all():
-        _offer(rid, ts, soc)
-
     rt = ResourceTelemetryModel
-    sub2 = (
-        select(rt.resource_id, func.max(rt.timestamp).label("ts"))
-        .where(rt.resource_id.in_(resource_ids), rt.state_of_charge.is_not(None))
-        .group_by(rt.resource_id)
-        .subquery()
-    )
-    stmt2 = select(rt.resource_id, rt.timestamp, rt.state_of_charge).join(
-        sub2, and_(rt.resource_id == sub2.c.resource_id, rt.timestamp == sub2.c.ts)
-    )
-    for rid, ts, rt_soc in (await session.execute(stmt2)).all():
-        _offer(rid, ts, rt_soc)
+    res = ResourceModel
 
-    return {rid: soc for rid, (_ts, soc) in newest.items()}
+    def newest(model: Any, ts_col: Any, value_col: Any, *extra: Any) -> Any:
+        return (
+            select(ts_col, value_col)
+            .where(model.resource_id == res.id, *extra)
+            .order_by(ts_col.desc())
+            .limit(1)
+        )
+
+    bs_q = newest(bs, bs.timestamp, bs.soc)
+    rt_q = newest(rt, rt.timestamp, rt.state_of_charge, rt.state_of_charge.is_not(None))
+    stmt = select(
+        res.id,
+        bs_q.with_only_columns(bs.timestamp).scalar_subquery(),
+        bs_q.with_only_columns(bs.soc).scalar_subquery(),
+        rt_q.with_only_columns(rt.timestamp).scalar_subquery(),
+        rt_q.with_only_columns(rt.state_of_charge).scalar_subquery(),
+    ).where(res.id.in_(resource_ids))
+    for rid, bs_ts, bs_soc, rt_ts, rt_soc in (await session.execute(stmt)).all():
+        _offer(rid, bs_ts, bs_soc)
+        _offer(rid, rt_ts, rt_soc)
+
+    return {rid: soc for rid, (_ts, soc) in newest_soc.items()}
 
 
 async def record_samples(

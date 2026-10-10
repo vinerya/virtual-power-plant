@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import subprocess
 import sys
 from typing import Any
 
@@ -175,3 +176,73 @@ def test_fallback_when_solver_unavailable(monkeypatch):
     assert "p_discharge" in result.solution
     # Sanity: fallback at least doesn't lose money on this two-peak profile.
     assert result.objective_value <= 0.0
+
+
+_CONCURRENT_LOGGING_SCRIPT = """
+import logging, sys, threading, time
+from vpp.logging import configure_logging
+from vpp.optimization.solvers.pyomo_plugin import _try_import_pyomo, disable_solver_fd_capture
+
+configure_logging("INFO", json_output=True)  # root StreamHandler on stderr, as in the API
+if sys.argv[1] == "fixed":
+    assert disable_solver_fd_capture()
+pyo, factory = _try_import_pyomo()
+spam = logging.getLogger("vpp.test.spam")
+stop = threading.Event()
+errors = []
+
+def log_forever():
+    while not stop.is_set():
+        try:
+            spam.warning("event loop still logging")
+        except Exception as exc:
+            errors.append(repr(exc))
+
+threading.Thread(target=log_forever, daemon=True).start()
+solved = 0
+deadline = time.monotonic() + 2.0
+while time.monotonic() < deadline:
+    m = pyo.ConcreteModel()
+    m.x = pyo.Var(bounds=(0, 10))
+    m.o = pyo.Objective(expr=m.x)
+    factory(None).solve(m)
+    solved += 1
+stop.set()
+handler = logging.getLogger().handlers[-1]
+handler.stream.write("")  # still open
+print(f"solved={solved} errors={len(errors)}", file=sys.__stdout__, flush=True)
+"""
+
+
+def _run_concurrent_logging(mode: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-c", _CONCURRENT_LOGGING_SCRIPT, mode],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_solves_in_threads_do_not_break_concurrent_logging():
+    """Regression (found by `vpp loadtest`): the API solves in worker threads
+    while the event loop keeps logging. Pyomo's appsi HiGHS interface
+    redirected the process stdout/stderr file descriptors and re-pointed the
+    log StreamHandlers for every solve, so a concurrent log line could
+    deadlock the solve ("possible output stream deadlock") or leave the
+    handler on a closed stream, after which the server died.
+    ``disable_solver_fd_capture()`` (called by ``create_app()``) prevents it.
+    Runs in a subprocess: the race needs a real process stderr handler.
+    """
+    from vpp.optimization.solvers.pyomo_plugin import _try_import_pyomo
+
+    if _try_import_pyomo()[0] is None:
+        pytest.skip("Pyomo/HiGHS not available")
+    result = _run_concurrent_logging("fixed")
+    assert result.returncode == 0, result.stderr[-2000:]
+    line = result.stdout.strip().splitlines()[-1]
+    assert line.startswith("solved=") and line.endswith("errors=0"), result.stdout
+    assert int(line.split()[0].split("=")[1]) > 0
+    assert "Logging error" not in result.stderr
+    assert "deadlock" not in result.stderr
+    # HiGHS's console output is off, so nothing bypasses the JSON log stream.
+    assert "Running HiGHS" not in result.stdout + result.stderr

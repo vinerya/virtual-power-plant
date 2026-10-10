@@ -72,6 +72,7 @@ try:
         Gauge,
         Histogram,
         Info,
+        ProcessCollector,
         generate_latest,
     )
 
@@ -89,6 +90,9 @@ if _HAS_PROMETHEUS:
     # -- Platform info
     VPP_INFO = Info("vpp", "VPP platform information", registry=REGISTRY)
     VPP_INFO.info({"version": __version__})
+    # process_resident_memory_bytes, process_cpu_seconds_total, open fds...
+    # (Linux): watch RSS for growth over days (docs/operations.md).
+    ProcessCollector(registry=REGISTRY)
 
     # -- Resource metrics
     RESOURCE_COUNT = Gauge(
@@ -198,6 +202,12 @@ if _HAS_PROMETHEUS:
         "vpp_alerts_fired_total",
         "Alerts fired by the alert manager",
         ["severity", "rule"],
+        registry=REGISTRY,
+    )
+
+    ALERT_EVALUATION_DROPPED = Counter(
+        "vpp_alert_evaluation_dropped_total",
+        "Telemetry events not evaluated against alert rules (evaluation queue full)",
         registry=REGISTRY,
     )
 
@@ -444,6 +454,12 @@ def record_protocol_error(protocol: str) -> None:
 
 def record_alert_fired(severity: str, rule: str) -> None:
     metrics_collector.record_alert_fired(severity, rule)
+
+
+def record_alert_evaluation_dropped() -> None:
+    """Count one telemetry event the alert evaluator had no room for."""
+    if _HAS_PROMETHEUS:
+        ALERT_EVALUATION_DROPPED.inc()
 
 
 # ---------------------------------------------------------------------------

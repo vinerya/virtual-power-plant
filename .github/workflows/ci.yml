@@ -101,6 +101,33 @@ jobs:
       - name: alembic upgrade head (again, after a full downgrade)
         run: alembic -x url="$MIGRATION_DB_URL" upgrade head
 
+  perf:
+    # 30-second load smoke test against a real `vpp serve` process (HTTP
+    # telemetry, dashboard reads, WebSocket subscribers, dispatch, one
+    # SunSpec simulator). Fails only on errors, never on latency numbers:
+    # shared runners are too noisy for thresholds. See docs/performance.md.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: pip install -e ".[api,db,cli,protocols,monitoring,migrations]"
+      - name: vpp loadtest --smoke
+        run: vpp loadtest --smoke --output-dir loadtest-smoke
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-smoke
+          path: |
+            loadtest-smoke/report.md
+            loadtest-smoke/report.json
+            loadtest-smoke/server-run.log
+          if-no-files-found: ignore
+
   security:
     runs-on: ubuntu-latest
     steps:

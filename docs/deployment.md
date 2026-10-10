@@ -134,7 +134,9 @@ API_BASE_URL=http://127.0.0.1:8000 WS_PUBLIC_URL=wss://vpp.example.com/api/v1/ws
 ## Database and migrations
 
 - PostgreSQL 14+ is recommended for production (compose uses 16); SQLite
-  is fine for development and demos.
+  is fine for development, demos and small single-worker sites (see
+  [performance.md](performance.md#when-to-move-from-sqlite-to-postgresql)
+  for where it stops).
 - Schema changes ship as alembic migrations in `src/vpp/migrations/versions/`. Upgrade
   procedure: back up, deploy the new image, let `vpp migrate` run (compose
   does it on every start; it is idempotent), check the logs. Upgrading
@@ -142,10 +144,11 @@ API_BASE_URL=http://127.0.0.1:8000 WS_PUBLIC_URL=wss://vpp.example.com/api/v1/ws
   [CHANGELOG.md](../CHANGELOG.md) first (e.g. a database created by 2.0.0
   must be stamped at `0001_baseline` before `vpp migrate`).
 - `alembic downgrade` is available from the repository root
-  (`alembic downgrade -1`) but data-bearing downgrades are not tested;
-  restore from backup instead.
-- Back up with `pg_dump` (e.g.
-  `docker compose exec postgres pg_dump -U vpp vpp > vpp.sql`).
+  (`alembic downgrade -1`) but most downgrades drop data and they are not
+  tested on real data; roll back by restoring the pre-upgrade backup.
+- Backups (SQLite online backup, `pg_dump -Fc`), restores, verifying a
+  backup, upgrades and rollbacks, credential rotation and retention are in
+  the [operations runbook](operations.md).
 
 ## Reverse proxy and TLS
 
@@ -275,6 +278,10 @@ docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml
 - `GET /health` is a liveness check. `GET /ready` runs `SELECT 1` against
   the database and returns 503 when it can't, so use it as the readiness
   probe.
+- `process_resident_memory_bytes` / `process_cpu_seconds_total` (per
+  process) show memory growth and CPU saturation. Which metrics and log
+  lines to alert on: [operations.md](operations.md#what-to-monitor);
+  measured capacity of one worker: [performance.md](performance.md).
 
 ## Enabling integrations
 

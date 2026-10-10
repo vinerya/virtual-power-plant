@@ -538,6 +538,170 @@ async def test_service_drops_when_queue_full(app):
 
 
 @pytest.mark.asyncio
+async def test_queue_full_is_logged_once_per_interval_and_counted(app, caplog):
+    """Under sustained overload (found with `vpp loadtest`) a warning per
+    dropped event flooded the log; drops are counted in Prometheus instead."""
+    from vpp import metrics as vpp_metrics
+
+    metric = f"m_{_uid()}"
+    await _add_rule(name=f"r {metric}", metric=metric, threshold=1.0)
+    svc = AlertService(get_session_factory(), queue_size=1)
+    await svc.reload_rules()
+    ev = Event(event_type=EventType.RESOURCE_UPDATED, data={"resource_id": "x", metric: 5})
+    before = vpp_metrics.ALERT_EVALUATION_DROPPED._value.get()
+    with caplog.at_level("WARNING", logger="vpp.alert_service"):
+        for _ in range(51):
+            await svc._on_event(ev)
+    assert svc.dropped_events == 50
+    assert vpp_metrics.ALERT_EVALUATION_DROPPED._value.get() - before == 50
+    assert len([r for r in caplog.records if "queue full" in r.getMessage()]) == 1
+
+
+@pytest.mark.asyncio
+async def test_queued_events_are_evaluated_in_one_transaction(app, db_session):
+    """Regression (found with `vpp loadtest`): one transaction per telemetry
+    event capped the evaluator at ~200 events/s; the worker now evaluates
+    what is queued in one transaction, with the same outcome."""
+    from sqlalchemy import event as sa_event
+
+    metric = f"m_{_uid()}"
+    await _add_rule(
+        name=f"Low {metric}", metric=metric, comparison="<", threshold=10.0, cooldown_s=0
+    )
+    resource = ResourceModel(name=f"bat-{_uid()}", resource_type="battery", rated_power=5.0)
+    db_session.add(resource)
+    await db_session.commit()
+    fake = FakeBroadcaster()
+    svc = AlertService(get_session_factory(), broadcaster=fake)
+    await svc.reload_rules()
+
+    def ev(value: float) -> Event:
+        return Event(
+            event_type=EventType.RESOURCE_UPDATED, data={"resource_id": resource.id, metric: value}
+        )
+
+    # In range, fires, repeats (deduplicated), recovers (auto-resolved), fires again.
+    for value in (50.0, 5.0, 4.0, 50.0, 3.0):
+        svc._queue.put_nowait(ev(value))
+    commits = 0
+
+    def count(conn) -> None:
+        nonlocal commits
+        commits += 1
+
+    engine = get_session_factory().kw["bind"].sync_engine
+    sa_event.listen(engine, "commit", count)
+    worker = asyncio.create_task(svc._run())
+    try:
+        await asyncio.wait_for(svc.drain(), 10)
+    finally:
+        worker.cancel()
+        sa_event.remove(engine, "commit", count)
+    assert commits == 1
+    rows = await _alerts_for(resource.id)
+    assert [r.status for r in rows] == ["resolved", "active"]
+    assert rows[0].occurrences == 2
+    assert len(fake.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_in_range_samples_skip_the_auto_resolve_query_once_known_clear(app, db_session):
+    """The auto-resolve lookup ran one SELECT per in-range sample, the bulk
+    of the evaluator's cost under load (found with `vpp loadtest`)."""
+    from sqlalchemy import event as sa_event
+
+    metric = f"m_{_uid()}"
+    await _add_rule(
+        name=f"Low {metric}", metric=metric, comparison="<", threshold=10.0, cooldown_s=0
+    )
+    resource = ResourceModel(name=f"bat-{_uid()}", resource_type="battery", rated_power=5.0)
+    db_session.add(resource)
+    await db_session.commit()
+    svc = AlertService(get_session_factory())
+    await svc.reload_rules()
+    selects = 0
+
+    def count(conn, cursor, statement, *args) -> None:
+        nonlocal selects
+        if statement.lstrip().upper().startswith("SELECT"):
+            selects += 1
+
+    def ev(value: float) -> Event:
+        return Event(
+            event_type=EventType.RESOURCE_UPDATED, data={"resource_id": resource.id, metric: value}
+        )
+
+    engine = get_session_factory().kw["bind"].sync_engine
+    sa_event.listen(engine, "before_cursor_execute", count)
+    try:
+        await svc.process_event(ev(50.0))  # first in-range sample: one lookup
+        first = selects
+        for _ in range(5):
+            await svc.process_event(ev(60.0))  # known clear: no query
+        assert selects == first
+        await svc.process_event(ev(5.0))  # fires
+        await svc.process_event(ev(50.0))  # must still auto-resolve
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", count)
+    [row] = await _alerts_for(resource.id)
+    assert row.status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_rolled_back_batch_does_not_mark_pairs_clear(app, db_session, monkeypatch):
+    metric = f"m_{_uid()}"
+    await _add_rule(
+        name=f"Low {metric}", metric=metric, comparison="<", threshold=10.0, cooldown_s=0
+    )
+    resource = ResourceModel(name=f"bat-{_uid()}", resource_type="battery", rated_power=5.0)
+    db_session.add(resource)
+    await db_session.commit()
+    svc = AlertService(get_session_factory())
+    await svc.reload_rules()
+    ev = Event(
+        event_type=EventType.RESOURCE_UPDATED, data={"resource_id": resource.id, metric: 50}
+    )
+
+    from vpp import alert_service as alert_service_module
+
+    original = alert_service_module.run_in_session
+
+    async def failing(factory, work, **kw):  # the batch's commit fails
+        await original(factory, work, commit=False)
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(alert_service_module, "run_in_session", failing)
+    with pytest.raises(RuntimeError):
+        await svc.process_event(ev)
+    assert svc._clear == set()
+    monkeypatch.setattr(alert_service_module, "run_in_session", original)
+    await svc.process_event(ev)
+    assert len(svc._clear) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_is_retried_event_by_event(app, monkeypatch):
+    svc = AlertService(get_session_factory())
+    seen: list[int] = []
+
+    async def process_events(events):
+        if len(events) > 1:
+            raise RuntimeError("one bad event")
+        seen.append(events[0].data["n"])
+        return []
+
+    monkeypatch.setattr(svc, "process_events", process_events)
+    for n in range(3):
+        svc._queue.put_nowait(Event(event_type=EventType.RESOURCE_UPDATED, data={"n": n}))
+    worker = asyncio.create_task(svc._run())
+    try:
+        await asyncio.wait_for(svc.drain(), 10)
+    finally:
+        worker.cancel()
+    assert seen == [0, 1, 2]
+
+
+@pytest.mark.asyncio
 async def test_rule_crud_reloads_running_service(client, auth_headers, monkeypatch):
     from vpp import alert_service as alert_service_module
 
