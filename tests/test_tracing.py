@@ -42,19 +42,37 @@ def test_disabled_span_costs_nothing_measurable():
     tracing.disable()
     n = 100_000
 
+    class _Null:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def set(self, **attrs):
+            pass
+
+    null = _Null()
+
+    def null_span(name, **attrs):
+        return null
+
     def traced():
         for i in range(n):
             with tracing.span("vpp.actuator.setpoint", resource_id="r", requested_kw=i) as sp:
                 sp.set(status="accepted")
 
-    def plain():
-        for _i in range(n):
-            pass
+    def baseline():
+        for i in range(n):
+            with null_span("vpp.actuator.setpoint", resource_id="r", requested_kw=i) as sp:
+                sp.set(status="accepted")
 
-    best = min(_timed(traced) for _ in range(3)) - min(_timed(plain) for _ in range(3))
-    # A few hundred ns per span site at most (well under a microsecond on CI
-    # hardware); a dispatch writes a handful of devices, so this is noise.
-    assert best / n < 2e-6, f"{best / n * 1e9:.0f} ns per disabled span"
+    # Relative to the cheapest possible stand-in with the same call shape,
+    # timed in the same run: an absolute ns bound breaks under coverage and
+    # on slow shared runners, a ratio does not.
+    cost = min(_timed(traced) for _ in range(5))
+    floor = min(_timed(baseline) for _ in range(5))
+    assert cost < 3 * floor, f"disabled span {cost / n * 1e9:.0f} ns vs {floor / n * 1e9:.0f} ns"
 
 
 def _timed(fn) -> float:
