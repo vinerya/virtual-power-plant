@@ -201,6 +201,12 @@ if _HAS_PROMETHEUS:
         registry=REGISTRY,
     )
 
+    ALERT_EVALUATION_DROPPED = Counter(
+        "vpp_alert_evaluation_dropped_total",
+        "Telemetry events not evaluated against alert rules (evaluation queue full)",
+        registry=REGISTRY,
+    )
+
     # -- API metrics
     API_REQUESTS = Counter(
         "vpp_api_requests_total",
@@ -444,6 +450,12 @@ def record_protocol_error(protocol: str) -> None:
 
 def record_alert_fired(severity: str, rule: str) -> None:
     metrics_collector.record_alert_fired(severity, rule)
+
+
+def record_alert_evaluation_dropped() -> None:
+    """Count one telemetry event the alert evaluator had no room for."""
+    if _HAS_PROMETHEUS:
+        ALERT_EVALUATION_DROPPED.inc()
 
 
 # ---------------------------------------------------------------------------

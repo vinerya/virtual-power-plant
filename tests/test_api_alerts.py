@@ -539,6 +539,26 @@ async def test_service_drops_when_queue_full(app):
 
 
 @pytest.mark.asyncio
+async def test_queue_full_is_logged_once_per_interval_and_counted(app, caplog):
+    """Under sustained overload (found with `vpp loadtest`) a warning per
+    dropped event flooded the log; drops are counted in Prometheus instead."""
+    from vpp import metrics as vpp_metrics
+
+    metric = f"m_{_uid()}"
+    await _add_rule(name=f"r {metric}", metric=metric, threshold=1.0)
+    svc = AlertService(get_session_factory(), queue_size=1)
+    await svc.reload_rules()
+    ev = Event(event_type=EventType.RESOURCE_UPDATED, data={"resource_id": "x", metric: 5})
+    before = vpp_metrics.ALERT_EVALUATION_DROPPED._value.get()
+    with caplog.at_level("WARNING", logger="vpp.alert_service"):
+        for _ in range(51):
+            await svc._on_event(ev)
+    assert svc.dropped_events == 50
+    assert vpp_metrics.ALERT_EVALUATION_DROPPED._value.get() - before == 50
+    assert len([r for r in caplog.records if "queue full" in r.getMessage()]) == 1
+
+
+@pytest.mark.asyncio
 async def test_rule_crud_reloads_running_service(client, auth_headers, monkeypatch):
     from vpp import alert_service as alert_service_module
 

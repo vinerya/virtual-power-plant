@@ -44,6 +44,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -53,7 +54,7 @@ from vpp.alerts import Alert, AlertManager, AlertRule, AlertSeverity, RuleType
 from vpp.db.engine import run_in_session
 from vpp.db.models import AlertModel, AlertRuleModel, ResourceModel
 from vpp.events.bus import Event, EventBus, EventType
-from vpp.metrics import normalise_soc, record_alert_fired
+from vpp.metrics import normalise_soc, record_alert_evaluation_dropped, record_alert_fired
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -65,6 +66,8 @@ logger = logging.getLogger(__name__)
 ALERTS_CHANNEL = "alerts"
 FRACTION_METRICS = frozenset({"soc", "soh"})
 OPEN_STATUSES = ("active", "acknowledged", "snoozed")
+#: Minimum seconds between "evaluation queue full" warnings.
+DROP_LOG_INTERVAL_S = 10.0
 
 DEFAULT_RULES: tuple[dict[str, Any], ...] = (
     {
@@ -407,6 +410,8 @@ class AlertService:
         self._subscription_id: str | None = None
         self._metrics_of_interest: frozenset[str] = frozenset()
         self.dropped_events = 0
+        self._drop_logged_at = 0.0
+        self._drops_since_log = 0
 
     # -- lifecycle -------------------------------------------------------------
 
@@ -467,11 +472,21 @@ class AlertService:
             self._queue.put_nowait(event)
         except asyncio.QueueFull:
             self.dropped_events += 1
-            logger.warning(
-                "Alert evaluation queue full; dropped telemetry for %s (total dropped=%d)",
-                data.get("resource_id"),
-                self.dropped_events,
-            )
+            self._drops_since_log += 1
+            record_alert_evaluation_dropped()
+            # At most one line per interval: under sustained overload a line
+            # per event flooded the log (found with `vpp loadtest`).
+            now = time.monotonic()
+            if now - self._drop_logged_at >= DROP_LOG_INTERVAL_S:
+                logger.warning(
+                    "Alert evaluation queue full; dropped %d telemetry event(s) since the "
+                    "last report, e.g. for %s (total dropped=%d)",
+                    self._drops_since_log,
+                    data.get("resource_id"),
+                    self.dropped_events,
+                )
+                self._drop_logged_at = now
+                self._drops_since_log = 0
 
     async def _run(self) -> None:
         while True:
