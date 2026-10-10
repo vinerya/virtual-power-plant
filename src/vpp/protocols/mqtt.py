@@ -2,7 +2,8 @@
 
 Topic structure: ``vpp/{site_id}/{resource_type}/{resource_id}/{metric}``
 
-Supports QoS 0/1/2, TLS, and automatic reconnection.
+Supports QoS 0/1/2, TLS (server verification and client certificates), and
+automatic reconnection.
 """
 
 from __future__ import annotations
@@ -11,6 +12,10 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
+import re
+import secrets
+import socket
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -28,13 +33,35 @@ logger = logging.getLogger(__name__)
 #: Minimum seconds between "queue full" warnings.
 DROP_LOG_INTERVAL_S = 10.0
 
+#: Random part of :func:`default_client_id`, drawn once per process.
+_PROCESS_TOKEN = secrets.token_hex(3)
+
+
+def default_client_id(prefix: str = "vpp") -> str:
+    """A client id unique to this process and stable for its lifetime.
+
+    ``{prefix}-{hostname}-{pid}-{random}``: the broker disconnects an
+    existing session when another client connects with the same id, so a
+    fixed id made two VPP installations (or two API processes during a
+    lease hand-over) on one broker kick each other off in a loop. The id is
+    the same for every reconnect of this process; the ingestion client uses
+    a clean session, so nothing depends on it surviving a restart. The
+    random part keeps containers that share a hostname pattern and pid 1
+    apart. Set ``VPP_MQTT_CLIENT_ID`` for a fixed id (e.g. for broker ACLs).
+    """
+    host = re.sub(r"[^A-Za-z0-9-]", "-", socket.gethostname())[:20].strip("-") or "host"
+    return f"{prefix}-{host}-{os.getpid()}-{_PROCESS_TOKEN}"
+
 
 class MQTTAdapter(ProtocolAdapter):
     """Paho-MQTT async wrapper implementing the VPP ``ProtocolAdapter`` ABC.
 
     Configuration keys (passed via ``configure``):
-        broker_host, broker_port, username, password, client_id, use_tls,
-        ca_certs, keepalive, topic_prefix
+        broker_host, broker_port, username, password, client_id (default:
+        :func:`default_client_id`), keepalive, topic_prefix, and for TLS:
+        use_tls, ca_certs (CA bundle; default: the system trust store),
+        certfile/keyfile (client certificate), tls_insecure (skip
+        certificate and hostname verification -- testing only)
     """
 
     def __init__(self) -> None:
@@ -48,6 +75,7 @@ class MQTTAdapter(ProtocolAdapter):
         self.dropped = 0  # messages dropped because the queue was full
         self._drop_logged_at = 0.0
         self._drops_since_log = 0
+        self._refused: str | None = None  # CONNACK failure reason, if refused
 
     # -- Lifecycle -----------------------------------------------------------
 
@@ -61,12 +89,13 @@ class MQTTAdapter(ProtocolAdapter):
             ) from exc
 
         self._status = ProtocolStatus.CONNECTING
+        self._refused = None
         self._loop = asyncio.get_running_loop()
 
         broker = self._config.get("broker_host", "localhost")
         port = int(self._config.get("broker_port", 1883))
         keepalive = int(self._config.get("keepalive", 60))
-        client_id = self._config.get("client_id", "vpp-mqtt-adapter")
+        client_id = self._config.get("client_id") or default_client_id()
 
         self._client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
@@ -81,7 +110,7 @@ class MQTTAdapter(ProtocolAdapter):
 
         # TLS
         if self._config.get("use_tls"):
-            self._client.tls_set(ca_certs=self._config.get("ca_certs"))
+            self._configure_tls(self._client)
 
         # Callbacks
         self._client.on_message = self._on_message
@@ -96,13 +125,47 @@ class MQTTAdapter(ProtocolAdapter):
         for _ in range(50):
             if self._status == ProtocolStatus.CONNECTED:
                 break
+            if self._refused is not None:
+                break
             await asyncio.sleep(0.1)
         else:
             self._status = ProtocolStatus.ERROR
             raise ConnectionError(f"MQTT CONNACK timeout connecting to {broker}:{port}")
+        if self._refused is not None:
+            # Stop paho retrying with credentials the broker just rejected;
+            # the caller (the ingestion loop) retries on its own schedule.
+            self._client.loop_stop()
+            self._client = None
+            self._status = ProtocolStatus.ERROR
+            raise ConnectionError(
+                f"MQTT broker {broker}:{port} refused the connection: {self._refused}"
+            )
 
         self._metrics.connected_since = time.time()
-        logger.info("MQTT connected to %s:%d", broker, port)
+        logger.info(
+            "MQTT connected to %s:%d as %r%s",
+            broker,
+            port,
+            client_id,
+            " over TLS" if self._config.get("use_tls") else "",
+        )
+
+    def _configure_tls(self, client: Any) -> None:
+        import ssl
+
+        insecure = bool(self._config.get("tls_insecure"))
+        client.tls_set(
+            ca_certs=self._config.get("ca_certs") or None,
+            certfile=self._config.get("certfile") or None,
+            keyfile=self._config.get("keyfile") or None,
+            cert_reqs=ssl.CERT_NONE if insecure else ssl.CERT_REQUIRED,
+        )
+        if insecure:
+            client.tls_insecure_set(True)
+            logger.warning(
+                "MQTT TLS certificate and hostname verification are DISABLED "
+                "(VPP_MQTT_TLS_INSECURE); use this for testing only"
+            )
 
     async def disconnect(self) -> None:
         # Set first: paho reports our own disconnect through _on_disconnect.
@@ -185,6 +248,14 @@ class MQTTAdapter(ProtocolAdapter):
     def _on_connect(
         self, client: Any, userdata: Any, flags: Any, rc: Any, properties: Any = None
     ) -> None:
+        if getattr(rc, "is_failure", False) or (isinstance(rc, int) and rc != 0):
+            # e.g. "Not authorized" / "Bad user name or password": this is
+            # not a connection, so don't report one (or subscribe).
+            self._refused = str(rc)
+            self._status = ProtocolStatus.ERROR
+            logger.warning("MQTT broker refused the connection: %s", rc)
+            return
+        self._refused = None
         self._status = ProtocolStatus.CONNECTED
         prefix = self._config.get("topic_prefix", "vpp/#")
         client.subscribe(prefix, qos=1)

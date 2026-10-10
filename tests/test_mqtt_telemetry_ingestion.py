@@ -412,6 +412,7 @@ async def test_ingest_batch_writes_valid_rows_in_one_transaction(db_session, app
 
     reset_event_bus()
     stamp = datetime.now().timestamp()
+    base = stamp - 100  # receive times: recent, so the samples are live
     battery = await ResourceRepository.create(
         db_session, name=f"mqtt-batch-{stamp}", resource_type="battery", rated_power=5.0
     )
@@ -427,7 +428,7 @@ async def test_ingest_batch_writes_valid_rows_in_one_transaction(db_session, app
     get_event_bus().subscribe(on_event, event_types={EventType.RESOURCE_UPDATED})
     messages = [
         ProtocolMessage(
-            topic=f"vpp/s/battery/{battery.id}/soc", payload={"soc": 40.0 + i}, timestamp=1e9 + i
+            topic=f"vpp/s/battery/{battery.id}/soc", payload={"soc": 40.0 + i}, timestamp=base + i
         )
         for i in range(50)
     ] + [
@@ -458,7 +459,7 @@ async def test_ingest_batch_writes_valid_rows_in_one_transaction(db_session, app
     # Stamped with the time each message was received, not the commit time.
     newest = max(rows, key=lambda r: r.timestamp)
     assert newest.timestamp.replace(tzinfo=timezone.utc).timestamp() == pytest.approx(
-        1e9 + 49, abs=1
+        base + 49, abs=1
     )
     assert [e.data["soc"] for e in received] == [40.0 + i for i in range(50)]
 

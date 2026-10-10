@@ -15,8 +15,7 @@ used. Customers may read metrics only for resources on sites they own
 
 from __future__ import annotations
 
-import contextlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import (
@@ -26,13 +25,15 @@ from sqlalchemy.ext.asyncio import (
 from vpp.auth.security import get_current_principal, require_role
 from vpp.db.engine import get_db
 from vpp.db.models import ResourceModel, UserModel
-from vpp.events import Event, EventType, get_event_bus
 from vpp.portal.access import visible_resource
 from vpp.portal.telemetry import (
     MAX_SPAN,
     WINDOWS,
     as_utc,
     choose_bucket_seconds,
+    is_future,
+    newest_live_power,
+    publish_resource_updated,
     query_history,
     record_samples,
 )
@@ -40,11 +41,6 @@ from vpp.schemas.auth import UserRole
 from vpp.schemas.sites import ResourceMetricsResponse, TelemetryIngest, TelemetryIngestResult
 
 router = APIRouter(prefix="/api/v1/resources", tags=["Resources"])
-
-#: Samples stamped further than this in the future are rejected (clock skew guard).
-MAX_FUTURE_SKEW = timedelta(minutes=5)
-#: Only samples at least this fresh update the resource's live ``current_power``.
-LIVE_STATE_MAX_AGE = timedelta(minutes=15)
 
 
 @router.get(
@@ -137,32 +133,26 @@ async def ingest_resource_telemetry(
     samples = []
     for s in body.samples:
         ts = as_utc(s.timestamp) if s.timestamp is not None else now
-        if ts > now + MAX_FUTURE_SKEW:
+        if is_future(ts, now):
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"sample timestamp {ts.isoformat()} is in the future",
             )
         samples.append((ts, s.power_kw, s.state_of_charge))
     await record_samples(session, resource_id, samples, source=body.source)
-    newest = max(samples, key=lambda x: x[0])
-    current_power = resource.current_power
-    if now - newest[0] > LIVE_STATE_MAX_AGE:
+    live = newest_live_power(((ts, power) for ts, power, _soc in samples), now)
+    if live is None:
         # Historical backfill: keep the live state untouched.
         return {
             "resource_id": resource_id,
             "accepted": len(samples),
-            "current_power": current_power,
+            "current_power": resource.current_power,
         }
-    resource.current_power = newest[1]
+    resource.current_power = live[1]
     await session.flush()
     current_power = resource.current_power
-    # A broadcast failure must not drop the write.
-    with contextlib.suppress(Exception):
-        await get_event_bus().publish(
-            Event(
-                event_type=EventType.RESOURCE_UPDATED,
-                data={"resource_id": resource_id, "current_power_kw": current_power},
-                source="api.telemetry_ingest",
-            )
-        )
+    await publish_resource_updated(
+        {"resource_id": resource_id, "current_power_kw": current_power},
+        source="api.telemetry_ingest",
+    )
     return {"resource_id": resource_id, "accepted": len(samples), "current_power": current_power}

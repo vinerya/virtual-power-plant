@@ -125,6 +125,8 @@ values are in [operations.md](operations.md#data-retention).
 ## Telemetry ingestion (MQTT, Modbus)
 
 Both are off by default because they dial out to external systems.
+Any `VPP_MQTT_TLS_*` option set while `VPP_MQTT_TLS_ENABLED` is false
+stops startup with an error, rather than connecting in plain text.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -134,6 +136,12 @@ Both are off by default because they dial out to external systems.
 | `VPP_MQTT_TOPIC_PREFIX` | `vpp/#` | Subscription filter. |
 | `VPP_MQTT_USERNAME` | unset | Broker username. |
 | `VPP_MQTT_PASSWORD` | unset | Broker password. |
+| `VPP_MQTT_CLIENT_ID` | unset | MQTT client id. Unset: `vpp-<hostname>-<pid>-<random>`, unique per API process, so installations sharing a broker don't disconnect each other. Set it only when broker ACLs match on client id, and never to an id another client uses. The API uses a clean session, so the id need not survive restarts. |
+| `VPP_MQTT_TLS_ENABLED` | `false` | Connect to the broker over TLS (typically port 8883). The broker certificate and host name are verified. |
+| `VPP_MQTT_TLS_CA_FILE` | unset | PEM CA bundle that signed the broker's certificate. Unset: the system trust store. |
+| `VPP_MQTT_TLS_CERTFILE` | unset | Client certificate (PEM) for brokers that require mutual TLS. |
+| `VPP_MQTT_TLS_KEYFILE` | unset | Unencrypted private key (PEM) for `VPP_MQTT_TLS_CERTFILE`; requires it. |
+| `VPP_MQTT_TLS_INSECURE` | `false` | Skip broker certificate and host-name verification. Testing only; logged as a warning at every connect. |
 | `VPP_MODBUS_INGESTION_ENABLED` | `false` | Poll Modbus TCP/RTU devices for every resource whose `metadata.modbus` block configures one (host, port, mode, device profile, poll interval, power register, optional `soc_register`). Discovery runs once at startup. See `src/vpp/protocols/modbus_ingestion.py`. |
 
 ## OCPP 1.6-J Central System

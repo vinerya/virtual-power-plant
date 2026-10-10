@@ -16,6 +16,7 @@ the chart should show it as such.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,7 +27,16 @@ from sqlalchemy import Integer, and_, case, cast, func, literal, select
 from vpp.db.models import BatteryStateModel, ResourceModel, ResourceTelemetryModel
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+#: Samples stamped further than this in the future are rejected (clock skew guard).
+MAX_FUTURE_SKEW = timedelta(minutes=5)
+#: Only samples at least this fresh update the resource's live ``current_power``.
+LIVE_STATE_MAX_AGE = timedelta(minutes=15)
 
 #: Named windows accepted by ``GET /resources/{id}/metrics?window=``.
 WINDOWS: dict[str, timedelta] = {
@@ -269,3 +279,45 @@ async def record_samples(
         for ts, power, soc in samples
     )
     await session.flush()
+
+
+def is_future(ts: datetime, now: datetime) -> bool:
+    """True if ``ts`` is beyond the allowed clock skew (the sample is rejected)."""
+    return as_utc(ts) > now + MAX_FUTURE_SKEW
+
+
+def is_live(ts: datetime, now: datetime) -> bool:
+    """True if a sample stamped ``ts`` is fresh enough to update live state.
+
+    Older samples are history only, so a backfill never overwrites the present.
+    """
+    return now - as_utc(ts) <= LIVE_STATE_MAX_AGE
+
+
+def newest_live_power(
+    samples: Iterable[tuple[datetime, float]], now: datetime
+) -> tuple[datetime, float] | None:
+    """The newest ``(timestamp, power_kw)`` sample if it may become the live
+    ``current_power``, else ``None`` (no samples, or the newest one is too old).
+
+    Shared by the ingestion paths (HTTP endpoint, MQTT) so they agree on
+    which sample sets the live value.
+    """
+    newest = max(samples, key=lambda x: as_utc(x[0]), default=None)
+    if newest is None or not is_live(newest[0], now):
+        return None
+    return newest
+
+
+async def publish_resource_updated(data: dict[str, Any], *, source: str) -> None:
+    """Broadcast ``RESOURCE_UPDATED`` (WebSocket ``resource_updates``, alerts,
+    metrics). A broadcast failure is logged, never raised: it must not drop
+    the telemetry write that preceded it."""
+    from vpp.events import Event, EventType, get_event_bus
+
+    try:
+        await get_event_bus().publish(
+            Event(event_type=EventType.RESOURCE_UPDATED, data=data, source=source)
+        )
+    except Exception:
+        logger.exception("Failed to publish RESOURCE_UPDATED for %s", data.get("resource_id"))

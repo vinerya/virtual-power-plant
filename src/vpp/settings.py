@@ -143,6 +143,17 @@ class Settings(BaseSettings):
     mqtt_topic_prefix: str = "vpp/#"
     mqtt_username: str | None = None
     mqtt_password: str | None = None
+    # Unset: vpp-<hostname>-<pid>-<random>, unique per process (see
+    # vpp.protocols.mqtt.default_client_id). Two clients with one id knock
+    # each other off the broker, so only set this to an id nothing else uses.
+    mqtt_client_id: str | None = None
+    # TLS to the broker. CA file unset = the system trust store; the client
+    # certificate/key are for brokers that require mutual TLS.
+    mqtt_tls_enabled: bool = False
+    mqtt_tls_ca_file: str | None = None
+    mqtt_tls_certfile: str | None = None
+    mqtt_tls_keyfile: str | None = None
+    mqtt_tls_insecure: bool = False  # skip certificate + hostname checks (testing only)
 
     # Modbus inverter/meter telemetry ingestion. Disabled by default --
     # dials out to physical devices. Per-device connection config (host,
@@ -273,6 +284,26 @@ class Settings(BaseSettings):
                 "VPP_SECRET_KEY must be set to a random value of at least 32 characters "
                 "when VPP_ENV=production"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _check_mqtt_tls(self) -> Settings:
+        # A TLS option without TLS enabled would silently connect in plain
+        # text (sending the broker password in the clear): refuse instead.
+        tls_options = {
+            "VPP_MQTT_TLS_CA_FILE": self.mqtt_tls_ca_file,
+            "VPP_MQTT_TLS_CERTFILE": self.mqtt_tls_certfile,
+            "VPP_MQTT_TLS_KEYFILE": self.mqtt_tls_keyfile,
+            "VPP_MQTT_TLS_INSECURE": self.mqtt_tls_insecure,
+        }
+        set_options = [name for name, value in tls_options.items() if value]
+        if set_options and not self.mqtt_tls_enabled:
+            raise ValueError(
+                f"{', '.join(set_options)} set but VPP_MQTT_TLS_ENABLED is false; "
+                "set VPP_MQTT_TLS_ENABLED=true"
+            )
+        if self.mqtt_tls_keyfile and not self.mqtt_tls_certfile:
+            raise ValueError("VPP_MQTT_TLS_KEYFILE requires VPP_MQTT_TLS_CERTFILE")
         return self
 
     @property

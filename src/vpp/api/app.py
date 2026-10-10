@@ -115,6 +115,12 @@ def _build_mqtt_adapter(settings):
         topic_prefix=settings.mqtt_topic_prefix,
         username=settings.mqtt_username,
         password=settings.mqtt_password,
+        client_id=settings.mqtt_client_id,
+        use_tls=settings.mqtt_tls_enabled,
+        ca_certs=settings.mqtt_tls_ca_file,
+        certfile=settings.mqtt_tls_certfile,
+        keyfile=settings.mqtt_tls_keyfile,
+        tls_insecure=settings.mqtt_tls_insecure,
     )
     return adapter
 

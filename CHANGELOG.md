@@ -34,12 +34,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatching, turning on device control one device at a time and rolling
   it back, operations and troubleshooting. Every command in it was run
   end to end against a fresh install, an MQTT broker and the SunSpec
-  simulator. It also states current limits plainly: MQTT does not update a
-  resource's live power and has no TLS setting, resources are not marked
-  offline when their data stops, and a generator with no or zero output
-  counts as available at nameplate.
+  simulator. It also states current limits plainly: resources are not
+  marked offline when their data stops, and a generator with no or zero
+  output counts as available at nameplate.
+- **MQTT over TLS.** New settings `VPP_MQTT_TLS_ENABLED`,
+  `VPP_MQTT_TLS_CA_FILE` (default: system trust store),
+  `VPP_MQTT_TLS_CERTFILE` / `VPP_MQTT_TLS_KEYFILE` (mutual TLS) and
+  `VPP_MQTT_TLS_INSECURE` (default `false`; skips certificate and host-name
+  checks, testing only). A TLS option set without `VPP_MQTT_TLS_ENABLED`
+  is a startup error instead of a silent plain-text connection.
+- **MQTT payload timestamps.** A payload may carry `timestamp` (ISO 8601
+  with `Z` or an offset, or epoch seconds as a JSON number) or
+  `timestamp_ms` (epoch milliseconds). Samples are stored at that time;
+  without one, at receive time as before. As on the HTTP endpoint, samples
+  more than 5 minutes in the future are dropped (with a log line) and
+  samples older than 15 minutes are stored as history only.
+- `VPP_MQTT_CLIENT_ID` overrides the MQTT client id.
+
+### Changed
+
+- **MQTT telemetry updates live power.** A recent sample with `power` now
+  sets the battery's `current_power`, using the same rule and helpers as
+  `POST /api/v1/resources/{id}/telemetry` (newest sample at most 15
+  minutes old), and its `RESOURCE_UPDATED` broadcast carries
+  `current_power_kw` like the HTTP one. Samples older than 15 minutes are
+  no longer broadcast. Ingestion still writes up to 500 messages per
+  transaction.
+- **Unique MQTT client id by default.** The client id was fixed
+  (`vpp-mqtt-adapter`), so two installations on one broker disconnected
+  each other in a loop. It is now `vpp-<hostname>-<pid>-<random>`, stable
+  for the process (the API uses a clean session, so it need not survive
+  restarts).
 
 ### Fixed
+
+- **A broker that refused the MQTT login was reported as connected.** A
+  failed CONNACK (bad credentials, not authorized) set the adapter to
+  `connected` and subscribed; `connect()` now raises with the broker's
+  reason and the ingestion loop retries.
+- MQTT payloads with non-finite numbers (`Infinity`, `NaN`) are dropped
+  instead of being stored.
 
 - **Disabling control on one device now releases it.** Setting
   `metadata.modbus.control.enabled` to `false` on a resource with an

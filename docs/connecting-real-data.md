@@ -274,11 +274,11 @@ mix them; each resource can use a different one.
 | Path | Best for | Updates live power | Stores SoC |
 |---|---|---|---|
 | [HTTP](#http-telemetry-endpoint) | your own gateway or SCADA bridge, cloud APIs, backfills | yes | yes |
-| [MQTT](#mqtt) | battery gateways that already publish to a broker | **no** (see below) | yes (batteries only) |
+| [MQTT](#mqtt) | battery gateways that already publish to a broker | yes, with `power` | yes (batteries only) |
 | [Modbus TCP / SunSpec](#modbus-tcp-and-sunspec) | inverters and meters on your LAN | yes | yes, with `soc_register` |
 
-Timestamps are stored in UTC. A timestamp without a time zone is read as
-UTC.
+Timestamps are stored in UTC. Over HTTP a timestamp without a time zone
+is read as UTC; over MQTT it is rejected.
 
 ### HTTP telemetry endpoint
 
@@ -326,6 +326,36 @@ export VPP_MQTT_USERNAME=vpp          # if the broker requires login
 export VPP_MQTT_PASSWORD='...'
 ```
 
+**TLS.** To reach the broker over TLS (usually port 8883), turn it on and,
+unless the broker's certificate is signed by a CA in the system trust
+store, name the CA file. Brokers that require client certificates
+(mutual TLS) also get a certificate and key:
+
+```bash
+export VPP_MQTT_BROKER_PORT=8883
+export VPP_MQTT_TLS_ENABLED=true
+export VPP_MQTT_TLS_CA_FILE=/etc/vpp/mqtt-ca.pem        # omit for a public CA
+export VPP_MQTT_TLS_CERTFILE=/etc/vpp/mqtt-client.pem   # mutual TLS only
+export VPP_MQTT_TLS_KEYFILE=/etc/vpp/mqtt-client.key   # unencrypted PEM
+```
+
+The broker's certificate and host name are always checked.
+`VPP_MQTT_TLS_INSECURE=true` turns both checks off (the log warns at every
+connect); use it only to test against a broker with a throwaway
+certificate. A TLS setting without `VPP_MQTT_TLS_ENABLED=true` stops the
+API at startup instead of silently connecting in plain text.
+
+**Client id.** Each API process connects as
+`vpp-<hostname>-<pid>-<random>`, so several VPP installations can share one
+broker. The id is fixed for the life of the process and changes on
+restart, which is safe because the API uses a clean MQTT session: the
+broker does not keep messages for it while it is away (see below). Set
+`VPP_MQTT_CLIENT_ID` only if your broker's access rules match on client
+id, and then give each installation its own: two clients with the same id
+disconnect each other over and over. Some strict MQTT 3.1.1 brokers
+limit ids to 23 characters; the default can be longer, so set an explicit
+short id for those.
+
 Restart the API. `GET /api/v1/protocols/` then lists an adapter named
 `mqtt` with `"status": "connected"`.
 
@@ -352,7 +382,8 @@ works; topics outside `vpp/...` are never stored.
 ignored.
 
 ```json
-{"soc": 72.5, "power": 2.0, "temperature": 31.0, "voltage": 51.2, "current": 39.0, "soh": 98.0}
+{"soc": 72.5, "power": 2.0, "temperature": 31.0, "voltage": 51.2, "current": 39.0, "soh": 98.0,
+ "timestamp": "2026-10-10T12:00:00Z"}
 ```
 
 | Key | Unit |
@@ -361,7 +392,9 @@ ignored.
 | `soh` | state of health, percent (default 100) |
 | `temperature` | °C (default 25) |
 | `voltage`, `current` | V, A |
-| `power` | kW, same sign as the HTTP endpoint. Stored as history and shown in the resource's charts |
+| `power` | kW, same sign as the HTTP endpoint (positive = charging). Stored as history and, from a recent sample, becomes the resource's live `current_power` |
+| `timestamp` | optional time the sample was taken: an ISO 8601 string **with** `Z` or an offset (`2026-10-10T12:00:00Z`, `2026-10-10T14:00:00+02:00`), or a JSON number of **seconds** since 1970-01-01 UTC (`1791633600`, fractions allowed) |
+| `timestamp_ms` | alternative to `timestamp`: a JSON number of **milliseconds** since 1970-01-01 UTC. Send one or the other, not both |
 
 Example with `mosquitto_pub`:
 
@@ -371,24 +404,38 @@ mosquitto_pub -h localhost -q 1 \
   -m '{"soc": 72.5, "power": 2.0, "temperature": 31.0}'
 ```
 
+**Timestamps and live power** follow the same rules as the
+[HTTP endpoint](#http-telemetry-endpoint):
+
+- Without `timestamp`/`timestamp_ms` a sample is stamped with the time the
+  API received it.
+- A timestamp without a time zone, a number inside a string
+  (`"1791633600"`) or anything else unreadable is rejected, and so is a
+  sample more than 5 minutes in the future. The message is dropped and
+  the log says why (`MQTT telemetry on topic=... dropped: ...`).
+  Milliseconds sent in `timestamp` read as a date thousands of years ahead
+  and are rejected this way, so the units cannot be mixed up silently.
+- A sample at most 15 minutes old is live: if it has `power`, the newest
+  such sample per resource becomes the resource's `current_power`, and
+  the sample is broadcast to WebSocket clients (`resource_updates`) and to
+  alert rules. An older sample is stored as history only and changes
+  nothing live, so a gateway that uploads its buffer after an outage
+  backfills history without overwriting the present.
+
 What to know before you rely on it:
 
-- **Timestamps come from the API**, not from the payload: each message is
-  stamped with the time it was received. Do not use MQTT to backfill
-  history; use the HTTP endpoint.
-- **MQTT does not update a resource's live `current_power`.** It stores SoC
-  (which the optimizer uses) and history. If you need live power for a
-  battery, also post it to the HTTP endpoint.
 - Messages are written in batches of up to 500 per database transaction.
   If ingestion falls behind, messages are dropped and the log says
   `MQTT message queue full`.
-- **No TLS setting.** The API connects to the broker in plain MQTT with an
-  optional username and password. Keep the broker on a trusted network
-  (for example on the same host, bridged to remote brokers over TLS).
-- The client id is fixed (`vpp-mqtt-adapter`). Two VPP installations on
-  one broker would disconnect each other; give each its own broker.
+- The API subscribes with a **clean session**: messages published while
+  the API is stopped or disconnected are not queued by the broker and are
+  lost. Have gateways buffer and resend with `timestamp`, or use the HTTP
+  endpoint for backfills.
 - Only one API worker subscribes (the holder of the `mqtt-ingestion`
   lease), so several workers do not store a message twice.
+- A broker that refuses the login (wrong username or password, not
+  authorized) is logged as `MQTT broker ... refused the connection` and
+  retried every 30 seconds.
 
 ### Modbus TCP and SunSpec
 
@@ -701,7 +748,7 @@ Check that every resource reports what the device really does.
 ```bash
 curl -s localhost:8000/api/v1/resources -H "X-API-Key: $VPP_KEY" \
   | python3 -c 'import json,sys; [print(r["name"], r["online"], r["current_power"], r["state_of_charge"], r["state_of_charge_source"]) for r in json.load(sys.stdin)]'
-# home-battery True 0.0 0.725 telemetry      (SoC from MQTT, no live power)
+# home-battery True 2.0 0.725 telemetry      (MQTT)
 # garage-battery True 0.0 0.5 telemetry     (SoC from Modbus)
 # farm-wind True 31.5 None None             (HTTP)
 # rooftop-pv True 6.0 None None             (Modbus)
@@ -920,8 +967,8 @@ default in production). Set `VPP_LOG_LEVEL=DEBUG` for more detail.
 | `429` | rate limit per client address | batch requests; behind a proxy set `VPP_TRUSTED_PROXIES`; raise `VPP_RATE_LIMIT_REQUESTS_PER_MINUTE` |
 | `422` on resource create | misspelled or wrong-type field | the response names the field; fields of another resource type are rejected too |
 | `422` `sample timestamp ... is in the future` | device clock ahead, or local time sent without an offset | send UTC (`...Z`) or include the offset; keep device clocks on NTP |
-| telemetry posted but `current_power` unchanged | samples older than 15 minutes (stored as history only), or MQTT (never updates live power) | check timestamps and time zones; read `GET /api/v1/resources/{id}/metrics?window=1h` |
-| MQTT: nothing stored | topic not `vpp/<site>/battery/<resource id>/<metric>`, resource is not a `battery`, no `soc` in the payload, payload not JSON | `GET /api/v1/protocols/` shows `messages_received` for `mqtt`; the log warns about unknown resources; check `VPP_MQTT_TOPIC_PREFIX` |
+| telemetry posted but `current_power` unchanged | samples older than 15 minutes (stored as history only), or an MQTT payload without `power` | check timestamps and time zones; read `GET /api/v1/resources/{id}/metrics?window=1h` |
+| MQTT: nothing stored | topic not `vpp/<site>/battery/<resource id>/<metric>`, resource is not a `battery`, no `soc` in the payload, payload not JSON, `timestamp` without a time zone or in the future | `GET /api/v1/protocols/` shows `messages_received` for `mqtt`; the log warns about unknown resources; check `VPP_MQTT_TOPIC_PREFIX` |
 | MQTT adapter missing from `/api/v1/protocols/` | `VPP_MQTT_INGESTION_ENABLED` not set | set it and restart |
 | SoC 100× too small or too large | percent sent where a fraction is expected or the reverse | HTTP `state_of_charge` is 0–1; MQTT `soc` and Modbus `soc_register` are percent |
 | power 1000× off | wrong unit | HTTP and MQTT take kW; Modbus `power_register` must be in W |
