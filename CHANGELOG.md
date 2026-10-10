@@ -397,9 +397,41 @@ changes** before upgrading.
   `VPP_CLUSTER_CALL_TIMEOUT_SECONDS`, `VPP_CLUSTER_POLL_INTERVAL_SECONDS`,
   `VPP_RATE_LIMIT_BACKEND`.
 
+**Capacity and soak testing**
+- `vpp loadtest`: a harness that starts a real `vpp serve` process (on a
+  fresh SQLite file or any `--database-url`) and SunSpec simulators, then
+  runs concurrently: telemetry ingestion at N resources x M points/s over
+  MQTT (latency measured publish -> persisted -> WebSocket broadcast) or
+  the HTTP telemetry endpoint, authenticated dashboard reads (JWT and API
+  key), S WebSocket subscribers, a dispatch over K resources every D
+  seconds and Modbus polling. It samples throughput, p50/p95/p99, errors,
+  server RSS and CPU, database size and row counts over time and writes
+  `report.json` / `report.md` with RSS and DB growth slopes, a
+  latency-creep ratio and the server log's warnings and errors. Exits 1 on
+  errors.
+- CI job `perf`: `vpp loadtest --smoke` (30 s, small; about 45 s in all),
+  failing only on errors, never on latency numbers; uploads the report.
+- `docs/performance.md`: measured capacity of one API worker on SQLite and
+  PostgreSQL 16 (15- and 60-minute soaks and 60-second ramps on one 4-vCPU
+  host), the bottlenecks found, exact commands to reproduce, and sizing
+  guidance (when to move to PostgreSQL, worker count, retention).
+- `docs/operations.md`: runbook for SQLite online backups and PostgreSQL
+  `pg_dump`/`pg_restore` (executed end to end), verifying a backup in a
+  scratch database, upgrades and rollback by restore (with the list of
+  lossy downgrade migrations), rotating `VPP_SECRET_KEY` and API keys,
+  revoking sessions, retention sizing, probes and what to monitor.
+- `/metrics` exposes `process_resident_memory_bytes`,
+  `process_cpu_seconds_total` and the other standard process metrics, and
+  `vpp_alert_evaluation_dropped_total` (telemetry events the alert
+  evaluator had no room for).
+- Migration `0014_telemetry_soc_index`: covering partial index on
+  `resource_telemetry (resource_id, timestamp, state_of_charge) WHERE
+  state_of_charge IS NOT NULL` (index only; its downgrade loses no data).
+
 **Docs**
 - `docs/`: architecture, configuration reference (every `VPP_*` setting),
-  deployment, protocols/V2G/DR, API guide, tariffs, security.
+  deployment, operations, performance, protocols/V2G/DR, API guide,
+  tariffs, security.
 
 ### Changed
 
@@ -470,6 +502,45 @@ changes** before upgrading.
   accepted; responses carry `Deprecation` and `Warning` headers).
 
 ### Fixed
+
+Found with `vpp loadtest` (numbers in docs/performance.md):
+
+- **The API could deadlock and die under load when a dispatch solved
+  while the event loop logged.** Pyomo's HiGHS interface redirected the
+  process stdout/stderr file descriptors and re-pointed every log handler
+  for each solve, from the solver's worker thread; a concurrent log line
+  could deadlock the solve and leave the root handler writing to a closed
+  stream, after which every log call raised. The API now switches Pyomo to
+  stream-only capture and turns HiGHS's console output off.
+- **MQTT telemetry waited for an unrelated timer before it was
+  processed.** The paho callback put messages on an `asyncio.Queue` from
+  its own thread without waking the event loop: 79 ms median / 285 ms p95
+  publish-to-persist at 1 message/s (seconds on an idle server), now 8 ms /
+  11 ms.
+- **MQTT ingestion topped out at about 90 messages/s on SQLite and then
+  dropped telemetry.** Each message was its own lookup and commit; queued
+  messages are now written in batches (one lookup, one commit): 800
+  messages/s ingest with no loss and a p95 under 60 ms on one worker. Rows are stamped with the time the message
+  was received rather than the commit time.
+- **`GET /api/v1/resources` (and resource detail, sites, dispatch) slowed
+  down linearly as telemetry accumulated.** The newest-SOC lookup read every
+  sample of every listed battery (50 batteries: ~190 ms at 1M rows on
+  SQLite, 84 ms on PostgreSQL); it now seeks the newest row per resource
+  (3 ms / 6 ms).
+- **Alert rules saw only part of the telemetry above ~200 events/s.** The
+  evaluator committed and queried once per event and dropped what did not
+  fit its queue. It now evaluates everything queued in one transaction
+  (retrying event by event if that fails) and skips the auto-resolve query
+  for rule/resource pairs known to have no open alert: at 800 messages/s
+  every event is evaluated (before: about a third).
+- Every HTTP request walked the whole route table in the trailing-slash
+  middleware (~0.8 ms, ~10 % of a worker's CPU at 100 requests/s); the
+  per-path answer is now cached.
+- A full MQTT queue or alert-evaluation queue logged one warning per
+  dropped message (thousands of lines a minute under overload); both now log
+  at most every 10 s with a count, and the drops are counted in metrics.
+- The API's own MQTT disconnect at shutdown was logged as "disconnected
+  unexpectedly".
 
 - **`BaseConfig.merge(other)` returned `other`.** It deep-merged the two
   configs' `to_dict()` output, which includes every field, defaults too, so

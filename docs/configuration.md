@@ -76,6 +76,8 @@ Old rows are deleted by a background pass on the worker holding the
 run in batches, each its own transaction. `orders` / `trades` (positions are
 rebuilt from them), meter readings, charging sessions and other business
 records are never pruned; see [security.md](security.md#data-retention).
+Telemetry costs about 370 bytes per sample on disk; sizing and suggested
+values are in [operations.md](operations.md#data-retention).
 
 | Variable | Default | Meaning |
 |---|---|---|

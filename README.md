@@ -84,6 +84,7 @@ Maturity labels used below:
 | V2G | persisted vehicles, charger binding, schedules / dispatch via OCPP profiles | beta — discharge uses a vendor extension (negative limits) |
 | MQTT / Modbus ingestion | telemetry in from brokers and inverters/meters | beta |
 | SunSpec device simulator | `vpp simulate sunspec`: Modbus TCP PV + battery inverter (models 1, 103/113, 123, 124) with simple physics, for testing polling and control without hardware ([docs](docs/protocols.md#testing-without-hardware)); built from the spec, so it does not stand in for vendor validation | test tool |
+| Load / soak harness | `vpp loadtest`: drives a real API process with MQTT/HTTP telemetry, dashboard reads, WebSocket subscribers, dispatch and Modbus simulators; reports throughput, p50/p95/p99, errors, RSS and DB growth ([measured numbers](docs/performance.md)) | test tool; measured on one 4-vCPU host only |
 | Trading | order types incl. stop-limit/iceberg/IOC/FOK, pre-trade risk, portfolio, VaR, strategies and backtests | **simulated** venue |
 | Protocol adapters without an endpoint | in-memory state machines, status `simulated` | simulated |
 | Grid-forming inverters, microgrid islanding | models and demos | simulated |
@@ -363,12 +364,13 @@ Protocol tests run against in-process mock peers (no certification suites).
 │   ├── cli/            `vpp` command
 │   ├── migrations/     alembic environment and revisions (`vpp migrate`)
 │   ├── benchmarks/     synthetic datasets, scenarios, metrics, runner
+│   ├── loadtest/       `vpp loadtest` capacity / soak harness
 │   ├── demos/          `vpp demo` applications
 │   └── settings.py     VPP_* settings
 ├── web/                Next.js console + customer portal (Playwright tests in web/tests)
 ├── monitoring/         Prometheus + Grafana (compose overlay, dashboards)
 ├── examples/           runnable scripts
-├── docs/               architecture, configuration, deployment, protocols, API, tariffs, security
+├── docs/               architecture, configuration, deployment, operations, performance, protocols, API, tariffs, security
 ├── tests/              pytest suite
 ├── Dockerfile, web/Dockerfile, docker-compose*.yml
 └── pyproject.toml
@@ -379,6 +381,8 @@ Protocol tests run against in-process mock peers (no certification suites).
 - [Architecture](docs/architecture.md)
 - [Configuration reference](docs/configuration.md)
 - [Deployment](docs/deployment.md)
+- [Operations runbook](docs/operations.md): backup/restore, upgrades, credential rotation, retention, monitoring
+- [Performance and capacity](docs/performance.md): measured numbers, `vpp loadtest`, sizing
 - [Protocols, V2G and DR](docs/protocols.md)
 - [API guide](docs/api.md)
 - [Tariffs and billing](docs/tariffs.md)
