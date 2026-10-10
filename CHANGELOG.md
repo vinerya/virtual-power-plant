@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Telemetry freshness.** Resource responses (`GET/PUT /api/v1/resources`)
+  carry `telemetry_last_at`, `telemetry_age_s`, `telemetry_stale_after_s`,
+  `telemetry_stale` and `data_status` (`fresh`, `stale`, `no_data`,
+  `unchecked`), from the newest sample of any path (HTTP, MQTT, Modbus).
+  The threshold is `metadata.telemetry_stale_after_s` on the resource, else
+  `poll_interval_s` × `VPP_TELEMETRY_STALE_MODBUS_POLL_MULTIPLIER` (10) for
+  Modbus-polled resources, else `VPP_TELEMETRY_STALE_AFTER_SECONDS` (300).
+  `vpp.resources_freshness` (`is_stale`, `stale_resource_ids`,
+  `latest_telemetry_at`) is the helper other code can use.
+- **Built-in "Resource telemetry stale" alert rule** (metric
+  `telemetry_stale`): the alert evaluator checks every
+  `VPP_TELEMETRY_STALE_CHECK_INTERVAL_SECONDS` (30) and fires one alert
+  per stale episode, auto-resolved when data returns or the resource is set
+  offline. Resources that never reported do not alert; after a restart each
+  resource gets a full threshold to report again. Existing installations get
+  the rule at startup (with `VPP_ALERTS_SEED_DEFAULT_RULES`, the default);
+  disable it rather than delete it.
+- **Modbus device health.** After `VPP_MODBUS_MAX_FAILED_POLLS` (3, per
+  device `metadata.modbus.max_failed_polls`) failed polls in a row a
+  device's adapter reports `degraded` instead of `connected` (new
+  `ProtocolStatus.DEGRADED`), with `consecutive_failed_polls` and
+  `last_successful_poll_at` in `GET /api/v1/protocols/`; the resource
+  response shows it as `link_status`. Polling continues and the status
+  returns to `connected` on the next successful poll. Writes are refused
+  while degraded.
+- **Setting a resource offline releases control.** `PUT
+  /api/v1/resources/{id}` with `"online": false` releases the setpoint or
+  output cap the device actuator holds on it (the same fallback as an
+  expired dispatch, or the release of a cap restored from a previous run;
+  nothing is written if the device's revert timer has already lifted it),
+  logs the command like other device commands, and records
+  `control.resource_offline` (and `control.resource_online` when it comes
+  back) in the audit log. Before, the device kept its last limit until its
+  revert timer fired.
+
 - **Documentation site** (MkDocs + Material), to be published at
   <https://vinerya.github.io/virtual-power-plant/> once GitHub Pages is
   enabled (one-time steps in [releasing](docs/releasing.md#one-time-setup)).

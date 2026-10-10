@@ -63,6 +63,8 @@ ACTIONS: tuple[str, ...] = (
     "control.dr_opt",
     "control.protocol_connect",
     "control.protocol_disconnect",
+    "control.resource_offline",
+    "control.resource_online",
     "config.update",
     "market.order_submit",
     "market.order_cancel",

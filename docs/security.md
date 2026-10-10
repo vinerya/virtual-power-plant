@@ -289,6 +289,7 @@ and username (both empty for anonymous callers; for a failed login the
 | `control.ocpp_remote_start`, `control.ocpp_remote_stop` | OCPP remote start/stop (`failure` when the charger rejects it) |
 | `control.dr_opt` | OpenADR opt-in/out override |
 | `control.protocol_connect`, `control.protocol_disconnect` | protocol adapters connected/disconnected (only option *names* are recorded) |
+| `control.resource_offline`, `control.resource_online` | a resource set offline (details: what the device actuator released, `failure` if a release write failed) or back online with `PUT /resources/{id}` |
 | `config.update` | a new platform configuration version applied |
 | `market.order_submit`, `market.order_cancel`, `market.strategy_run` | orders placed / cancelled on the venue (risk rejections are `denied`), live (non-dry-run) strategy runs |
 

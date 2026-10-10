@@ -301,6 +301,32 @@ class ResourceResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # Telemetry freshness (vpp.resources_freshness)
+    telemetry_last_at: datetime | None = Field(
+        None, description="Timestamp of the newest telemetry sample (UTC); null if none"
+    )
+    telemetry_age_s: float | None = Field(
+        None, description="Seconds since telemetry_last_at; null if no telemetry"
+    )
+    telemetry_stale_after_s: float | None = Field(
+        None,
+        description="Staleness threshold in seconds for this resource; null if the check is off",
+    )
+    telemetry_stale: bool = Field(
+        False, description="True when the newest telemetry is older than the threshold"
+    )
+    data_status: Literal["fresh", "stale", "no_data", "unchecked"] = Field(
+        "no_data",
+        description="fresh | stale | no_data (never reported) | unchecked (check off)",
+    )
+    link_status: str | None = Field(
+        None,
+        description=(
+            "Status of this resource's Modbus connection (connected | degraded | error | ...) "
+            "when its polling runs in the process answering; null otherwise"
+        ),
+    )
+
     # Battery
     capacity_kwh: float | None = Field(None, description="Nameplate energy capacity (kWh)")
     state_of_charge: float | None = Field(None, description="SOC as a 0-1 fraction")

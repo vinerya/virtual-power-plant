@@ -70,6 +70,11 @@ class ProtocolInfo(BaseModel):
     messages_received: int = 0
     errors: int = 0
     uptime_seconds: float = 0.0
+    # Polling adapters (Modbus): failed polls in a row (the status turns
+    # "degraded" after VPP_MODBUS_MAX_FAILED_POLLS) and when a poll last
+    # read anything (unix seconds). null for other adapters.
+    consecutive_failed_polls: int | None = None
+    last_successful_poll_at: float | None = None
 
 
 class ConnectRequest(BaseModel):
@@ -96,6 +101,8 @@ def _info(a: Any) -> ProtocolInfo:
         messages_received=a.metrics.messages_received,
         errors=a.metrics.errors,
         uptime_seconds=a.metrics.uptime_seconds,
+        consecutive_failed_polls=getattr(a, "consecutive_failed_polls", None),
+        last_successful_poll_at=getattr(a, "last_successful_poll_at", None),
     )
 
 

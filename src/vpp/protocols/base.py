@@ -35,6 +35,10 @@ class ProtocolStatus(str, Enum):
     endpoint: its in-memory state machine works (handy for demos, tests and
     offline development) but nothing leaves the process. Adapters must never
     report ``CONNECTED`` in that situation.
+
+    ``DEGRADED`` means the link is up but the endpoint stopped answering
+    (e.g. a Modbus device after several failed polls in a row). The adapter
+    keeps trying and returns to ``CONNECTED`` by itself on the next success.
     """
 
     DISCONNECTED = "disconnected"
@@ -43,6 +47,7 @@ class ProtocolStatus(str, Enum):
     SIMULATED = "simulated"
     ERROR = "error"
     RECONNECTING = "reconnecting"
+    DEGRADED = "degraded"
 
 
 class ProtocolMode(str, Enum):

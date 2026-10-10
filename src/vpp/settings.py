@@ -114,8 +114,10 @@ class Settings(BaseSettings):
     tracing_enabled: bool = False
 
     # Alerting: evaluate persisted alert rules against RESOURCE_UPDATED
-    # telemetry.  Default rules (SOC low, over-temperature, SOH degraded) are
-    # inserted on startup only if the alert_rules table is empty.
+    # telemetry.  Default rules (SOC low, over-temperature, SOH degraded,
+    # telemetry stale) are inserted on startup only if the alert_rules table
+    # is empty; the "Resource telemetry stale" rule is also added to an
+    # existing table that has no rule on its metric (``telemetry_stale``).
     alerts_enabled: bool = True
     alerts_seed_default_rules: bool = True
     # Optional outbound webhook for fired alerts; signed with HMAC-SHA256
@@ -149,6 +151,21 @@ class Settings(BaseSettings):
     # port, device_profile, ...) lives on each resource's own `metadata`
     # under a "modbus" key, not here -- see protocols/modbus_ingestion.py.
     modbus_ingestion_enabled: bool = False
+    # Consecutive failed polls (no register could be read) after which a
+    # Modbus device is reported "degraded" in GET /api/v1/protocols; the next
+    # successful poll reports it "connected" again. Per device:
+    # metadata.modbus.max_failed_polls.
+    modbus_max_failed_polls: int = Field(3, ge=1)
+
+    # Telemetry freshness (vpp.resources_freshness): a resource whose newest
+    # sample is older than this is "stale" (resource API ``data_status``) and
+    # raises the built-in "Resource telemetry stale" alert. 0 = off. Per
+    # resource: metadata.telemetry_stale_after_s. Modbus-polled resources use
+    # poll_interval_s x the multiplier instead (0 = use the global value).
+    telemetry_stale_after_seconds: float = Field(300.0, ge=0)
+    telemetry_stale_modbus_poll_multiplier: float = Field(10.0, ge=0)
+    # How often the alert evaluator looks for resources that went stale.
+    telemetry_stale_check_interval_seconds: float = Field(30.0, gt=0)
 
     # OCPP 1.6-J Central System (EV chargers). Disabled by default: when
     # enabled, charge points connect to ws(s)://<api>/ocpp/{charge_point_id}
