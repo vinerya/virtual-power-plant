@@ -803,9 +803,10 @@ class SetpointActuator:
         try:
             from sqlalchemy import delete
 
+            from vpp.db.engine import run_in_session
             from vpp.db.models import OutputCapModel
 
-            async with factory() as session:
+            async def _write(session: Any) -> None:
                 if deletes:
                     await session.execute(
                         delete(OutputCapModel).where(OutputCapModel.resource_id.in_(deletes))
@@ -821,7 +822,10 @@ class SetpointActuator:
                     row.revert_timeout_s = cap.revert_timeout_s
                     row.started_at = _to_dt(cap.since)
                     row.updated_at = _to_dt(cap.written_at)
-                await session.commit()
+
+            # Shielded: a watchdog tick or shutdown cancelled mid-commit must
+            # not leak a connection holding the SQLite write lock.
+            await run_in_session(factory, _write)
         except Exception:
             logger.warning(
                 "could not persist the output caps of %s; keeping them in memory",
