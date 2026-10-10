@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -452,7 +453,19 @@ class ResourceTelemetryModel(TimestampMixin, Base):
     """
 
     __tablename__ = "resource_telemetry"
-    __table_args__ = (Index("ix_resource_telemetry_resource_ts", "resource_id", "timestamp"),)
+    __table_args__ = (
+        Index("ix_resource_telemetry_resource_ts", "resource_id", "timestamp"),
+        # Newest-SOC lookups (vpp.portal.telemetry.latest_soc) skip power-only
+        # rows; covering, so SQLite picks it without ANALYZE statistics.
+        Index(
+            "ix_resource_telemetry_resource_soc_ts",
+            "resource_id",
+            "timestamp",
+            "state_of_charge",
+            sqlite_where=text("state_of_charge IS NOT NULL"),
+            postgresql_where=text("state_of_charge IS NOT NULL"),
+        ),
+    )
 
     resource_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("resources.id", ondelete="CASCADE"), index=True
