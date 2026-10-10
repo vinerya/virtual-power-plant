@@ -70,6 +70,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Server RSS: start {_f(t.get('server_rss_mb_start'))} MB, peak "
         f"{_f(t.get('server_rss_mb_peak'))} MB, end {_f(t.get('server_rss_mb_end'))} MB; "
         f"slope after warm-up {_f(t.get('server_rss_mb_per_hour'))} MB/h.",
+        f"CPU (100 % = one core): server mean {_f(t.get('server_cpu_pct_mean'))} % / peak "
+        f"{_f(t.get('server_cpu_pct_peak'))} %; harness mean "
+        f"{_f(t.get('harness_cpu_pct_mean'))} % / peak {_f(t.get('harness_cpu_pct_peak'))} % "
+        "(near 100 % the load generator itself is the limit).",
         f"Database: {_f(db.get('start_mb'))} MB -> {_f(db.get('end_mb'))} MB "
         f"({_f(t.get('db_mb_per_hour'))} MB/h); rows added: "
         + ", ".join(f"{k} {_f(v)}" for k, v in db.get("row_growth", {}).items() if v),

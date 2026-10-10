@@ -286,6 +286,7 @@ class LoadRun:
         self.dispatch_solve_ms: list[float] = []
         self.t0 = 0.0
         self.phase = "load"  # "drain" once the generators have stopped
+        self._harness_cpu_last: float | None = None
 
     def recorder(self, name: str) -> Recorder:
         if name not in self.rec:
@@ -770,6 +771,8 @@ class LoadRun:
             if cpu is not None and elapsed > 0
             else None,
             "_cpu_total": cpu,
+            # The harness shares the machine: near 100 % it is the bottleneck.
+            "harness_cpu_pct": self._harness_cpu(elapsed),
             "db_mb": _mb(db.get("db_bytes")),
             "rows": db.get("rows"),
             "ws_connected": self.ws_connected,
@@ -781,12 +784,20 @@ class LoadRun:
             row["db_error"] = db["error"]
         return row
 
+    def _harness_cpu(self, elapsed: float) -> float | None:
+        now = procinfo.cpu_seconds([os.getpid()])
+        last, self._harness_cpu_last = self._harness_cpu_last, now
+        if now is None or last is None or elapsed <= 0:
+            return None
+        return round(100 * (now - last) / elapsed, 1)
+
     def _progress(self, row: dict[str, Any]) -> None:
         sc = row["scenarios"]
         parts = [
             f"t={row['t']:>6.0f}s",
             f"rss={row['server_rss_mb']}MB",
             f"cpu={row['server_cpu_pct']}%",
+            f"harness_cpu={row['harness_cpu_pct']}%",
             f"db={row['db_mb']}MB",
         ]
         for name in ("ingest_mqtt_e2e", "ingest_http", "api_read", "ws_broadcast", "dispatch"):
@@ -828,6 +839,8 @@ class LoadRun:
             baseline = await self._sample(probe, 1.0, 0.0)
             baseline["t"] = 0.0
             baseline["scenarios"] = {}
+            # No interval yet: CPU since process start is not a rate.
+            baseline["server_cpu_pct"] = baseline["harness_cpu_pct"] = None
             self.timeline.append(baseline)
             limits = httpx.Limits(max_connections=cfg.max_inflight * 4 + cfg.ws_clients + 8)
             async with httpx.AsyncClient(
@@ -1017,6 +1030,10 @@ def _trends(timeline: list[dict[str, Any]], duration: float) -> dict[str, Any]:
         out["server_rss_mb_start"] = rss[0]
         out["server_rss_mb_peak"] = max(rss)
         out["server_rss_mb_end"] = rss[-1]
+    for key in ("server_cpu_pct", "harness_cpu_pct"):
+        vals = [r[key] for r in timeline if r.get("phase") == "load" and r.get(key) is not None]
+        out[f"{key}_mean"] = round(sum(vals) / len(vals), 1) if vals else None
+        out[f"{key}_peak"] = max(vals) if vals else None
     db_slope = linear_slope(xs, [r.get("db_mb") for r in rows])
     out["db_mb_per_hour"] = None if db_slope is None else round(db_slope, 2)
     creep: dict[str, Any] = {}
