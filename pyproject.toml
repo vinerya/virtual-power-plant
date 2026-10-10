@@ -128,7 +128,8 @@ docs = [
     # MkDocs 2.0 drops the plugin system Material and mkdocstrings rely on.
     "mkdocs>=1.6,<2",
     "mkdocs-material>=9.5,<10",
-    "mkdocstrings[python]>=0.29",
+    # 1.0.6 crashes with pymdown-extensions 12.2 (Highlight now needs `md`).
+    "mkdocstrings[python]>=1.0.7",
     # mkdocstrings formats the separate signatures with ruff.
     "ruff>=0.4",
 ]
