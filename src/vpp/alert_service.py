@@ -412,6 +412,15 @@ class AlertService:
         self._subscription_id: str | None = None
         self._metrics_of_interest: frozenset[str] = frozenset()
         self.dropped_events = 0
+        # (rule id, resource id) pairs known to have no open alert, so
+        # auto-resolve need not query for them on every in-range sample. Only
+        # this service creates alerts, so the set can only become stale by an
+        # alert this service persists, which removes the pair. Updated after
+        # a batch commits (``_pending_clear``), so a rolled-back batch cannot
+        # leave a pair marked clear while its alert is still open.
+        self._clear: set[tuple[str, str]] = set()
+        self._pending_clear: dict[tuple[str, str], bool] = {}
+        self._evaluating = asyncio.Lock()  # one batch at a time (_pending_clear)
         self._drop_logged_at = 0.0
         self._drops_since_log = 0
 
@@ -459,6 +468,7 @@ class AlertService:
                 self.manager.add_rule(engine_rule)
         self._rule_meta = {r.id: r for r in rows}
         self._metrics_of_interest = frozenset(self.manager.metric_names())
+        self._clear.clear()
 
     async def drain(self) -> None:
         """Wait until every queued event has been processed (tests, shutdown)."""
@@ -519,9 +529,10 @@ class AlertService:
 
         Returns the newly fired alerts (serialised). The worker hands over
         everything queued at once: one session and one commit per batch
-        instead of per event roughly doubled how much telemetry the
-        evaluator keeps up with (it dropped events above ~200/s on one
-        worker; found with ``vpp loadtest``, see docs/performance.md).
+        instead of per event, and no auto-resolve query for a (rule,
+        resource) known to have no open alert. Before, the evaluator dropped
+        telemetry above ~200 events/s on one worker (found with
+        ``vpp loadtest``, see docs/performance.md).
         """
 
         async def evaluate(session: AsyncSession) -> list[tuple[Alert, AlertModel]]:
@@ -536,7 +547,17 @@ class AlertService:
 
         # Shielded: stopping the evaluator mid-commit must not leak a
         # connection holding SQLite's write lock.
-        fired = await run_in_session(self._session_factory, evaluate)
+        async with self._evaluating:
+            self._pending_clear = {}
+            try:
+                fired = await run_in_session(self._session_factory, evaluate)
+            finally:
+                pending, self._pending_clear = self._pending_clear, {}
+            for key, clear in pending.items():  # committed: apply
+                if clear:
+                    self._clear.add(key)
+                else:
+                    self._clear.discard(key)
         payloads = [(alert, serialize_alert(row)) for alert, row in fired]
 
         out: list[dict[str, Any]] = []
@@ -582,6 +603,7 @@ class AlertService:
         rule_id = alert.rule_name  # engine rule name == DB rule id
         meta = self._rule_meta.get(rule_id)
         now = utcnow()
+        self._pending_clear[(rule_id, resource_id)] = False
         open_rows = await AlertRepository.find_open(session, rule_id, resource_id)
         if open_rows:
             row = open_rows[0]
@@ -634,8 +656,12 @@ class AlertService:
                 continue
             if rule.condition_met(value):
                 continue
+            key = (rule.name, resource_id)
+            if self._pending_clear.get(key, key in self._clear):
+                continue  # known to have no open alert: no query per sample
             for row in await AlertRepository.find_open(session, rule.name, resource_id):
                 AlertRepository.resolve(row, by="auto")
+            self._pending_clear[key] = True
 
 
 def _rule_signature(rule: AlertRule) -> tuple[Any, ...]:
