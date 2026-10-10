@@ -104,7 +104,14 @@ class ResourceAllocation(BaseModel):
     marginal_cost_per_kwh: float | None = None
     state_of_charge: float | None = None
     soc_source: str | None = None
-    availability_basis: str | None = None
+    availability_basis: str | None = Field(
+        None,
+        description=(
+            "Generators only: where available_power_kw came from (reported, telemetry, "
+            "pre_curtailment_telemetry, nameplate_curtailed, forecast, nameplate_fallback "
+            "or no_data)"
+        ),
+    )
 
 
 class DispatchResponse(BaseModel):

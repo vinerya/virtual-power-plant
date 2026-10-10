@@ -217,6 +217,16 @@ class Settings(BaseSettings):
         30.0  # setpoint lives dispatch interval + this, then falls back
     )
 
+    # Generation availability for dispatch (vpp.api.optimization_support).
+    # A solar/wind resource whose newest telemetry sample is at most
+    # generation_telemetry_max_age_s old is available up to its measured
+    # output (0 kW at night means 0 kW). Without fresh telemetry the
+    # fallback decides: "zero" (default, availability_basis "no_data"),
+    # "forecast" (metadata.generation_forecast, else "no_data") or
+    # "nameplate" (rated power, "nameplate_fallback": the behaviour up to 3.0).
+    generation_availability_fallback: Literal["zero", "forecast", "nameplate"] = "zero"
+    generation_telemetry_max_age_s: float = Field(300.0, gt=0)
+
     # Simulated trading venue: periodically advance simulated prices, match
     # resting orders, and publish `market_data` events. Everything it emits
     # is labelled source="simulated"; no orders leave the process.
@@ -254,6 +264,11 @@ class Settings(BaseSettings):
     @field_validator("rate_limit_backend", mode="before")
     @classmethod
     def normalise_rate_limit_backend(cls, v: object) -> object:
+        return v.strip().lower() if isinstance(v, str) else v
+
+    @field_validator("generation_availability_fallback", mode="before")
+    @classmethod
+    def normalise_generation_fallback(cls, v: object) -> object:
         return v.strip().lower() if isinstance(v, str) else v
 
     @field_validator("trusted_proxies")

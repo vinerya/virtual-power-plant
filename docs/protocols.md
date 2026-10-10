@@ -364,9 +364,13 @@ limit could only go away when the device's revert timer fired. So:
   (`availability_basis` `pre_curtailment_telemetry`; never less than the
   current output), else the nameplate rating (`nameplate_curtailed`, an
   upper bound). A reported `available_kw` in the resource's metadata or
-  config still takes precedence, and output clearly below the cap is plain
-  `telemetry`. The dispatch response reports the basis per allocation; the
-  run's asset summary also records `output_limit_kw`.
+  config still takes precedence. Output clearly below the cap, and any
+  uncurtailed generator, follows the general rules: fresh telemetry is
+  `telemetry`, missing or stale telemetry falls back to
+  `VPP_GENERATION_AVAILABILITY_FALLBACK` (`no_data` by default; see
+  [generation availability](connecting-real-data.md#generation-availability)).
+  The dispatch response reports the basis per allocation; the run's asset
+  summary also records `output_limit_kw`.
 - When a generation resource is allocated all of its estimated
   availability, it is not to be curtailed: the actuator writes the
   resource's upper limit instead of the estimate (delivery field

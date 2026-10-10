@@ -36,8 +36,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   end to end against a fresh install, an MQTT broker and the SunSpec
   simulator. It also states current limits plainly: MQTT does not update a
   resource's live power and has no TLS setting, resources are not marked
-  offline when their data stops, and a generator with no or zero output
-  counts as available at nameplate.
+  offline when their data stops.
+
+### Changed
+
+- **Generation availability is no longer assumed to be the nameplate.**
+  A solar or wind resource whose measured output was 0 kW (PV at night) or
+  that had no telemetry at all was planned at its full `rated_power`
+  (`availability_basis: "nameplate"`), so dispatch could plan export the
+  resource could not deliver. Dispatch now uses the measured output while
+  the newest telemetry sample is at most `VPP_GENERATION_TELEMETRY_MAX_AGE_S`
+  (default 300 s) old, 0 kW included (`telemetry`). Without fresh telemetry
+  `VPP_GENERATION_AVAILABILITY_FALLBACK` decides: `zero` (default, 0 kW,
+  `no_data`), `forecast` (the current point of the resource's
+  `metadata.generation_forecast`, labelled `forecast`, else `no_data`) or
+  `nameplate` (rated power, `nameplate_fallback`). A reported
+  `available_kw` and the curtailed-generation estimate
+  (`pre_curtailment_telemetry` / `nameplate_curtailed`) are unchanged. See
+  [generation availability](docs/connecting-real-data.md#generation-availability).
+
+    **Migration.** Generators without recent telemetry now get 0 kW in
+    dispatch, and the `nameplate` basis is no longer reported. If you
+    dispatch generators that do not send telemetry (or set
+    `current_power` by hand), either send telemetry (HTTP endpoint or
+    Modbus polling), store a `generation_forecast` and set
+    `VPP_GENERATION_AVAILABILITY_FALLBACK=forecast`, report `available_kw`,
+    or set `VPP_GENERATION_AVAILABILITY_FALLBACK=nameplate` for the old
+    behaviour on missing or stale data (a fresh 0 kW reading stays 0 kW).
+    Clients matching on `availability_basis == "nameplate"` should expect
+    `nameplate_fallback` or `no_data`.
 
 ### Fixed
 
