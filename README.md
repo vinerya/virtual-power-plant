@@ -379,6 +379,7 @@ Protocol tests run against in-process mock peers (no certification suites).
 - [Architecture](docs/architecture.md)
 - [Configuration reference](docs/configuration.md)
 - [Deployment](docs/deployment.md)
+- [Observability](docs/observability.md) (metrics, logs, tracing)
 - [Protocols, V2G and DR](docs/protocols.md)
 - [API guide](docs/api.md)
 - [Tariffs and billing](docs/tariffs.md)

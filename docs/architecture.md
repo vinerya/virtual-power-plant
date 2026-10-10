@@ -58,7 +58,10 @@ runs on one worker at a time and a few things stay per-process (see
                    schema managed by alembic (migrations 0001-0007)
 
   /metrics -> Prometheus -> Grafana (:3001, provisioned dashboards)
+  OTLP spans (VPP_TRACING_ENABLED) -> collector / Jaeger (:16686)
 ```
+
+Metrics, logs and traces are described in [observability.md](observability.md).
 
 ## Backend packages (`src/vpp`)
 
@@ -83,7 +86,7 @@ runs on one worker at a time and a few things stay per-process (see
 | `research/` | forecasting, anomaly detection, experiment runner (not used by the API) |
 | `config/` | platform configuration document (`VPPConfig`) and JSON Schema |
 | `alerts.py`, `alert_service.py` | alert rules/manager and the service that evaluates them on telemetry |
-| `metrics.py`, `logging.py` | Prometheus metrics, structlog configuration |
+| `metrics.py`, `logging.py`, `tracing.py` | Prometheus metrics, structlog configuration, optional OpenTelemetry tracing |
 | `cli/` | `vpp` command (serve, init, migrate, dispatch, status, config, benchmark, mpc, demo) |
 
 Also in the package: `migrations/` (alembic environment and revisions, run

@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from vpp import tracing
 from vpp.db.engine import run_in_session, run_shielded
 from vpp.db.models import DREventResponseModel, V2GVehicleModel
 from vpp.dr.translate import (
@@ -513,6 +514,29 @@ class DROrchestrator:
     async def _dispatch(
         self, directive: DRDirective, now: float, *, redispatch: bool
     ) -> dict[str, Any]:
+        with tracing.span(
+            "vpp.dr.dispatch",
+            protocol=directive.protocol,
+            source_id=directive.source_id,
+            signal_type=directive.signal_type,
+            signal_level=directive.signal_level,
+            target_kw=directive.target_kw,
+            redispatch=redispatch,
+        ) as sp:
+            summary = await self._dispatch_directive(directive, now, redispatch=redispatch)
+            sp.set(
+                run_id=summary["run_id"],
+                status=summary["status"],
+                delivered_kw=summary["delivered_kw"],
+                shortfall_kw=summary["shortfall_kw"],
+            )
+            if summary["status"] == "failed":
+                sp.error("DR dispatch failed")
+            return summary
+
+    async def _dispatch_directive(
+        self, directive: DRDirective, now: float, *, redispatch: bool
+    ) -> dict[str, Any]:
         from vpp.api.optimization_support import execute_dispatch
 
         horizon_s = self.policy.redispatch_interval_s
@@ -666,6 +690,26 @@ class DROrchestrator:
         return summary
 
     async def _release(self, reason: str) -> dict[str, Any]:
+        active = self._active
+        if active is None:
+            self._active = None
+            return {"action": "noop"}
+        directive: DRDirective = active["directive"]
+        with tracing.span(
+            "vpp.dr.release",
+            protocol=directive.protocol,
+            source_id=directive.source_id,
+            run_id=active["run_id"],
+            reason=reason,
+        ) as sp:
+            summary = await self._release_active(reason)
+            sp.set(
+                devices=len(active.get("resource_ids") or []),
+                evs=len(active.get("ev_ids") or []),
+            )
+            return summary
+
+    async def _release_active(self, reason: str) -> dict[str, Any]:
         active = self._active
         self._active = None
         if active is None:

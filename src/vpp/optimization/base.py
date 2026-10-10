@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from vpp import tracing
+
 
 class OptimizationStatus(Enum):
     """Status of optimization solution."""
@@ -201,6 +203,36 @@ class OptimizationEngine:
         force_fallback: bool = False,
     ) -> OptimizationResult:
         """Solve optimization problem with plugin and fallback support."""
+        with tracing.span(
+            "vpp.optimization.solve",
+            strategy=problem.metadata.get("type", "generic"),
+            horizon=problem.time_horizon,
+            time_step=problem.time_step,
+            timeout_ms=timeout_ms or self._default_timeout_ms,
+            force_fallback=force_fallback,
+        ) as sp:
+            result = self._solve(problem, timeout_ms, force_fallback)
+            if sp.recording:
+                last = self._solve_history[-1] if self._solve_history else {}
+                objective = result.objective_value
+                sp.set(
+                    solver=last.get("solver"),
+                    plugin=self._active_plugin,
+                    status=result.status.value,
+                    objective=float(objective) if np.isfinite(objective) else None,
+                    fallback_used=result.fallback_used,
+                    solve_time_s=result.solve_time,
+                )
+                if result.status == OptimizationStatus.FAILED:
+                    sp.error(str(result.metadata.get("error", "optimization failed")))
+            return result
+
+    def _solve(
+        self,
+        problem: OptimizationProblem,
+        timeout_ms: int | None,
+        force_fallback: bool,
+    ) -> OptimizationResult:
         start_time = time.time()
         timeout_ms = timeout_ms or self._default_timeout_ms
 

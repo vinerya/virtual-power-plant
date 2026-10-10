@@ -72,6 +72,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
+from vpp import tracing
 from vpp.events import Event, EventType, get_event_bus
 from vpp.protocols.modbus_control import (
     ControlConfigError,
@@ -373,6 +374,24 @@ class SetpointActuator:
     async def _apply_one(
         self, target: _Target, requested: float, now: float, *, source: str, run_id, ttl: float
     ) -> dict[str, Any]:
+        with tracing.span(
+            "vpp.actuator.setpoint",
+            resource_id=target.id,
+            resource_type=target.resource_type,
+            action="setpoint",
+            requested_kw=requested,
+            source=source,
+            run_id=run_id,
+        ) as sp:
+            d = await self._apply_one_inner(
+                target, requested, now, source=source, run_id=run_id, ttl=ttl
+            )
+            _annotate(sp, d)
+            return d
+
+    async def _apply_one_inner(
+        self, target: _Target, requested: float, now: float, *, source: str, run_id, ttl: float
+    ) -> dict[str, Any]:
         d: dict[str, Any] = {
             "resource_id": target.id,
             "resource_name": target.name,
@@ -499,6 +518,19 @@ class SetpointActuator:
     # -- fallback / release ----------------------------------------------------
 
     async def _fallback(self, a: _Active, reason: str, *, action: str) -> dict[str, Any]:
+        with tracing.span(
+            "vpp.actuator.release",
+            resource_id=a.resource_id,
+            action=action,
+            profile=a.config.profile,
+            run_id=a.run_id,
+            reason=reason,
+        ) as sp:
+            d = await self._fallback_inner(a, reason, action=action)
+            _annotate(sp, d)
+            return d
+
+    async def _fallback_inner(self, a: _Active, reason: str, *, action: str) -> dict[str, Any]:
         d: dict[str, Any] = {
             "resource_id": a.resource_id,
             "resource_name": a.name,
@@ -627,6 +659,21 @@ class SetpointActuator:
         return out
 
     async def _rewrite(self, a: _Active, kw: float, now: float, *, action: str) -> dict[str, Any]:
+        with tracing.span(
+            "vpp.actuator.setpoint",
+            resource_id=a.resource_id,
+            action=action,
+            profile=a.config.profile,
+            requested_kw=kw,
+            run_id=a.run_id,
+        ) as sp:
+            d = await self._rewrite_inner(a, kw, now, action=action)
+            _annotate(sp, d)
+            return d
+
+    async def _rewrite_inner(
+        self, a: _Active, kw: float, now: float, *, action: str
+    ) -> dict[str, Any]:
         d: dict[str, Any] = {
             "resource_id": a.resource_id,
             "resource_name": a.name,
@@ -926,6 +973,25 @@ class SetpointActuator:
                 for c in self._restored.values()
             ],
         }
+
+
+def _annotate(sp: Any, d: dict[str, Any]) -> None:
+    """Record one device write's outcome on its span (no-op when tracing is off)."""
+    if not sp.recording:
+        return
+    failed = d.get("status") == FAILED
+    sp.set(
+        status=d.get("status"),
+        setpoint_kw=d.get("setpoint_kw"),
+        profile=d.get("profile"),
+        verified=d.get("verified"),
+        clamped=d.get("clamped"),
+        writes=len(d.get("writes") or []),
+        failed=failed,
+        reason=d.get("reason") or None,
+    )
+    if failed:
+        sp.error(str(d.get("reason") or "device write failed"))
 
 
 def summarize(deliveries: list[dict[str, Any]]) -> dict[str, int]:

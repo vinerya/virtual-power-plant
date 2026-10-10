@@ -1,7 +1,9 @@
 """Structured logging configuration using ``structlog``.
 
 Provides JSON output in production and coloured human-readable output
-during development.  Automatically attaches ``request_id`` when available.
+during development.  Automatically attaches ``request_id`` when available,
+and ``trace_id`` / ``span_id`` inside an OpenTelemetry span when tracing is
+enabled (:mod:`vpp.tracing`).
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ import sys
 from typing import Any
 
 import structlog
+
+from vpp.tracing import add_trace_ids
 
 _VPP_HANDLER_ATTR = "_vpp_structlog_handler"
 
@@ -33,6 +37,8 @@ def configure_logging(
     """
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
+        # trace_id / span_id of the current OpenTelemetry span (tracing on only).
+        add_trace_ids,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso"),

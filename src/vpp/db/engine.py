@@ -42,12 +42,16 @@ def create_engine_from_settings(database_url: str, echo: bool = False) -> AsyncE
     if "sqlite" in database_url:
         connect_args["check_same_thread"] = False
 
-    return create_async_engine(
+    engine = create_async_engine(
         database_url,
         echo=echo,
         connect_args=connect_args,
         pool_pre_ping=True,
     )
+    from vpp import tracing
+
+    tracing.instrument_sqlalchemy(engine)  # no-op unless tracing is on
+    return engine
 
 
 async def init_db(

@@ -21,6 +21,10 @@ Outcomes seen by the caller:
 
 Fire-and-forget submissions (``wait=False``) are dropped (``expired``) if no
 leader claims them before their deadline.
+
+With tracing on (:mod:`vpp.tracing`) the caller's W3C trace context travels
+in the payload under :data:`TRACE_CONTEXT_KEY`; the executor strips it and
+runs the handler inside a span that continues the caller's trace.
 """
 
 from __future__ import annotations
@@ -38,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, delete, select, update
 
+from vpp import tracing
 from vpp.cluster.node import node_id, utcnow
 from vpp.db.engine import run_in_session, run_shielded
 from vpp.db.models import ClusterCallModel
@@ -53,6 +58,9 @@ DEFAULT_TIMEOUT_S = 10.0
 DEFAULT_POLL_S = 0.25
 RETENTION = timedelta(hours=1)
 FINAL_STATUSES = ("done", "failed", "cancelled", "expired")
+#: Reserved payload key carrying the caller's W3C trace context (``traceparent``);
+#: stripped before the handler sees the payload.
+TRACE_CONTEXT_KEY = "_trace_context"
 
 _handlers: dict[tuple[str, str], Handler] = {}
 
@@ -174,6 +182,11 @@ async def submit(
     """Persist a pending call for the *target* leader. Returns the call id."""
     now = utcnow()
     call_id = str(uuid.uuid4())
+    body = dict(payload or {})
+    carrier = tracing.inject()
+    if carrier:
+        # W3C traceparent: the executor's span continues the caller's trace.
+        body[TRACE_CONTEXT_KEY] = carrier
 
     async def work(session: AsyncSession) -> None:
         session.add(
@@ -181,7 +194,7 @@ async def submit(
                 id=call_id,
                 target=target,
                 method=method,
-                payload_json=dumps(payload or {}),
+                payload_json=dumps(body),
                 status="pending",
                 caller=node_id(),
                 created_at=now,
@@ -206,8 +219,27 @@ async def call(
 
     Raises :class:`ClusterCallError` (see the module docstring).
     """
+    with tracing.span("vpp.cluster.call", kind="client", target=target, method=method) as sp:
+        try:
+            return await _call(target, method, payload, timeout_s, poll_s, session_factory, sp)
+        except ClusterCallError as exc:
+            sp.set(status_code=exc.status_code)
+            sp.error(str(exc))
+            raise
+
+
+async def _call(
+    target: str,
+    method: str,
+    payload: dict[str, Any] | None,
+    timeout_s: float,
+    poll_s: float,
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    sp: Any,
+) -> Any:
     factory = _factory(session_factory)
     call_id = await submit(target, method, payload, timeout_s=timeout_s, session_factory=factory)
+    sp.set(call_id=call_id)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout_s
     delay = min(0.02, poll_s)
@@ -344,6 +376,49 @@ async def _run_one(session_factory: async_sessionmaker[AsyncSession], call_id: s
     if row is None:
         return False
 
+    try:
+        payload = json.loads(row.payload_json or "{}")
+    except ValueError:
+        payload = None
+    carrier = payload.pop(TRACE_CONTEXT_KEY, None) if isinstance(payload, dict) else None
+    with (
+        tracing.continue_trace(carrier if isinstance(carrier, dict) else None),
+        tracing.span(
+            "vpp.cluster.execute",
+            kind="server",
+            target=row.target,
+            method=row.method,
+            call_id=call_id,
+            caller=row.caller,
+        ) as sp,
+    ):
+        status, result_json, error_json = await _execute(session_factory, row, payload)
+        sp.set(status=status)
+        if status != "done":
+            sp.error(str(error_json))
+
+    async with session_factory() as session:
+        await session.execute(
+            update(ClusterCallModel)
+            .where(ClusterCallModel.id == call_id)
+            .values(
+                status=status,
+                result_json=result_json,
+                error_json=error_json,
+                completed_at=utcnow(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+    return True
+
+
+async def _execute(
+    session_factory: async_sessionmaker[AsyncSession],
+    row: ClusterCallModel,
+    payload: Any,
+) -> tuple[str, str | None, str | None]:
+    """Run *row*'s handler; return ``(status, result_json, error_json)``."""
     handler = _handlers.get((row.target, row.method))
     status, result_json, error_json = "done", None, None
     if handler is None:
@@ -353,7 +428,8 @@ async def _run_one(session_factory: async_sessionmaker[AsyncSession], call_id: s
         )
     else:
         try:
-            payload = json.loads(row.payload_json or "{}")
+            if payload is None:
+                payload = json.loads(row.payload_json or "{}")  # raises: malformed payload
             async with session_factory() as work_session:
                 try:
                     result = await handler(payload, work_session)
@@ -382,21 +458,7 @@ async def _run_one(session_factory: async_sessionmaker[AsyncSession], call_id: s
                 logger.exception("Forwarded call %s.%s failed", row.target, row.method)
                 status = "failed"
                 error_json = dumps({"status_code": 500, "detail": "Internal Server Error"})
-
-    async with session_factory() as session:
-        await session.execute(
-            update(ClusterCallModel)
-            .where(ClusterCallModel.id == call_id)
-            .values(
-                status=status,
-                result_json=result_json,
-                error_json=error_json,
-                completed_at=utcnow(),
-            )
-            .execution_options(synchronize_session=False)
-        )
-        await session.commit()
-    return True
+    return status, result_json, error_json
 
 
 async def purge_finished(

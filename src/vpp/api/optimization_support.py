@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from vpp import tracing
 from vpp.db.models import OptimizationRunModel, ResourceModel
 from vpp.db.repositories import OptimizationRepository
 from vpp.events import Event, EventType, get_event_bus
@@ -412,6 +413,61 @@ async def execute_dispatch(
     interval; its per-resource results are returned as
     ``device_deliveries`` and stored in the run's metadata.
     """
+    with tracing.span(
+        "vpp.dispatch.execute",
+        problem_type=problem_type,
+        source=source,
+        target_kw=float(target_power_kw),
+        resources=len(assets),
+        interval_minutes=interval_minutes,
+        apply=apply,
+    ) as sp:
+        result = await _execute_dispatch(
+            session,
+            assets,
+            target_power_kw,
+            interval_minutes=interval_minutes,
+            constraints=constraints,
+            problem_type=problem_type,
+            extra_inputs=extra_inputs,
+            timeout_ms=timeout_ms,
+            force_fallback=force_fallback,
+            wear_cost=wear_cost,
+            replacement_cost_per_kwh=replacement_cost_per_kwh,
+            apply=apply,
+            actuator=actuator,
+            source=source,
+        )
+        sp.set(
+            run_id=result["run_id"],
+            status=result["status"],
+            method=result["method"],
+            delivered_kw=result["delivered_kw"],
+            shortfall_kw=result["shortfall_kw"],
+            devices=len(result["device_deliveries"] or []),
+        )
+        if result.get("error"):
+            sp.error(str(result["error"]))
+        return result
+
+
+async def _execute_dispatch(
+    session: AsyncSession,
+    assets: list[FleetAsset],
+    target_power_kw: float,
+    *,
+    interval_minutes: int = 15,
+    constraints: dict[str, dict[str, Any]] | None = None,
+    problem_type: str = "dispatch",
+    extra_inputs: dict[str, Any] | None = None,
+    timeout_ms: int = 5000,
+    force_fallback: bool = False,
+    wear_cost: bool = True,
+    replacement_cost_per_kwh: float | None = None,
+    apply: bool = False,
+    actuator: Any = None,
+    source: str | None = None,
+) -> dict[str, Any]:
     import time
 
     from starlette.concurrency import run_in_threadpool

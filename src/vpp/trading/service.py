@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from sqlalchemy import select
 
+from vpp import tracing
 from vpp.db.models import OrderModel, TradeModel
 from vpp.db.repositories import TradingRepository
 from vpp.events import Event, EventType, get_event_bus
@@ -563,59 +564,73 @@ class TradingService:
     ) -> list[TradeModel]:
         rows: list[TradeModel] = []
         for fill in fills:
-            strategy = self._order_strategy.get(fill.order_id)
-            trade = Trade(
+            with tracing.span(
+                "vpp.market.order.fill",
                 order_id=fill.order_id,
                 market=fill.market,
                 side=fill.side,
                 quantity=fill.quantity,
                 price=fill.price,
-                timestamp=fill.timestamp,
-                fees=fill.fee,
-                strategy=strategy,
-                execution_venue="simulated",
-            )
-            self.engine.portfolio_manager.add_trade(trade)
-            self.engine.metrics["trades_executed"] += 1
-            self.engine.metrics["total_volume"] += trade.quantity
-            row = await TradingRepository.record_trade(
-                session,
-                id=trade.id,
-                order_id=trade.order_id,
-                market=trade.market,
-                side=trade.side,
-                quantity=trade.quantity,
-                price=trade.price,
-                fees=trade.fees,
-                strategy=strategy or "",
-                realized_pnl=trade.realized_pnl,
-            )
-            rows.append(row)
-            events.append(
-                Event(
-                    event_type=EventType.TRADE_EXECUTED,
-                    source="trading.exchange",
-                    data={
-                        "trade_id": trade.id,
-                        "order_id": trade.order_id,
-                        "market": trade.market,
-                        "side": trade.side,
-                        "quantity": trade.quantity,
-                        "quantity_mwh": trade.quantity,
-                        "price": trade.price,
-                        "fees": trade.fees,
-                        "realized_pnl": trade.realized_pnl,
-                        # Portfolio P&L (equity - initial cash) right after this fill.
-                        "total_pnl": self.portfolio.get_equity(self.exchange.last_prices())
-                        - self.portfolio.initial_cash,
-                        "liquidity": fill.liquidity,
-                        "strategy": strategy,
-                        "timestamp": _iso(trade.timestamp),
-                        "venue": "simulated",
-                    },
-                )
-            )
+                liquidity=fill.liquidity,
+            ):
+                rows.append(await self._book_fill(session, fill, events))
         return rows
+
+    async def _book_fill(
+        self, session: AsyncSession, fill: Fill, events: list[Event]
+    ) -> TradeModel:
+        strategy = self._order_strategy.get(fill.order_id)
+        trade = Trade(
+            order_id=fill.order_id,
+            market=fill.market,
+            side=fill.side,
+            quantity=fill.quantity,
+            price=fill.price,
+            timestamp=fill.timestamp,
+            fees=fill.fee,
+            strategy=strategy,
+            execution_venue="simulated",
+        )
+        self.engine.portfolio_manager.add_trade(trade)
+        self.engine.metrics["trades_executed"] += 1
+        self.engine.metrics["total_volume"] += trade.quantity
+        row = await TradingRepository.record_trade(
+            session,
+            id=trade.id,
+            order_id=trade.order_id,
+            market=trade.market,
+            side=trade.side,
+            quantity=trade.quantity,
+            price=trade.price,
+            fees=trade.fees,
+            strategy=strategy or "",
+            realized_pnl=trade.realized_pnl,
+        )
+        events.append(
+            Event(
+                event_type=EventType.TRADE_EXECUTED,
+                source="trading.exchange",
+                data={
+                    "trade_id": trade.id,
+                    "order_id": trade.order_id,
+                    "market": trade.market,
+                    "side": trade.side,
+                    "quantity": trade.quantity,
+                    "quantity_mwh": trade.quantity,
+                    "price": trade.price,
+                    "fees": trade.fees,
+                    "realized_pnl": trade.realized_pnl,
+                    # Portfolio P&L (equity - initial cash) right after this fill.
+                    "total_pnl": self.portfolio.get_equity(self.exchange.last_prices())
+                    - self.portfolio.initial_cash,
+                    "liquidity": fill.liquidity,
+                    "strategy": strategy,
+                    "timestamp": _iso(trade.timestamp),
+                    "venue": "simulated",
+                },
+            )
+        )
+        return row
 
     @staticmethod
     def _order_event(
@@ -682,6 +697,54 @@ class TradingService:
         the venue refuses, and orders that breach pre-trade risk limits. Risk
         rejections are persisted with status ``rejected`` for the audit trail.
         """
+        with tracing.span(
+            "vpp.market.order.submit",
+            market=market,
+            side=side,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            strategy=strategy,
+        ) as sp:
+            result = await self._place_order(
+                session,
+                order_type=order_type,
+                market=market,
+                side=side,
+                quantity=quantity,
+                price=price,
+                stop_price=stop_price,
+                limit_price=limit_price,
+                visible_quantity=visible_quantity,
+                time_in_force=time_in_force,
+                metadata=metadata,
+                submitted_by=submitted_by,
+                strategy=strategy,
+            )
+            sp.set(
+                order_id=result.order.id,
+                status=result.order.status,
+                fills=len(result.trades),
+            )
+            return result
+
+    async def _place_order(
+        self,
+        session: AsyncSession,
+        *,
+        order_type: str,
+        market: str,
+        side: str,
+        quantity: float,
+        price: float | None = None,
+        stop_price: float | None = None,
+        limit_price: float | None = None,
+        visible_quantity: float | None = None,
+        time_in_force: str = "GTC",
+        metadata: dict[str, Any] | None = None,
+        submitted_by: str | None = None,
+        strategy: str | None = None,
+    ) -> OrderResult:
         meta = dict(metadata or {})
         if submitted_by:
             meta["submitted_by"] = submitted_by

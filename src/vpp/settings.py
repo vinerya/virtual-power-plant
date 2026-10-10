@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     # and one "vpp.access" line per HTTP request.
     log_json: bool | None = None
     access_log_enabled: bool = True
+    # OpenTelemetry tracing (needs the ``tracing`` extra). Exporter, sampler
+    # and service name come from the standard OTEL_* environment variables
+    # (OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_TRACES_SAMPLER, OTEL_SERVICE_NAME...);
+    # see vpp.tracing and docs/observability.md.
+    tracing_enabled: bool = False
 
     # Alerting: evaluate persisted alert rules against RESOURCE_UPDATED
     # telemetry.  Default rules (SOC low, over-temperature, SOH degraded) are

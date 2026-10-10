@@ -48,6 +48,7 @@ from enum import IntFlag
 from typing import Any
 from urllib.parse import urljoin
 
+from vpp import tracing
 from vpp.protocols._transport import (
     ProtocolTransportError,
     backoff_delay,
@@ -926,7 +927,12 @@ class IEEE2030_5Adapter(ProtocolAdapter):
         while True:
             await asyncio.sleep(self._next_delay(max_backoff))
             try:
-                await self.discover()
+                with tracing.span("vpp.ieee2030_5.poll", kind="client", lfdi=self.lfdi) as sp:
+                    programs = await self.discover()
+                    sp.set(
+                        programs=len(programs),
+                        active_controls=sum(len(p.active_controls) for p in programs),
+                    )
                 if self._consecutive_failures:
                     self._metrics.reconnect_count += 1
                     logger.info("IEEE 2030.5 server reachable again")

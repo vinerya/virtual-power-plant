@@ -26,10 +26,12 @@ COPY src/ src/
 #   degradation rainflow cycle counting for battery SOH
 #   monitoring  prometheus-client (/metrics)
 #   cli         click + rich (`vpp migrate`, `vpp serve`, ...)
+#   tracing     OpenTelemetry SDK + OTLP exporter (used only with
+#               VPP_TRACING_ENABLED=true)
 # psycopg2-binary: alembic migrations run on a *sync* driver
 # (postgresql+asyncpg URLs are rewritten to postgresql+psycopg2).
 RUN pip wheel --wheel-dir /wheels \
-    ".[api,db,protocols,degradation,monitoring,cli]" \
+    ".[api,db,protocols,degradation,monitoring,cli,tracing]" \
     "psycopg2-binary>=2.9"
 
 # ============================================================================

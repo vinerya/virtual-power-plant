@@ -46,6 +46,14 @@ def install_observability(app: FastAPI, settings: Settings) -> None:
     json_output = settings.is_production if settings.log_json is None else settings.log_json
     configure_logging(level=settings.log_level, json_output=json_output)
 
+    # OpenTelemetry (VPP_TRACING_ENABLED + the ``tracing`` extra): a no-op
+    # otherwise. The instrumentation wraps the whole middleware stack, so the
+    # request span is the parent of everything a request does.
+    from vpp import tracing
+
+    tracing.setup_tracing(settings)
+    tracing.instrument_fastapi(app)
+
     if metrics_endpoint_enabled(settings):
         from vpp.api.routes import metrics as metrics_routes
 
@@ -147,6 +155,9 @@ async def _stop_alert_service(handle: ObservabilityHandle) -> None:
 
 
 async def stop_observability(handle: ObservabilityHandle) -> None:
+    from vpp import tracing
+
+    tracing.shutdown_tracing()  # flush buffered spans
     if handle.metrics_subscription is not None:
         handle.bus.unsubscribe(handle.metrics_subscription)
     if handle.alert_elector is not None:

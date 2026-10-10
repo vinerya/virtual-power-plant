@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
+from vpp import tracing
+
 from .base import OptimizationProblem
 
 if TYPE_CHECKING:
@@ -437,6 +439,58 @@ def plan_schedule(
     vectors, a per-resource breakdown, the solve method and notes about any
     modelling simplification applied.
     """
+    with tracing.span(
+        "vpp.optimization.plan_schedule",
+        resources=len(batteries),
+        horizon=len(prices),
+        interval_minutes=interval_minutes,
+        degradation_aware=degradation_aware,
+        terminal_soc_policy=terminal_soc_policy,
+        force_fallback=force_fallback,
+    ) as sp:
+        plan = _plan_schedule(
+            batteries,
+            prices=prices,
+            interval_minutes=interval_minutes,
+            load_kw=load_kw,
+            solar_kw=solar_kw,
+            tariff_opt=tariff_opt,
+            tariff=tariff,
+            degradation_aware=degradation_aware,
+            replacement_cost_per_kwh=replacement_cost_per_kwh,
+            feeder_max_import_kw=feeder_max_import_kw,
+            feeder_max_export_kw=feeder_max_export_kw,
+            timeout_ms=timeout_ms,
+            force_fallback=force_fallback,
+            terminal_soc_policy=terminal_soc_policy,
+            now=now,
+        )
+        sp.set(
+            solver=plan["method"],
+            fallback_used=plan["fallback_used"],
+            objective=plan["objective"],
+        )
+        return plan
+
+
+def _plan_schedule(
+    batteries: Sequence[FleetAsset],
+    *,
+    prices: Sequence[float],
+    interval_minutes: int,
+    load_kw: Sequence[float] | None = None,
+    solar_kw: Sequence[float] | None = None,
+    tariff_opt: Any = None,
+    tariff: Any = None,
+    degradation_aware: bool = False,
+    replacement_cost_per_kwh: float = DEFAULT_REPLACEMENT_COST_PER_KWH,
+    feeder_max_import_kw: float | None = None,
+    feeder_max_export_kw: float | None = None,
+    timeout_ms: int = 10_000,
+    force_fallback: bool = False,
+    terminal_soc_policy: str = "value",
+    now: datetime | None = None,
+) -> dict[str, Any]:
     from .formulations.fleet_dispatch import FleetBattery, FleetCoupling
     from .mpc import (
         MPCConfig,

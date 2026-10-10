@@ -93,6 +93,12 @@ records are never pruned; see [security.md](security.md#data-retention).
 |---|---|---|
 | `VPP_METRICS_ENABLED` | `true` | Mount `GET /metrics` (Prometheus text format). Requires `prometheus-client` (`monitoring` extra); otherwise the route is not mounted. |
 | `VPP_METRICS_BEARER_TOKEN` | unset | When set, `/metrics` requires `Authorization: Bearer <token>`. Unset = unauthenticated; restrict it at the network/proxy level. |
+| `VPP_TRACING_ENABLED` | `false` | OpenTelemetry tracing of requests, SQL and the dispatch path (optimisation, actuator writes, DR, protocols, forwarded cluster calls). Needs the `tracing` extra; without it a warning is logged and the app runs untraced. Configure the exporter with the standard variables below. See [observability.md](observability.md). |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Standard OpenTelemetry variable: OTLP collector base URL (`:4317` with `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`). `OTEL_EXPORTER_OTLP_HEADERS`, `..._TIMEOUT`, `..._CERTIFICATE` are honoured too. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc`. |
+| `OTEL_TRACES_EXPORTER` | `otlp` | `otlp`, `console` (spans printed to stdout) or `none`. |
+| `OTEL_SERVICE_NAME` | `vpp` | `service.name` of the spans. |
+| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | Standard sampler selection, e.g. `parentbased_traceidratio` with `0.1` to keep 10% of traces. |
 | `VPP_ALERTS_ENABLED` | `true` | Evaluate persisted alert rules against `RESOURCE_UPDATED` telemetry. |
 | `VPP_ALERTS_SEED_DEFAULT_RULES` | `true` | On startup, insert three default rules (SOC low, over-temperature, SOH degraded) if the `alert_rules` table is empty. |
 | `VPP_ALERT_WEBHOOK_URL` | unset | POST every fired alert as JSON to this URL (retries with capped exponential backoff on network errors, 429 and 5xx). |

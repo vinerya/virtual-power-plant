@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from enum import Enum, IntEnum
 from typing import Any
 
+from vpp import tracing
+
 logger = logging.getLogger(__name__)
 
 OCPP16_SUBPROTOCOL = "ocpp1.6"
@@ -216,6 +218,14 @@ class OCPPJSession:
         if self._closed:
             raise ConnectionError(f"Charge point {self.charge_point_id} is not connected")
         wait = self._default_timeout if timeout is None else timeout
+        with tracing.span(
+            "vpp.ocpp.call", kind="client", action=action, charge_point_id=self.charge_point_id
+        ):
+            return await self._call_locked(action, payload, wait)
+
+    async def _call_locked(
+        self, action: str, payload: dict[str, Any], wait: float
+    ) -> dict[str, Any]:
         # OCPP-J: a sender must not send a new CALL until the previous one
         # was answered (or timed out).
         async with self._call_lock:
@@ -252,11 +262,22 @@ class OCPPJSession:
             self._resolve(frame.unique_id, error=frame)
 
     async def _handle_call(self, call: Call) -> None:
+        with tracing.span(
+            "vpp.ocpp.handle",
+            kind="server",
+            action=call.action,
+            charge_point_id=self.charge_point_id,
+        ) as sp:
+            await self._handle_call_traced(call, sp)
+
+    async def _handle_call_traced(self, call: Call, sp: Any) -> None:
         try:
             response = await self._handler(self.charge_point_id, call.action, call.payload)
         except OCPPError as exc:
+            sp.error(f"{exc.code}: {exc.description}")
             reply = encode_call_error(call.unique_id, exc.code, exc.description, exc.details)
         except Exception:
+            sp.error("handler crashed")
             logger.exception(
                 "OCPP handler for %s from %s crashed", call.action, self.charge_point_id
             )

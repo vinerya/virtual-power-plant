@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from vpp import tracing
 from vpp.protocols.base import (
     ProtocolAdapter,
     ProtocolMessage,
@@ -731,7 +732,15 @@ class ModbusAdapter(ProtocolAdapter):
             method = self._client.write_registers
             args = (address, [int(v) for v in values])
         try:
-            result = await method(*args, **{_unit_kwarg(method): self._unit(unit)})
+            with tracing.span(
+                "vpp.modbus.write",
+                kind="client",
+                adapter=self.name,
+                address=address,
+                registers=len(values),
+                unit_id=self._unit(unit),
+            ):
+                result = await method(*args, **{_unit_kwarg(method): self._unit(unit)})
         except Exception:
             self._metrics.errors += 1
             raise
@@ -781,6 +790,24 @@ class ModbusAdapter(ProtocolAdapter):
         reading (a value decoded with another snapshot's exponent is off by
         a power of ten).
         """
+        if not self.is_connected or self._client is None or self._register_map is None:
+            return {}
+        errors_before = self._metrics.errors
+        with tracing.span(
+            "vpp.modbus.poll",
+            kind="client",
+            adapter=self.name,
+            device_profile=self._register_map.name,
+            unit_id=self._register_map.unit_id,
+        ) as sp:
+            values = await self._poll_once()
+            errors = self._metrics.errors - errors_before
+            sp.set(values=len(values), errors=errors)
+            if errors and not values:
+                sp.error("no register could be read")
+            return values
+
+    async def _poll_once(self) -> dict[str, float]:
         if not self.is_connected or self._client is None or self._register_map is None:
             return {}
 

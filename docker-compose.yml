@@ -19,6 +19,9 @@
 # Simulated SunSpec inverter + battery (Modbus TCP, sunspec-sim:5020 on the
 # compose network; see docs/protocols.md "Testing without hardware"):
 #   docker compose --profile sim up -d
+# OpenTelemetry tracing into Jaeger (UI http://localhost:16686, service "vpp";
+# see docs/observability.md):
+#   VPP_TRACING_ENABLED=true docker compose --profile tracing up -d
 #
 # See docs/deployment.md for TLS termination (incl. OCPP wss://) and the
 # first-admin bootstrap, and docs/configuration.md for every VPP_* setting.
@@ -51,6 +54,15 @@ services:
       # needs a single API worker). See docs/protocols.md.
       VPP_MODBUS_INGESTION_ENABLED: ${VPP_MODBUS_INGESTION_ENABLED:-false}
       VPP_CONTROL_ENABLED: ${VPP_CONTROL_ENABLED:-false}
+      # OpenTelemetry tracing (off unless VPP_TRACING_ENABLED=true). Spans go
+      # over OTLP/HTTP to the `jaeger` service of the "tracing" profile by
+      # default; point OTEL_EXPORTER_OTLP_ENDPOINT at your own collector instead.
+      VPP_TRACING_ENABLED: ${VPP_TRACING_ENABLED:-false}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-vpp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
       # Optional: OpenEI key for GET/POST /api/v1/tariffs/import-urdb.
       OPENEI_API_KEY: ${OPENEI_API_KEY:-}
       # Optional first-boot admin (empty = disabled; ignored once any user
@@ -127,6 +139,19 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+  # Trace backend, not started by default (`--profile tracing`). Jaeger v2
+  # receives OTLP directly (4317 gRPC, 4318 HTTP) and keeps traces in memory.
+  jaeger:
+    profiles: ["tracing"]
+    image: jaegertracing/jaeger:2.5.0
+    ports:
+      - "127.0.0.1:${VPP_JAEGER_UI_PORT:-16686}:16686"
+      - "127.0.0.1:${VPP_OTLP_GRPC_PORT:-4317}:4317"
+      - "127.0.0.1:${VPP_OTLP_HTTP_PORT:-4318}:4318"
     restart: unless-stopped
     networks:
       - vpp-network

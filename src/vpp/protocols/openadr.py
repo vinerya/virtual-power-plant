@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from vpp import tracing
 from vpp.protocols._transport import (
     ProtocolTransportError,
     backoff_delay,
@@ -623,7 +624,10 @@ class OpenADRAdapter(ProtocolAdapter):
         while True:
             delay = self.poll_interval_s
             try:
-                await self.poll_once()
+                with tracing.span(
+                    "vpp.openadr.poll", kind="client", ven_id=self.ven_id, vtn_id=self.vtn_id
+                ) as sp:
+                    sp.set(messages=await self.poll_once(), active_events=len(self._events))
                 if self._consecutive_failures:
                     self._metrics.reconnect_count += 1
                     logger.info("OpenADR VTN reachable again")

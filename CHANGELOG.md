@@ -91,6 +91,30 @@ changes** before upgrading.
 
 ### Added
 
+**OpenTelemetry tracing (optional)**
+- New `tracing` extra (`opentelemetry-api`, `-sdk`, `-exporter-otlp`,
+  `-instrumentation-fastapi`, `-instrumentation-sqlalchemy`,
+  `-instrumentation-httpx`) and `VPP_TRACING_ENABLED` (default `false`).
+  Exporter, sampler and service name use the standard `OTEL_*` variables
+  (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
+  `OTEL_TRACES_SAMPLER`/`_ARG`, `OTEL_SERVICE_NAME`, default `vpp`). Without
+  the flag OpenTelemetry is never imported; with the flag but no extra, a
+  warning is logged and the API runs untraced.
+- Traced: HTTP requests/WebSockets, SQL statements, outbound httpx calls,
+  and spans for dispatch execution, optimisation solves (strategy, horizon,
+  solver, status, objective), horizon schedules, per-device actuator
+  setpoint writes and releases (resource id, profile, verified/failed), DR
+  orchestrator dispatch/release, Modbus poll cycles and register writes,
+  OCPP calls in both directions, OpenADR and IEEE 2030.5 polls, market order
+  submission and fills, and forwarded cluster calls. A forwarded call carries
+  the caller's W3C `traceparent` in its `cluster_calls` payload, so the
+  executing worker's span continues the caller's trace.
+- Log lines emitted inside a span carry `trace_id` and `span_id`.
+- `docker compose --profile tracing` adds Jaeger (UI on :16686); the API
+  image includes the `tracing` extra. New
+  [docs/observability.md](docs/observability.md) covers metrics, Grafana,
+  logs and tracing.
+
 **SunSpec device simulator**
 - `vpp simulate sunspec` / `python -m vpp.simulators.sunspec`: a pymodbus
   Modbus TCP server serving a SunSpec PV + battery hybrid inverter ("SunS"
