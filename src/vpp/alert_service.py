@@ -29,6 +29,14 @@ Design notes
 * Evaluation runs off the publisher's path: the EventBus callback only
   enqueues; a single worker task does DB work.  When the queue is full new
   telemetry is dropped for alerting (logged) rather than stalling ingestion.
+* Telemetry freshness: the evaluator also checks every
+  ``VPP_TELEMETRY_STALE_CHECK_INTERVAL_SECONDS`` which resources stopped
+  reporting (:mod:`vpp.resources_freshness`) and feeds the result to the
+  rules on the ``telemetry_stale`` metric (1 = stale, 0 = fresh) -- by
+  default the built-in "Resource telemetry stale" rule. Only changes are fed,
+  so one stale episode is one alert, auto-resolved when data returns (or the
+  resource is set offline). After a restart each resource gets a full
+  threshold to report again before it counts as stale for alerting.
 * With several API workers only the holder of the ``alert-evaluator`` lease
   runs an :class:`AlertService` (one place for rule state and
   de-duplication). Every other worker runs an :class:`AlertForwarder`, which
@@ -55,6 +63,13 @@ from vpp.db.engine import run_in_session
 from vpp.db.models import AlertModel, AlertRuleModel, ResourceModel
 from vpp.events.bus import Event, EventBus, EventType
 from vpp.metrics import normalise_soc, record_alert_evaluation_dropped, record_alert_fired
+from vpp.resources_freshness import (
+    FreshnessSettings,
+    latest_telemetry_at,
+    resource_metadata,
+    stale_after_s,
+    telemetry_freshness,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -70,6 +85,9 @@ OPEN_STATUSES = ("active", "acknowledged", "snoozed")
 DROP_LOG_INTERVAL_S = 10.0
 #: Most queued telemetry events evaluated in one transaction.
 EVALUATION_BATCH = 200
+#: Metric of the telemetry freshness check: 1.0 = stale, 0.0 = fresh.
+STALE_METRIC = "telemetry_stale"
+STALE_RULE_NAME = "Resource telemetry stale"
 
 DEFAULT_RULES: tuple[dict[str, Any], ...] = (
     {
@@ -98,6 +116,22 @@ DEFAULT_RULES: tuple[dict[str, Any], ...] = (
         "threshold": 0.80,
         "severity": "warning",
         "cooldown_s": 86400.0,
+    },
+    {
+        "name": STALE_RULE_NAME,
+        "description": (
+            "No telemetry from a resource for longer than its staleness threshold "
+            "(VPP_TELEMETRY_STALE_AFTER_SECONDS, metadata.telemetry_stale_after_s, or "
+            "the Modbus poll interval x VPP_TELEMETRY_STALE_MODBUS_POLL_MULTIPLIER). "
+            "Resolves itself when data arrives again."
+        ),
+        "metric": STALE_METRIC,
+        "comparison": ">=",
+        "threshold": 1.0,
+        "severity": "warning",
+        # One alert per stale episode: the check feeds changes only, so a
+        # cooldown would just hide a second outage shortly after the first.
+        "cooldown_s": 0.0,
     },
 )
 
@@ -368,14 +402,29 @@ class AlertRepository:
 
     @staticmethod
     async def seed_default_rules(session: AsyncSession) -> int:
-        """Insert :data:`DEFAULT_RULES` if no rule exists yet. Returns count added."""
+        """Insert :data:`DEFAULT_RULES` if no rule exists yet. Returns count added.
+
+        An existing rule table gets the built-in telemetry-stale rule when no
+        rule watches its metric yet (installations from before it existed).
+        To turn it off, disable it: a deleted one is added again at startup.
+        """
         existing = (await session.execute(select(AlertRuleModel.id).limit(1))).first()
-        if existing is not None:
-            return 0
-        for spec in DEFAULT_RULES:
+        if existing is None:
+            specs = list(DEFAULT_RULES)
+        else:
+            watched = (
+                await session.execute(
+                    select(AlertRuleModel.id).where(AlertRuleModel.metric == STALE_METRIC).limit(1)
+                )
+            ).first()
+            taken = await AlertRepository.get_rule_by_name(session, STALE_RULE_NAME)
+            if watched is not None or taken is not None:
+                return 0
+            specs = [s for s in DEFAULT_RULES if s["metric"] == STALE_METRIC]
+        for spec in specs:
             session.add(AlertRuleModel(rule_type="threshold", **spec))
         await session.flush()
-        return len(DEFAULT_RULES)
+        return len(specs)
 
 
 # ---------------------------------------------------------------------------
@@ -401,8 +450,18 @@ class AlertService:
         broadcaster: Broadcaster | None = None,
         manager: AlertManager | None = None,
         queue_size: int = 1000,
+        freshness: FreshnessSettings | None = None,
+        freshness_check_interval_s: float | None = None,
     ) -> None:
         self._session_factory = session_factory
+        # Telemetry freshness check (check_freshness): thresholds, the loop's
+        # period (None: no loop, call check_freshness yourself), the last
+        # state fed per resource, and when monitoring started.
+        self._freshness = freshness
+        self._freshness_interval_s = freshness_check_interval_s
+        self._freshness_task: asyncio.Task | None = None
+        self._stale_state: dict[str, bool] = {}
+        self._monitor_since: datetime | None = None
         self._broadcaster = broadcaster
         self.manager = manager or AlertManager()
         self._rule_meta: dict[str, AlertRuleModel] = {}
@@ -438,11 +497,22 @@ class AlertService:
             event_types={EventType.RESOURCE_UPDATED},
         )
         self._worker = asyncio.create_task(self._run(), name="vpp-alert-evaluator")
+        self._monitor_since = utcnow()
+        if self._freshness_interval_s is not None and self._freshness_interval_s > 0:
+            self._freshness_task = asyncio.create_task(
+                self._freshness_loop(self._freshness_interval_s),
+                name="vpp-telemetry-freshness",
+            )
 
     async def stop(self) -> None:
         if self._bus is not None and self._subscription_id is not None:
             self._bus.unsubscribe(self._subscription_id)
         self._subscription_id = None
+        if self._freshness_task is not None:
+            self._freshness_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._freshness_task
+            self._freshness_task = None
         if self._worker is not None:
             self._worker.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -469,6 +539,9 @@ class AlertService:
         self._rule_meta = {r.id: r for r in rows}
         self._metrics_of_interest = frozenset(self.manager.metric_names())
         self._clear.clear()
+        # Re-feed every resource's freshness: a rule enabled (or added) while
+        # a resource was already stale must still fire for it.
+        self._stale_state.clear()
 
     async def drain(self) -> None:
         """Wait until every queued event has been processed (tests, shutdown)."""
@@ -558,6 +631,10 @@ class AlertService:
                     self._clear.add(key)
                 else:
                     self._clear.discard(key)
+        return await self._announce(fired)
+
+    async def _announce(self, fired: list[tuple[Alert, AlertModel]]) -> list[dict[str, Any]]:
+        """Count, dispatch and broadcast newly fired (committed) alerts."""
         payloads = [(alert, serialize_alert(row)) for alert, row in fired]
 
         out: list[dict[str, Any]] = []
@@ -662,6 +739,93 @@ class AlertService:
             for row in await AlertRepository.find_open(session, rule.name, resource_id):
                 AlertRepository.resolve(row, by="auto")
             self._pending_clear[key] = True
+
+    # -- telemetry freshness ---------------------------------------------------
+
+    async def _freshness_loop(self, interval_s: float) -> None:
+        while True:
+            await asyncio.sleep(interval_s)
+            try:
+                await self.check_freshness()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Telemetry freshness check failed")
+
+    async def check_freshness(self, now: datetime | None = None) -> list[dict[str, Any]]:
+        """Feed each resource's stale/fresh state to the ``telemetry_stale`` rules.
+
+        Only resources whose state changed since the last check are fed, so
+        a stale episode fires one alert (de-duplicated onto the open one
+        after a restart) and is auto-resolved when data returns. Offline
+        resources (``online = false``) count as fresh: the operator knows.
+        Returns the newly fired alerts (serialised).
+        """
+        if not self.manager.matching_rules(STALE_METRIC):
+            return []  # no rule watches freshness: nothing to evaluate
+        now = now or utcnow()
+        freshness = self._freshness or FreshnessSettings.from_settings()
+        since = self._monitor_since
+        changed: dict[str, bool] = {}
+        present: set[str] = set()
+
+        async def evaluate(session: AsyncSession) -> list[tuple[Alert, AlertModel]]:
+            rows = (
+                await session.execute(
+                    select(ResourceModel.id, ResourceModel.online, ResourceModel.metadata_json)
+                )
+            ).all()
+            present.update(r[0] for r in rows)
+            last = await latest_telemetry_at(session, present)
+            fired: list[tuple[Alert, AlertModel]] = []
+            for rid, online, metadata_json in rows:
+                last_at = last.get(rid)
+                if last_at is not None and since is not None and last_at < since:
+                    # Data from before monitoring started (e.g. the API was
+                    # down): give the device a full threshold to report.
+                    last_at = since
+                threshold = stale_after_s(
+                    resource_metadata({"metadata_json": metadata_json}), freshness
+                )
+                f = telemetry_freshness(last_at, threshold, now)
+                stale = bool(online) and f.stale
+                if self._stale_state.get(rid) is stale:
+                    continue
+                changed[rid] = stale
+                value = 1.0 if stale else 0.0
+                for alert in self.manager.check(STALE_METRIC, value, source=rid):
+                    age = f.age_s or 0.0
+                    alert.value = round(age, 1)
+                    alert.threshold = float(f.stale_after_s or 0.0)
+                    alert.message = (
+                        f"No telemetry for {age:.0f} s (threshold {alert.threshold:.0f} s)"
+                    )
+                    alert.metadata.update(
+                        telemetry_age_s=alert.value,
+                        stale_after_s=alert.threshold,
+                        last_telemetry_at=f.last_at.isoformat() if f.last_at else None,
+                    )
+                    row, is_new = await self._persist(session, alert, STALE_METRIC, rid)
+                    if is_new:
+                        fired.append((alert, row))
+                await self._auto_resolve(session, STALE_METRIC, value, rid)
+            return fired
+
+        async with self._evaluating:
+            self._pending_clear = {}
+            try:
+                fired = await run_in_session(self._session_factory, evaluate)
+            finally:
+                pending, self._pending_clear = self._pending_clear, {}
+            for key, clear in pending.items():  # committed: apply
+                if clear:
+                    self._clear.add(key)
+                else:
+                    self._clear.discard(key)
+            self._stale_state.update(changed)
+            for rid in set(self._stale_state) - present:  # deleted resources
+                del self._stale_state[rid]
+        return await self._announce(fired)
 
 
 def _rule_signature(rule: AlertRule) -> tuple[Any, ...]:

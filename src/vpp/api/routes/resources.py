@@ -7,20 +7,29 @@ field: ``capacity_kwh`` in ``nominal_energy_kwh``, ``chemistry`` and
 partial update that is re-validated against the same model after merging,
 so both paths enforce the same rules. The optimizer's resource loader
 (:mod:`vpp.api.optimization_support`) reads the same columns/keys.
+
+Responses carry the telemetry freshness of each resource (``telemetry_*``,
+``data_status``, see :mod:`vpp.resources_freshness`). Setting ``online`` to
+``false`` releases any setpoint or output cap the device actuator holds on
+the resource (:meth:`vpp.control.actuator.SetpointActuator.release_resource`)
+and is recorded in the audit log (``control.resource_offline``).
 """
 
 from __future__ import annotations
 
 import json
+import logging
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
 )
 
+from vpp import audit
 from vpp.api.pagination import Page, page_params, paginate
 from vpp.auth.security import get_current_user, require_role
 from vpp.db.engine import get_db
@@ -28,6 +37,7 @@ from vpp.db.models import ResourceModel, UserModel
 from vpp.db.repositories import ResourceRepository
 from vpp.portal.sites import resource_capacity_kwh
 from vpp.portal.telemetry import latest_soc
+from vpp.resources_freshness import freshness_of, latest_telemetry_at
 from vpp.schemas.auth import UserRole
 from vpp.schemas.resources import (
     CREATE_MODELS,
@@ -39,6 +49,8 @@ from vpp.schemas.resources import (
     normalize_resource_type,
     resource_create_adapter,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/resources", tags=["Resources"])
 
@@ -78,9 +90,26 @@ def configured_soc(row: ResourceModel, cfg: dict[str, Any] | None = None) -> flo
     return max(0.0, min(1.0, soc))
 
 
-def resource_to_response(row: ResourceModel, telemetry_soc: float | None = None) -> dict:
+def _link_status(resource_id: str) -> str | None:
+    """Status of the resource's Modbus adapter, when it runs in this process."""
+    try:
+        from vpp.api.routes.protocols import get_registry
+
+        adapter = get_registry().get(f"modbus:{resource_id}")
+    except Exception:
+        return None
+    return adapter.status.value if adapter is not None else None
+
+
+def resource_to_response(
+    row: ResourceModel,
+    telemetry_soc: float | None = None,
+    *,
+    last_telemetry_at: datetime | None = None,
+) -> dict:
     """Render a resource row in the :class:`ResourceResponse` shape."""
     cfg = _loads(row.config_json)
+    metadata = _loads(row.metadata_json)
     out: dict[str, Any] = {
         "id": row.id,
         "name": row.name,
@@ -92,7 +121,9 @@ def resource_to_response(row: ResourceModel, telemetry_soc: float | None = None)
         "site_id": row.site_id,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
-        "metadata": _loads(row.metadata_json),
+        "metadata": metadata,
+        **freshness_of({"metadata": metadata}, last_telemetry_at).as_fields(),
+        "link_status": _link_status(row.id),
     }
     fields = ResourceResponse.model_fields
     for key, value in cfg.items():
@@ -178,6 +209,15 @@ def _validation_error(exc: ValidationError) -> RequestValidationError:
     )
 
 
+async def _render(session: AsyncSession, rows: list[ResourceModel]) -> list[dict]:
+    """Responses for *rows*, with telemetry SOC and freshness looked up in bulk."""
+    socs = await latest_soc(session, [r.id for r in rows if r.resource_type == "battery"])
+    last = await latest_telemetry_at(session, [r.id for r in rows])
+    return [
+        resource_to_response(r, socs.get(r.id), last_telemetry_at=last.get(r.id)) for r in rows
+    ]
+
+
 async def _conflict_if_name_taken(session: AsyncSession, name: str) -> None:
     if await ResourceRepository.get_by_name(session, name) is not None:
         raise HTTPException(
@@ -202,8 +242,7 @@ async def list_resources(
         normalize_resource_type(resource_type) if resource_type else None
     )
     items = await paginate(session, response, stmt, page)
-    socs = await latest_soc(session, [r.id for r in items if r.resource_type == "battery"])
-    return [resource_to_response(r, socs.get(r.id)) for r in items]
+    return await _render(session, items)
 
 
 @router.post("", response_model=ResourceResponse, status_code=status.HTTP_201_CREATED)
@@ -237,18 +276,26 @@ async def get_resource(
     obj = await ResourceRepository.get_by_id(session, resource_id)
     if obj is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
-    socs = await latest_soc(session, [obj.id]) if obj.resource_type == "battery" else {}
-    return resource_to_response(obj, socs.get(obj.id))
+    [out] = await _render(session, [obj])
+    return out
 
 
 @router.put("/{resource_id}", response_model=ResourceResponse)
 async def update_resource(
     resource_id: str,
     body: ResourceUpdate,
+    request: Request,
     session: AsyncSession = Depends(get_db),
     _user: UserModel = Depends(_writer),
 ):
-    """Partially update a resource (see :class:`~vpp.schemas.resources.ResourceUpdate`)."""
+    """Partially update a resource (see :class:`~vpp.schemas.resources.ResourceUpdate`).
+
+    ``"online": false`` also releases any setpoint or output cap the device
+    actuator holds on the resource (the same fallback as when a dispatch
+    expires: ``safe_setpoint_kw`` if configured, else the profile's
+    release), and is recorded in the audit log (``control.resource_offline``;
+    back online: ``control.resource_online``).
+    """
     row = await ResourceRepository.get_by_id(session, resource_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource not found")
@@ -286,14 +333,74 @@ async def update_resource(
         except ValidationError as exc:
             raise _validation_error(exc) from exc
         _apply(row, model)
+    was_online = bool(row.online)
+    if online is False:
+        # Before this session writes anything: the actuator updates the
+        # output_caps table in its own transaction, and SQLite allows one
+        # writer at a time.
+        await _release_offline(session, request, row, _user, was_online=was_online)
     if online is not None:
         row.online = online
     await session.flush()
     # ``updated_at`` has a server-side onupdate, so the flush expires it;
     # reload now rather than lazy-loading outside the async context.
     await session.refresh(row)
-    socs = await latest_soc(session, [row.id]) if row.resource_type == "battery" else {}
-    return resource_to_response(row, socs.get(row.id))
+    if online is True and not was_online:
+        audit.record(
+            session,
+            request,
+            "control.resource_online",
+            actor=_user,
+            target_type="resource",
+            target_id=row.id,
+            details={"name": row.name},
+        )
+    [out] = await _render(session, [row])
+    return out
+
+
+async def _release_offline(
+    session: AsyncSession,
+    request: Request,
+    row: ResourceModel,
+    user: UserModel,
+    *,
+    was_online: bool,
+) -> None:
+    """Hand the device back when a resource is set offline, and audit it."""
+    from vpp.control.actuator import FAILED, get_setpoint_actuator, summarize
+
+    deliveries: list[dict[str, Any]] = []
+    try:
+        deliveries = await get_setpoint_actuator().release_resource(
+            row.id,
+            name=row.name,
+            metadata=_loads(row.metadata_json),
+            reason="resource set offline",
+            source="api.resources.offline",
+            session=session,
+        )
+    except Exception:  # never fail the update over a device write
+        logger.exception("releasing control of %s after it was set offline failed", row.id)
+        deliveries = [{"status": FAILED, "reason": "release raised"}]
+    if not was_online and not deliveries:
+        return  # already offline and nothing held: nothing happened
+    counts = summarize(deliveries)
+    audit.record(
+        session,
+        request,
+        "control.resource_offline",
+        actor=user,
+        target_type="resource",
+        target_id=row.id,
+        outcome="failure" if counts.get(FAILED) else "success",
+        details={
+            "name": row.name,
+            "was_online": was_online,
+            "released": counts,
+            "modes": [d["mode"] for d in deliveries if d.get("mode")],
+        },
+    )
 
 
 @router.delete("/{resource_id}", status_code=status.HTTP_204_NO_CONTENT)

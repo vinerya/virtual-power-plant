@@ -16,7 +16,13 @@ Opt-in is two-level:
 
 Safety rules, in the order applied:
 
-1. **Offline** resources are never written (``offline``).
+1. **Offline** resources are never given a setpoint (``offline``). Setting a
+   resource offline through the API (``PUT /resources/{id}`` with
+   ``"online": false``) hands the device back first:
+   :meth:`SetpointActuator.release_resource` applies the fallback below to
+   its active setpoint, or releases an output cap restored from a previous
+   run. A resource found offline by the watchdog (changed some other way)
+   only has its control state dropped, nothing written.
 2. **Clamp** to the resource's limits (battery: -charge .. +discharge limit,
    anything else: 0 .. rated power) and the control block's
    ``min_kw``/``max_kw``. ``clamped`` is reported. A generation resource
@@ -605,6 +611,119 @@ class SetpointActuator:
             await self._persist_caps()
         await self._record(out, source=source, run_id=run_id)
         return out
+
+    async def release_resource(
+        self,
+        resource_id: str,
+        *,
+        name: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        reason: str,
+        source: str = "control",
+        session: AsyncSession | None = None,
+    ) -> list[dict[str, Any]]:
+        """Release whatever control this actuator holds on one resource.
+
+        Used when the resource is set offline (``PUT /resources/{id}`` with
+        ``"online": false``):
+
+        * an **active setpoint** gets the same fallback as an expired
+          dispatch (``safe_setpoint_kw`` if configured, else the profile's
+          release, e.g. ``WMaxLim_Ena=0``);
+        * an **output cap restored** from ``output_caps`` (left by a previous
+          run, not rewritten since) is released through a writer built from
+          the resource's current ``metadata.modbus.control``. If the device's
+          revert timer has certainly run out already, the cap is just
+          forgotten (nothing is written). Without a usable control block the
+          cap is kept: the device holds it until its own revert timer fires.
+
+        Recorded like every other command (``event_log`` +
+        ``DEVICE_SETPOINT``); with *session* the rows are added to it (the
+        caller commits). Returns the deliveries (``[]``: nothing held).
+        """
+        out: list[dict[str, Any]] = []
+        async with self._lock:
+            active = self._active.get(resource_id)
+            if active is not None:
+                out.append(await self._fallback(active, reason, action="release"))
+            elif resource_id in self._restored:
+                out.append(
+                    await self._release_restored(
+                        resource_id, name or resource_id, metadata or {}, reason
+                    )
+                )
+            await self._persist_caps()
+        await self._record(out, source=source, session=session)
+        return out
+
+    async def _release_restored(
+        self, resource_id: str, name: str, metadata: dict[str, Any], reason: str
+    ) -> dict[str, Any]:
+        """Release a cap restored at startup (called with the lock held)."""
+        cap = self._restored[resource_id]
+        d: dict[str, Any] = {
+            "resource_id": resource_id,
+            "resource_name": name,
+            "action": "release",
+            "requested_kw": None,
+            "setpoint_kw": None,
+            "status": ACCEPTED,
+            "reason": reason,
+            "verified": None,
+            "writes": [],
+            "profile": cap.profile,
+            "restored_cap_kw": cap.cap_kw,
+        }
+
+        def forget() -> None:
+            del self._restored[resource_id]
+            self._cap_dirty.add(resource_id)
+
+        if cap.expired(self._clock()):
+            forget()
+            d.update(status=UNCHANGED, mode="reverted")
+            d["reason"] += "; the device's revert timer has already lifted the cap"
+            return d
+        modbus = metadata.get("modbus")
+        try:
+            control = ModbusControlConfig.from_modbus_config(
+                modbus if isinstance(modbus, dict) else None
+            )
+        except (ControlConfigError, TypeError, ValueError) as exc:
+            control = None
+            d["reason"] += f"; invalid modbus.control config: {exc}"
+        if control is None or not isinstance(modbus, dict) or control.simulate:
+            d.update(status=FAILED)
+            d["reason"] += (
+                "; no usable modbus.control block to release the restored cap with, so the "
+                "device keeps it until its own revert timer fires"
+            )
+            return d
+        writer = self._writer_factory(resource_id, modbus, control, cap.upper_kw)
+        with tracing.span(
+            "vpp.actuator.release",
+            resource_id=resource_id,
+            action="release",
+            profile=control.profile,
+            reason=reason,
+        ) as sp:
+            if control.safe_setpoint_kw is not None:
+                safe = max(0.0, min(cap.upper_kw, control.safe_setpoint_kw))
+                d["setpoint_kw"] = safe
+                result = await writer.write(safe)
+                d["mode"] = "safe_setpoint"
+            else:
+                result = await writer.release()
+                d["mode"] = "release"
+            self.commands += 1
+            d.update(writes=result.writes, verified=result.verified)
+            if result.ok:
+                forget()
+            else:
+                self.failures += 1
+                d.update(status=FAILED, reason=f"{reason}; {result.error}")
+            _annotate(sp, d)
+        return d
 
     # -- watchdog ----------------------------------------------------------------
 

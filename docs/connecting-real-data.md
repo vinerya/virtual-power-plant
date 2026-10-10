@@ -812,19 +812,61 @@ curl -s -X POST localhost:8000/api/v1/ws/token -H "X-API-Key: $VPP_KEY"
 # ws://localhost:8000/api/v1/ws?token=<token>&channels=resource_updates
 ```
 
-**Staleness.** The platform does **not** mark a resource offline when its
-data stops: `online` changes only when you set it
-(`PUT /api/v1/resources/{id}` with `{"online": false}`), and `current_power`
-keeps its last value. (Dispatch does stop counting on a generator whose
-telemetry is older than 5 minutes: see
-[generation availability](#generation-availability).) There is no
-built-in alert rule for missing data.
-Watch it from Prometheus instead: `/metrics` exports
-`vpp_resource_last_update_timestamp_seconds` per resource, and
-`time() - vpp_resource_last_update_timestamp_seconds > 300` is a good
-alert ([operations runbook](operations.md#what-to-monitor)). The built-in
-alert rules cover battery SoC below 10 %, temperature above 50 °C and
-state of health below 80 % (console **Alerts**, `GET /api/v1/alerts`).
+**Staleness.** Every resource response says how old its data is:
+
+```bash
+curl -s localhost:8000/api/v1/resources -H "X-API-Key: $VPP_KEY" \
+  | python3 -c 'import json,sys; [print(r["name"], r["data_status"], r["telemetry_age_s"], r["telemetry_stale_after_s"]) for r in json.load(sys.stdin)]'
+# home-battery fresh 4.2 300.0
+# garage-battery fresh 3.1 50.0       (Modbus: 5 s poll x 10)
+# farm-wind stale 912.7 300.0         (the HTTP sender stopped)
+# rooftop-pv no_data None 50.0        (never reported)
+```
+
+| Field | Meaning |
+|---|---|
+| `telemetry_last_at` | time of the newest sample from any path (HTTP, MQTT, Modbus), UTC |
+| `telemetry_age_s` | seconds since then |
+| `telemetry_stale_after_s` | this resource's threshold (see below); `null` when the check is off |
+| `telemetry_stale` | `true` when the data is older than the threshold |
+| `data_status` | `fresh`, `stale`, `no_data` (never reported) or `unchecked` (check off) |
+| `link_status` | for a Modbus-polled resource, its connection status (`connected`, `degraded`, `error`, ...) |
+
+The threshold is, in this order: `metadata.telemetry_stale_after_s` on the
+resource (`0` turns the check off for it); for a Modbus-polled resource,
+its `poll_interval_s` × `VPP_TELEMETRY_STALE_MODBUS_POLL_MULTIPLIER`
+(default 10); otherwise `VPP_TELEMETRY_STALE_AFTER_SECONDS` (default 300 s,
+`0` turns the check off). Set a longer threshold on a device that reports
+rarely, for example `"telemetry_stale_after_s": 1800` in the `metadata` of
+a gateway posting every 15 minutes (a `PUT` replaces `metadata` as a
+whole: send its other keys, such as `modbus`, too).
+
+Stale data is **not** hidden or zeroed: `current_power` keeps its last
+value and `online` changes only when you set it. (Dispatch separately stops
+counting on a generator whose newest sample is older than
+`VPP_GENERATION_TELEMETRY_MAX_AGE_S`: see
+[generation availability](#generation-availability).) What changes is that
+you are told:
+
+- the built-in alert rule **Resource telemetry stale** fires once when a
+  resource goes stale and resolves itself when data arrives again (console
+  **Alerts**, `GET /api/v1/alerts`, and the alert webhook if configured).
+  It is checked every `VPP_TELEMETRY_STALE_CHECK_INTERVAL_SECONDS` (30 s).
+  Resources that never reported and resources set `"online": false` do not
+  alert, and after an API restart each resource gets a full threshold to
+  report again. To silence it, disable the rule (`PATCH /api/v1/alerts/rules/{id}`
+  with `"enabled": false`) rather than deleting it: a deleted one is
+  created again at startup.
+- A Modbus device that stops answering is reported `degraded` in
+  `GET /api/v1/protocols/` (`modbus:<resource id>`, with
+  `consecutive_failed_polls`) and in the resource's `link_status` after
+  `VPP_MODBUS_MAX_FAILED_POLLS` (3) failed polls in a row. Polling goes on,
+  and the first successful poll reports it `connected` again.
+
+The other built-in rules cover battery SoC below 10 %, temperature above
+50 °C and state of health below 80 %. Prometheus users can still alert on
+`time() - vpp_resource_last_update_timestamp_seconds`
+([operations runbook](operations.md#what-to-monitor)).
 
 **Dry-run dispatch.** Ask the optimizer to split a target across your
 resources. Without `"apply": true` nothing is sent to any device:
@@ -957,20 +999,26 @@ curl -s "localhost:8000/api/v1/audit?action=control." -H "Authorization: Bearer 
 `setpoints` shows the kill switch, the active set points and the latest
 device commands (each one is also stored in the event log with its
 `run_id`). The audit log records who applied each dispatch
-(`control.dispatch`), including refused attempts.
+(`control.dispatch`), including refused attempts, and who set a resource
+offline (`control.resource_offline`) or back online.
 
 **Stopping and rolling back**, fastest first:
 
 | To stop... | Do | Effect |
 |---|---|---|
+| one device, now | `PUT /api/v1/resources/{id}` with `{"online": false}` | its set point is released at once (or `safe_setpoint_kw` written), the same fallback as an expired dispatch; later dispatches skip it until it is back online |
 | one device | `PUT` its `metadata.modbus.control` with `"enabled": false` | the watchdog releases its set point within `VPP_CONTROL_WATCHDOG_INTERVAL_S` (5 s); later dispatches report `disabled` |
 | every device | set `VPP_CONTROL_ENABLED=false` and restart the API | on shutdown every active set point is released; after restart nothing is written |
 | if the API is down or unreachable | nothing | each device returns to normal on its own after `revert_timeout_s` |
 
-Setting a resource `"online": false` also stops writes to it, but releases
-**nothing**: the device keeps its last limit until its revert timer fires.
-Use `"enabled": false` to hand a device back. To roll back completely,
-delete the `control` blocks; polling and dry-run dispatch keep working.
+Setting a resource `"online": false` releases what the platform holds on
+it, including an output cap left by a previous run of the API; if the
+device's revert timer has already lifted that cap, nothing is written. The
+release is in the device command log and the change in the audit log
+(`control.resource_offline`). If the write fails (device unreachable), the
+device keeps its limit until its own revert timer fires. To roll back
+completely, delete the `control` blocks; polling and dry-run dispatch keep
+working.
 
 Add devices one at a time, and watch each through at least one full
 dispatch, expiry and release before adding the next.
@@ -984,8 +1032,9 @@ dispatch, expiry and release before adding the next.
 - **Backups.** Back up the database (SQLite online backup or `pg_dump`) and
   test a restore ([operations runbook](operations.md#what-to-back-up)).
 - **Monitoring.** Scrape `/metrics` with Prometheus; protect it with
-  `VPP_METRICS_BEARER_TOKEN` or keep it internal. Alert on stale telemetry,
-  protocol errors and failed optimization runs
+  `VPP_METRICS_BEARER_TOKEN` or keep it internal. Stale telemetry raises
+  the built-in "Resource telemetry stale" alert; alert on protocol errors
+  and failed optimization runs too
   ([observability](observability.md), [what to monitor](operations.md#what-to-monitor)).
 - **Upgrades.** Back up, read the release's upgrade notes in the
   [changelog](changelog.md), install the new version, run `vpp migrate`,
@@ -1013,9 +1062,11 @@ default in production). Set `VPP_LOG_LEVEL=DEBUG` for more detail.
 | SoC 100× too small or too large | percent sent where a fraction is expected or the reverse | HTTP `state_of_charge` is 0–1; MQTT `soc` and Modbus `soc_register` are percent |
 | power 1000× off | wrong unit | HTTP and MQTT take kW; Modbus `power_register` must be in W |
 | Modbus resource never updates | polling enabled after the resource was configured, wrong host/port/unit id, firewall | restart the API (discovery runs at startup); look for `Modbus connect failed` and `Error reading register` in the log and `errors` on `modbus:<id>` in `/api/v1/protocols/` |
+| `modbus:<id>` shows `degraded` | the connection is up but the device answers no reads (powered off, wrong unit id, gateway lost it) | check the device and `unit_id`; it turns `connected` by itself on the next good poll. `consecutive_failed_polls` counts the misses |
 | Modbus values wrong by a power of ten, or `0` | wrong profile or base address, scale-factor register missing | compare with the device display; for SunSpec devices use `model_base: "auto"` for control and check the base address of `custom_registers` |
 | generator planned at 0 kW, `availability_basis: "no_data"` | no telemetry sample in the last `VPP_GENERATION_TELEMETRY_MAX_AGE_S` (300 s) | send telemetry, or choose a fallback ([generation availability](#generation-availability)) |
-| device unplugged but the resource still shows power | no staleness detection | see [Staleness](#8-verify-before-you-dispatch); set `"online": false` while it is out |
+| device unplugged but the resource still shows power | the last value is kept | `data_status` is `stale` and the "Resource telemetry stale" alert fires after the threshold ([Staleness](#8-verify-before-you-dispatch)); set `"online": false` while it is out |
+| "Resource telemetry stale" for a device that reports rarely | its interval is longer than the threshold | set `metadata.telemetry_stale_after_s` on the resource (or `0` to turn the check off for it) |
 | dispatch delivery `disabled` | `VPP_CONTROL_ENABLED` is false, or `control.enabled` is false | the `reason` field says which |
 | dispatch delivery `not_configured` | no `metadata.modbus.control` block | add one ([step 9](#9-turn-on-device-control-safely)) |
 | dispatch delivery `failed` | device refused the write, read-back mismatch, model header mismatch | the `reason` field and the API log name the register; test against `vpp simulate sunspec` |

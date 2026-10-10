@@ -615,8 +615,17 @@ class ModbusAdapter(ProtocolAdapter):
     Configuration keys:
         host, port (TCP) | serial_port, baudrate (RTU),
         mode ("tcp" | "rtu"), device_profile, unit_id, poll_interval_s,
-        custom_registers
+        custom_registers, max_failed_polls
+
+    Device health: a poll in which no register could be read (every read
+    failed, or the poll raised) is a *failed poll*. After
+    ``max_failed_polls`` (default 3) of them in a row the status turns
+    ``degraded``; polling continues, and the first poll that reads anything
+    turns it ``connected`` again. While degraded, writes are refused like
+    when disconnected (``ConnectionError``).
     """
+
+    DEFAULT_MAX_FAILED_POLLS = 3
 
     def __init__(self) -> None:
         super().__init__("modbus", "1.0")
@@ -624,6 +633,49 @@ class ModbusAdapter(ProtocolAdapter):
         self._poll_task: asyncio.Task | None = None
         self._register_map: RegisterMap | None = None
         self._latest_values: dict[str, float] = {}
+        self.consecutive_failed_polls = 0
+        self.last_successful_poll_at: float | None = None
+
+    @property
+    def max_failed_polls(self) -> int:
+        try:
+            return max(1, int(self._config.get("max_failed_polls", self.DEFAULT_MAX_FAILED_POLLS)))
+        except (TypeError, ValueError):
+            return self.DEFAULT_MAX_FAILED_POLLS
+
+    @property
+    def link_open(self) -> bool:
+        """The connection is up (``connected``, or ``degraded``: device not answering)."""
+        return self._client is not None and self._status in (
+            ProtocolStatus.CONNECTED,
+            ProtocolStatus.DEGRADED,
+        )
+
+    def _note_poll(self, ok: bool) -> None:
+        """Track consecutive failed polls; switch connected <-> degraded."""
+        if ok:
+            self.last_successful_poll_at = time.time()
+            if self._status == ProtocolStatus.DEGRADED:
+                self._status = ProtocolStatus.CONNECTED
+                logger.info(
+                    "Modbus device %s answering again after %d failed poll(s)",
+                    self.name,
+                    self.consecutive_failed_polls,
+                )
+            self.consecutive_failed_polls = 0
+            return
+        self.consecutive_failed_polls += 1
+        if (
+            self._status == ProtocolStatus.CONNECTED
+            and self.consecutive_failed_polls >= self.max_failed_polls
+        ):
+            self._status = ProtocolStatus.DEGRADED
+            logger.warning(
+                "Modbus device %s not answering: %d failed polls in a row; reporting it "
+                "degraded until a poll succeeds",
+                self.name,
+                self.consecutive_failed_polls,
+            )
 
     # -- Lifecycle -----------------------------------------------------------
 
@@ -674,6 +726,7 @@ class ModbusAdapter(ProtocolAdapter):
 
         self._status = ProtocolStatus.CONNECTED
         self._metrics.connected_since = time.time()
+        self.consecutive_failed_polls = 0
         logger.info("Modbus %s connected (profile=%s)", mode, profile)
 
         # Start polling
@@ -691,6 +744,7 @@ class ModbusAdapter(ProtocolAdapter):
             self._client = None
         self._status = ProtocolStatus.DISCONNECTED
         self._metrics.connected_since = None
+        self.consecutive_failed_polls = 0
         logger.info("Modbus disconnected")
 
     async def send(self, message: ProtocolMessage) -> None:
@@ -790,7 +844,7 @@ class ModbusAdapter(ProtocolAdapter):
         reading (a value decoded with another snapshot's exponent is off by
         a power of ten).
         """
-        if not self.is_connected or self._client is None or self._register_map is None:
+        if not self.link_open or self._register_map is None:
             return {}
         errors_before = self._metrics.errors
         with tracing.span(
@@ -800,15 +854,23 @@ class ModbusAdapter(ProtocolAdapter):
             device_profile=self._register_map.name,
             unit_id=self._register_map.unit_id,
         ) as sp:
-            values = await self._poll_once()
+            try:
+                values = await self._poll_once()
+            except Exception:
+                self._note_poll(False)
+                raise
             errors = self._metrics.errors - errors_before
             sp.set(values=len(values), errors=errors)
             if errors and not values:
                 sp.error("no register could be read")
+            self._note_poll(not (errors and not values))
+            sp.set(
+                status=self._status.value, consecutive_failed_polls=self.consecutive_failed_polls
+            )
             return values
 
     async def _poll_once(self) -> dict[str, float]:
-        if not self.is_connected or self._client is None or self._register_map is None:
+        if not self.link_open or self._register_map is None:
             return {}
 
         unit = self._register_map.unit_id
@@ -925,7 +987,7 @@ class ModbusAdapter(ProtocolAdapter):
 
     async def _poll_loop(self, interval: float) -> None:
         """Continuously poll registers at a fixed interval."""
-        while self.is_connected:
+        while self.link_open:
             try:
                 await self.poll_once()
             except Exception:

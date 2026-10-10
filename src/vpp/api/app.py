@@ -172,6 +172,7 @@ async def _modbus_device_loop(
     *,
     retry_delay_seconds: float = 30.0,
     health_check_interval_seconds: float = 5.0,
+    max_failed_polls: int | None = None,
 ) -> None:
     """Connect one Modbus-configured resource's adapter and keep it connected.
 
@@ -182,6 +183,12 @@ async def _modbus_device_loop(
     registry under a name unique to this resource (ModbusAdapter always
     constructs with name="modbus", which would collide across multiple
     devices in the same registry), and reconnect if the adapter ever drops.
+
+    A device that stops answering while the connection stays up is reported
+    ``degraded`` by the adapter itself after ``max_failed_polls`` failed polls
+    in a row (``metadata.modbus.max_failed_polls``, else
+    ``VPP_MODBUS_MAX_FAILED_POLLS``); polling continues and it recovers on
+    its own, so that is not a reason to reconnect here.
     """
     from vpp.api.routes.protocols import get_registry
     from vpp.protocols.modbus import ModbusAdapter
@@ -192,6 +199,8 @@ async def _modbus_device_loop(
     )
 
     adapter_config = {k: v for k, v in config.items() if k not in NON_ADAPTER_KEYS}
+    if max_failed_polls is not None:
+        adapter_config.setdefault("max_failed_polls", max_failed_polls)
     power_register = config.get("power_register", DEFAULT_POWER_REGISTER)
     soc_register = config.get("soc_register")
 
@@ -217,7 +226,7 @@ async def _modbus_device_loop(
                     await adapter.connect()
                     connected = True
                 await asyncio.sleep(health_check_interval_seconds)
-                if not adapter.is_connected:
+                if not adapter.link_open:
                     connected = False
             except asyncio.CancelledError:
                 raise
@@ -261,7 +270,9 @@ async def _modbus_ingestion_loop(settings) -> None:
             continue
         device_tasks.append(
             asyncio.create_task(
-                _modbus_device_loop(row.id, config),
+                _modbus_device_loop(
+                    row.id, config, max_failed_polls=settings.modbus_max_failed_polls
+                ),
                 name=f"vpp-modbus-{row.id}",
             )
         )

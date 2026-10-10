@@ -19,6 +19,13 @@ export interface ResourceResponse {
   online: boolean;
   efficiency?: number | null;
   site_id?: string | null;
+  // Telemetry freshness (vpp.resources_freshness)
+  telemetry_last_at?: string | null;
+  telemetry_age_s?: number | null;
+  telemetry_stale_after_s?: number | null;
+  telemetry_stale?: boolean;
+  data_status?: "fresh" | "stale" | "no_data" | "unchecked";
+  link_status?: string | null;
   // Battery (0-1 fractions for SOC/SOH)
   state_of_charge?: number | null;
   state_of_charge_source?: "telemetry" | "configured" | null;

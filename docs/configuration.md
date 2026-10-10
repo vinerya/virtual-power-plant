@@ -109,11 +109,14 @@ values are in [operations.md](operations.md#data-retention).
 | `OTEL_SERVICE_NAME` | `vpp` | `service.name` of the spans. |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | Standard sampler selection, e.g. `parentbased_traceidratio` with `0.1` to keep 10% of traces. |
 | `VPP_ALERTS_ENABLED` | `true` | Evaluate persisted alert rules against `RESOURCE_UPDATED` telemetry. |
-| `VPP_ALERTS_SEED_DEFAULT_RULES` | `true` | On startup, insert three default rules (SOC low, over-temperature, SOH degraded) if the `alert_rules` table is empty. |
+| `VPP_ALERTS_SEED_DEFAULT_RULES` | `true` | On startup, insert the default rules (SOC low, over-temperature, SOH degraded, Resource telemetry stale) if the `alert_rules` table is empty. An existing table gets the "Resource telemetry stale" rule when no rule watches its metric (`telemetry_stale`); disable it rather than deleting it, or it is added again. |
 | `VPP_ALERT_WEBHOOK_URL` | unset | POST every fired alert as JSON to this URL (retries with capped exponential backoff on network errors, 429 and 5xx). |
 | `VPP_ALERT_WEBHOOK_SECRET` | unset | Sign webhook requests: `X-VPP-Timestamp: <unix seconds>` and `X-VPP-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>">`. |
 | `VPP_ALERT_WEBHOOK_TIMEOUT_SECONDS` | `5.0` | Per-attempt HTTP timeout. |
 | `VPP_ALERT_WEBHOOK_MAX_RETRIES` | `3` | Retries after the first attempt. |
+| `VPP_TELEMETRY_STALE_AFTER_SECONDS` | `300` | A resource whose newest telemetry sample (HTTP, MQTT or Modbus) is older than this is `stale` (resource API `data_status`, `telemetry_stale`) and raises the built-in "Resource telemetry stale" alert, resolved when data returns. `0` turns the check off. Per resource: `metadata.telemetry_stale_after_s` (`0` = off for that resource). Resources that never reported, and offline ones, do not alert. See `vpp.resources_freshness`. |
+| `VPP_TELEMETRY_STALE_MODBUS_POLL_MULTIPLIER` | `10` | Modbus-polled resources use `poll_interval_s` × this as their threshold instead (5 s polls: 50 s). `0` = use `VPP_TELEMETRY_STALE_AFTER_SECONDS`. |
+| `VPP_TELEMETRY_STALE_CHECK_INTERVAL_SECONDS` | `30` | How often the alert evaluator (the `alert-evaluator` lease holder) checks for resources that went stale or came back. |
 
 ## Battery degradation
 
@@ -143,6 +146,7 @@ stops startup with an error, rather than connecting in plain text.
 | `VPP_MQTT_TLS_KEYFILE` | unset | Unencrypted private key (PEM) for `VPP_MQTT_TLS_CERTFILE`; requires it. |
 | `VPP_MQTT_TLS_INSECURE` | `false` | Skip broker certificate and host-name verification. Testing only; logged as a warning at every connect. |
 | `VPP_MODBUS_INGESTION_ENABLED` | `false` | Poll Modbus TCP/RTU devices for every resource whose `metadata.modbus` block configures one (host, port, mode, device profile, poll interval, power register, optional `soc_register`). Discovery runs once at startup. See `src/vpp/protocols/modbus_ingestion.py`. |
+| `VPP_MODBUS_MAX_FAILED_POLLS` | `3` | Failed polls in a row (no register could be read) after which a device's adapter (`modbus:<resource id>` in `GET /api/v1/protocols/`, and the resource's `link_status`) reports `degraded`. Polling continues; the next successful poll reports `connected` again. Per device: `metadata.modbus.max_failed_polls`. |
 
 ## Generation availability (dispatch)
 

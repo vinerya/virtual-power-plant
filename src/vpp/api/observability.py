@@ -123,8 +123,14 @@ async def _start_alert_service(settings: Settings, bus: EventBus) -> AlertServic
     from vpp.alerts import WebhookAlertChannel
     from vpp.api.websocket import manager as websocket_manager
     from vpp.db.engine import get_session_factory
+    from vpp.resources_freshness import FreshnessSettings
 
-    service = AlertService(get_session_factory(), broadcaster=websocket_manager)
+    service = AlertService(
+        get_session_factory(),
+        broadcaster=websocket_manager,
+        freshness=FreshnessSettings.from_settings(settings),
+        freshness_check_interval_s=settings.telemetry_stale_check_interval_seconds,
+    )
     if settings.alert_webhook_url:
         service.manager.add_channel(
             WebhookAlertChannel(
