@@ -77,7 +77,7 @@ OpenTelemetry environment variables. They must be real environment variables
 | `VPP_TRACING_ENABLED` | `false` | Turn tracing on. |
 | `OTEL_SERVICE_NAME` | `vpp` | `service.name` of the spans (`service.version` is the package version). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Collector base URL (`http://host:4317` with gRPC). `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `..._HEADERS`, `..._TIMEOUT`, `..._CERTIFICATE` work as specified by OpenTelemetry. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc` (`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` overrides it). |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc` (`OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` overrides it). `grpc` needs `pip install opentelemetry-exporter-otlp-proto-grpc`; the `tracing` extra ships only the HTTP exporter. |
 | `OTEL_TRACES_EXPORTER` | `otlp` | `otlp`, `console` (print spans to stdout, handy locally) or `none`. |
 | `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | e.g. `parentbased_traceidratio` ... |
 | `OTEL_TRACES_SAMPLER_ARG` | unset | ... with `0.1` to keep 10% of new traces (children follow their parent's decision). |

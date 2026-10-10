@@ -232,11 +232,20 @@ def _exporter() -> Any:
         or "http/protobuf"
     ).lower()
     if protocol == "grpc":
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-    else:
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore[assignment]
-            OTLPSpanExporter,
-        )
+        try:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+                OTLPSpanExporter as GrpcExporter,
+            )
+        except ImportError:
+            # The tracing extra ships only the HTTP exporter (grpcio is large).
+            logger.warning(
+                "OTEL_EXPORTER_OTLP_PROTOCOL=grpc needs "
+                "opentelemetry-exporter-otlp-proto-grpc; exporting over http/protobuf"
+            )
+        else:
+            return GrpcExporter()
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
     # Endpoint, headers, timeout and TLS come from OTEL_EXPORTER_OTLP_* env vars.
     return OTLPSpanExporter()
 

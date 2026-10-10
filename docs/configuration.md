@@ -95,7 +95,7 @@ records are never pruned; see [security.md](security.md#data-retention).
 | `VPP_METRICS_BEARER_TOKEN` | unset | When set, `/metrics` requires `Authorization: Bearer <token>`. Unset = unauthenticated; restrict it at the network/proxy level. |
 | `VPP_TRACING_ENABLED` | `false` | OpenTelemetry tracing of requests, SQL and the dispatch path (optimisation, actuator writes, DR, protocols, forwarded cluster calls). Needs the `tracing` extra; without it a warning is logged and the app runs untraced. Configure the exporter with the standard variables below. See [observability.md](observability.md). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | Standard OpenTelemetry variable: OTLP collector base URL (`:4317` with `OTEL_EXPORTER_OTLP_PROTOCOL=grpc`). `OTEL_EXPORTER_OTLP_HEADERS`, `..._TIMEOUT`, `..._CERTIFICATE` are honoured too. |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc`. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` | `http/protobuf` or `grpc` (needs `opentelemetry-exporter-otlp-proto-grpc`, not in the `tracing` extra). |
 | `OTEL_TRACES_EXPORTER` | `otlp` | `otlp`, `console` (spans printed to stdout) or `none`. |
 | `OTEL_SERVICE_NAME` | `vpp` | `service.name` of the spans. |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | Standard sampler selection, e.g. `parentbased_traceidratio` with `0.1` to keep 10% of traces. |
