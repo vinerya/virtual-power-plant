@@ -144,6 +144,10 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A version uploaded by hand first (see docs/releasing.md) must not
+          # fail the tag run: the image and GitHub Release still publish.
+          skip-existing: true
 
   publish-docker:
     name: Publish image to GHCR
