@@ -38,7 +38,7 @@ def isolated_protocol_registry(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mqtt_ingestion_disabled_by_default(monkeypatch, preserve_db_globals):
+async def test_mqtt_ingestion_disabled_by_default(monkeypatch, tmp_path, preserve_db_globals):
     """mqtt_ingestion_enabled defaults to False -- no task is created."""
     called = False
 
@@ -49,7 +49,7 @@ async def test_mqtt_ingestion_disabled_by_default(monkeypatch, preserve_db_globa
     monkeypatch.setattr(app_module, "_mqtt_ingestion_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_mqtt_default.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'mqtt_default.db'}",
         degradation_updater_enabled=False,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)
@@ -62,7 +62,7 @@ async def test_mqtt_ingestion_disabled_by_default(monkeypatch, preserve_db_globa
 
 
 @pytest.mark.asyncio
-async def test_mqtt_ingestion_starts_when_enabled(monkeypatch, preserve_db_globals):
+async def test_mqtt_ingestion_starts_when_enabled(monkeypatch, tmp_path, preserve_db_globals):
     started = asyncio.Event()
 
     async def fake_loop(settings, **kwargs):
@@ -75,7 +75,7 @@ async def test_mqtt_ingestion_starts_when_enabled(monkeypatch, preserve_db_globa
     monkeypatch.setattr(app_module, "_mqtt_ingestion_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_mqtt_enabled.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'mqtt_enabled.db'}",
         degradation_updater_enabled=False,
         mqtt_ingestion_enabled=True,
     )
@@ -93,7 +93,7 @@ async def test_mqtt_ingestion_starts_when_enabled(monkeypatch, preserve_db_globa
 
 @pytest.mark.asyncio
 async def test_mqtt_ingestion_loop_registers_and_unregisters_adapter(
-    monkeypatch, preserve_db_globals, isolated_protocol_registry
+    monkeypatch, tmp_path, preserve_db_globals, isolated_protocol_registry
 ):
     """The real _mqtt_ingestion_loop (not a fake) must register the MQTT
     adapter into the shared registry on start and remove it on cancel --
@@ -107,7 +107,7 @@ async def test_mqtt_ingestion_loop_registers_and_unregisters_adapter(
     monkeypatch.setattr(MQTTAdapter, "connect", failing_connect)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_mqtt_registry.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'mqtt_registry.db'}",
         degradation_updater_enabled=False,
         mqtt_ingestion_enabled=True,
     )

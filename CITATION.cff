@@ -7,8 +7,8 @@ authors:
   - family-names: "Khemir"
     given-names: "Mariem"
 title: "Virtual Power Plant Platform"
-version: 2.0.0
-date-released: 2025-02-24
+version: 3.0.0
+date-released: 2026-10-10
 url: "https://github.com/vinerya/virtual-power-plant"
 repository-code: "https://github.com/vinerya/virtual-power-plant"
 license: MIT

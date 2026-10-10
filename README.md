@@ -65,7 +65,7 @@ Maturity labels used below:
 
 | Area | What it does | Maturity |
 |---|---|---|
-| Database & migrations | SQLAlchemy 2.0 async, PostgreSQL/SQLite, alembic migrations 0001-0007, model/migration drift test | production-grade |
+| Database & migrations | SQLAlchemy 2.0 async, PostgreSQL/SQLite, alembic migrations 0001-0013, model/migration drift test | production-grade |
 | Observability | `/metrics` (Prometheus), request ids, structured JSON logs, provisioned Grafana dashboards | production-grade |
 | Auth & RBAC | JWT with `aud` claim, API keys, roles admin/operator/viewer/researcher/customer, deny-by-default for customers, authenticated WebSocket | beta — user management, password change, key listing/revocation and session revocation; no MFA/SSO (see [security](docs/security.md)) |
 | Resources, sites, telemetry | typed battery/solar/wind resources, sites with live aggregates, telemetry and meter-reading ingest, time-bucketed history | beta |
@@ -384,6 +384,7 @@ Protocol tests run against in-process mock peers (no certification suites).
 - [API guide](docs/api.md)
 - [Tariffs and billing](docs/tariffs.md)
 - [Security](docs/security.md)
+- [Releasing](docs/releasing.md) (maintainers)
 - [Library features](ADVANCED_FEATURES.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md)
 
 ## Contributing

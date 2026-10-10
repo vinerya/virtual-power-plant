@@ -137,7 +137,10 @@ API_BASE_URL=http://127.0.0.1:8000 WS_PUBLIC_URL=wss://vpp.example.com/api/v1/ws
   is fine for development and demos.
 - Schema changes ship as alembic migrations in `src/vpp/migrations/versions/`. Upgrade
   procedure: back up, deploy the new image, let `vpp migrate` run (compose
-  does it on every start; it is idempotent), check the logs.
+  does it on every start; it is idempotent), check the logs. Upgrading
+  across a major version: read the **Upgrading** notes of that version in
+  [CHANGELOG.md](../CHANGELOG.md) first (e.g. a database created by 2.0.0
+  must be stamped at `0001_baseline` before `vpp migrate`).
 - `alembic downgrade` is available from the repository root
   (`alembic downgrade -1`) but data-bearing downgrades are not tested;
   restore from backup instead.

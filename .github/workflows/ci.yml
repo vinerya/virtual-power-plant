@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # release.yml runs the whole suite before publishing anything.
+  workflow_call:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

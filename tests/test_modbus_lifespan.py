@@ -6,8 +6,7 @@ Mirrors tests/test_mqtt_lifespan.py's pattern.
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import os
+from pathlib import Path
 
 import pytest
 
@@ -19,17 +18,13 @@ from vpp.protocols.base import ProtocolRegistry
 from vpp.settings import Settings
 
 
-def _fresh_sqlite_url(filename: str) -> str:
-    """Delete any leftover file from a prior run before returning its URL.
+def _sqlite_url(path: Path) -> str:
+    """URL of a fresh SQLite database at ``path`` (under ``tmp_path``).
 
-    Unlike the other lifespan tests, these create rows with a UNIQUE
-    constraint (resources.name) -- Base.metadata.create_all() is
-    idempotent and doesn't wipe existing data, so a stale file from a
-    previous run would collide on re-insert.
+    These tests create rows with a UNIQUE constraint (resources.name), so
+    each needs its own empty database rather than a shared file.
     """
-    with contextlib.suppress(FileNotFoundError):
-        os.remove(filename)
-    return f"sqlite+aiosqlite:///./{filename}"
+    return f"sqlite+aiosqlite:///{path}"
 
 
 @pytest.fixture
@@ -55,7 +50,7 @@ def isolated_protocol_registry(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_modbus_ingestion_disabled_by_default(monkeypatch, preserve_db_globals):
+async def test_modbus_ingestion_disabled_by_default(monkeypatch, tmp_path, preserve_db_globals):
     """modbus_ingestion_enabled defaults to False -- no task is created."""
     called = False
 
@@ -66,7 +61,7 @@ async def test_modbus_ingestion_disabled_by_default(monkeypatch, preserve_db_glo
     monkeypatch.setattr(app_module, "_modbus_ingestion_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_modbus_default.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'modbus_default.db'}",
         degradation_updater_enabled=False,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)
@@ -79,7 +74,7 @@ async def test_modbus_ingestion_disabled_by_default(monkeypatch, preserve_db_glo
 
 
 @pytest.mark.asyncio
-async def test_modbus_ingestion_starts_when_enabled(monkeypatch, preserve_db_globals):
+async def test_modbus_ingestion_starts_when_enabled(monkeypatch, tmp_path, preserve_db_globals):
     started = asyncio.Event()
 
     async def fake_loop(settings, **kwargs):
@@ -92,7 +87,7 @@ async def test_modbus_ingestion_starts_when_enabled(monkeypatch, preserve_db_glo
     monkeypatch.setattr(app_module, "_modbus_ingestion_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_modbus_enabled.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'modbus_enabled.db'}",
         degradation_updater_enabled=False,
         modbus_ingestion_enabled=True,
     )
@@ -110,11 +105,11 @@ async def test_modbus_ingestion_starts_when_enabled(monkeypatch, preserve_db_glo
 
 @pytest.mark.asyncio
 async def test_modbus_ingestion_skips_resources_without_modbus_metadata(
-    monkeypatch, preserve_db_globals
+    monkeypatch, tmp_path, preserve_db_globals
 ):
     """A resource with no `modbus` key in metadata must not spawn a device
     task -- _modbus_ingestion_loop should return with nothing to await."""
-    db_url = _fresh_sqlite_url("test_lifespan_modbus_no_config.db")
+    db_url = _sqlite_url(tmp_path / "modbus_no_config.db")
     await init_db(db_url)
     session_factory = db_engine._session_factory
     async with session_factory() as session:
@@ -145,7 +140,7 @@ async def test_modbus_ingestion_skips_resources_without_modbus_metadata(
 
 @pytest.mark.asyncio
 async def test_modbus_ingestion_loop_registers_and_unregisters_per_device_adapter(
-    monkeypatch, preserve_db_globals, isolated_protocol_registry
+    monkeypatch, tmp_path, preserve_db_globals, isolated_protocol_registry
 ):
     """The real _modbus_ingestion_loop (not a fake) must discover a
     modbus-configured resource, register its adapter under a name unique
@@ -158,7 +153,7 @@ async def test_modbus_ingestion_loop_registers_and_unregisters_per_device_adapte
 
     monkeypatch.setattr(ModbusAdapter, "connect", failing_connect)
 
-    db_url = _fresh_sqlite_url("test_lifespan_modbus_registry.db")
+    db_url = _sqlite_url(tmp_path / "modbus_registry.db")
     await init_db(db_url)
     session_factory = db_engine._session_factory
     async with session_factory() as session:

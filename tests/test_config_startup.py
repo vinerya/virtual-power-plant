@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-import os
-import uuid
+import tempfile
+from pathlib import Path
 
 import pytest
 import yaml
@@ -35,18 +35,16 @@ def _fresh_config():
 
 @contextlib.asynccontextmanager
 async def _db(create_tables: bool = True):
-    path = f"test_config_startup_{uuid.uuid4().hex[:8]}.db"
-    engine = create_async_engine(f"sqlite+aiosqlite:///./{path}")
-    try:
-        if create_tables:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-        yield path, async_sessionmaker(engine, expire_on_commit=False)
-    finally:
-        await engine.dispose()
-        for suffix in ("", "-wal", "-shm", "-journal"):
-            with contextlib.suppress(FileNotFoundError):
-                os.remove(path + suffix)
+    with tempfile.TemporaryDirectory(prefix="vpp-config-startup-") as tmp:
+        path = str(Path(tmp) / "config_startup.db")
+        engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+        try:
+            if create_tables:
+                async with engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+            yield path, async_sessionmaker(engine, expire_on_commit=False)
+        finally:
+            await engine.dispose()
 
 
 async def _store(factory, *docs: str) -> None:
@@ -98,7 +96,7 @@ def preserve_db_globals():
 async def test_lifespan_applies_stored_config(monkeypatch, preserve_db_globals):
     async with _db() as (path, factory):
         await _store(factory, _doc(name="Lifespan VPP"))
-        settings = Settings(database_url=f"sqlite+aiosqlite:///./{path}")
+        settings = Settings(database_url=f"sqlite+aiosqlite:///{path}")
         monkeypatch.setattr(app_module, "get_settings", lambda: settings)
         fastapi_app = app_module.create_app()
         async with fastapi_app.router.lifespan_context(fastapi_app):
@@ -141,7 +139,7 @@ async def test_lifespan_loads_config_path(monkeypatch, preserve_db_globals, tmp_
     cfg = tmp_path / "vpp.yaml"
     cfg.write_text(_doc(name="Env File VPP"))
     async with _db() as (path, _factory):
-        settings = Settings(database_url=f"sqlite+aiosqlite:///./{path}", config_path=str(cfg))
+        settings = Settings(database_url=f"sqlite+aiosqlite:///{path}", config_path=str(cfg))
         monkeypatch.setattr(app_module, "get_settings", lambda: settings)
         fastapi_app = app_module.create_app()
         async with fastapi_app.router.lifespan_context(fastapi_app):

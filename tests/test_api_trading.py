@@ -805,7 +805,7 @@ def test_service_singleton_is_resettable():
 
 
 @pytest.mark.asyncio
-async def test_lifespan_starts_market_data_loop(monkeypatch):
+async def test_lifespan_starts_market_data_loop(monkeypatch, tmp_path):
     """The simulated market-data ticker runs as a lifespan task when enabled."""
     import asyncio
 
@@ -827,7 +827,7 @@ async def test_lifespan_starts_market_data_loop(monkeypatch):
     try:
         for enabled in (True, False):
             settings = Settings(
-                database_url="sqlite+aiosqlite:///./test_lifespan_trading.db",
+                database_url=f"sqlite+aiosqlite:///{tmp_path / 'trading.db'}",
                 degradation_updater_enabled=False,
                 trading_market_data_enabled=enabled,
                 trading_market_data_interval_seconds=2.5,
@@ -845,12 +845,6 @@ async def test_lifespan_starts_market_data_loop(monkeypatch):
                 assert task.cancelled() or task.done()
     finally:
         db_engine._engine, db_engine._session_factory = saved
-        import contextlib
-        import os
-
-        for suffix in ("", "-journal"):
-            with contextlib.suppress(FileNotFoundError):
-                os.remove("test_lifespan_trading.db" + suffix)
     assert intervals == [2.5]
 
 

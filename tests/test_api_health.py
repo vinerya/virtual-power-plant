@@ -55,6 +55,36 @@ def test_version_falls_back_to_pyproject(monkeypatch):
     assert _version.get_version() == _version._version_from_pyproject()
 
 
+def test_source_checkout_version_beats_stale_installed_metadata(monkeypatch):
+    """An editable install's metadata lags a version bump until reinstalled;
+    the checkout's pyproject.toml wins."""
+    from vpp import _version
+
+    monkeypatch.setattr(_version, "version", lambda name: "0.0.1")
+    assert _version.get_version() == _version._version_from_pyproject()
+
+
+def test_installed_wheel_uses_distribution_metadata(monkeypatch, tmp_path):
+    """Without a pyproject.toml next to the sources (an installed wheel),
+    the distribution metadata is the version."""
+    from vpp import _version
+
+    monkeypatch.setattr(_version, "version", lambda name: "9.8.7")
+    monkeypatch.setattr(_version, "_PYPROJECT", tmp_path / "missing.toml")
+    assert _version.get_version() == "9.8.7"
+
+
+def test_cli_version_matches_package_version():
+    from click.testing import CliRunner
+
+    import vpp
+    from vpp.cli.main import cli
+
+    result = CliRunner().invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert result.output.strip() == f"vpp, version {vpp.__version__}"
+
+
 def test_version_unknown_when_no_source(monkeypatch, tmp_path):
     from importlib.metadata import PackageNotFoundError
 
