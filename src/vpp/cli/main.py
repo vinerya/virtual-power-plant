@@ -507,6 +507,149 @@ def benchmark_report(scenario: str | None, seeds: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Load / soak testing
+# ---------------------------------------------------------------------------
+
+
+@cli.command("loadtest")
+@click.option(
+    "--database-url",
+    default=None,
+    help="Database to migrate and load (default: a fresh SQLite file in --output-dir). "
+    "Use a scratch database: the harness adds resources, users and telemetry.",
+)
+@click.option("--duration", default=60.0, show_default=True, help="Seconds of load.")
+@click.option("--sample-interval", default=10.0, show_default=True, help="Seconds per sample.")
+@click.option("--resources", default=20, show_default=True, help="N batteries fed telemetry.")
+@click.option("--rate", default=1.0, show_default=True, help="M telemetry points/s per battery.")
+@click.option(
+    "--ingest",
+    type=click.Choice(["mqtt", "http", "none"]),
+    default="mqtt",
+    show_default=True,
+    help="Telemetry path: MQTT broker -> server ingestion, or the HTTP telemetry endpoint.",
+)
+@click.option("--mqtt-host", default="127.0.0.1", show_default=True)
+@click.option("--mqtt-port", default=1883, show_default=True)
+@click.option("--mqtt-qos", type=click.IntRange(0, 2), default=1, show_default=True)
+@click.option("--api-rps", default=20.0, show_default=True, help="Dashboard API reads/s.")
+@click.option("--ws-clients", default=10, show_default=True, help="WebSocket subscribers.")
+@click.option(
+    "--dispatch-interval",
+    default=15.0,
+    show_default=True,
+    help="Seconds between dispatch optimisations (0 = none).",
+)
+@click.option("--dispatch-resources", default=20, show_default=True, help="K resources.")
+@click.option("--modbus-devices", default=2, show_default=True, help="SunSpec simulators.")
+@click.option("--modbus-poll", default=1.0, show_default=True, help="Modbus poll interval (s).")
+@click.option("--workers", default=1, type=click.IntRange(min=1), show_default=True)
+@click.option("--max-inflight", default=64, show_default=True, help="Per-scenario cap.")
+@click.option(
+    "--output-dir",
+    default=None,
+    type=click.Path(file_okay=False),
+    help="Where report.json/report.md and logs go (default: ./loadtest-<timestamp>).",
+)
+@click.option(
+    "--server-env",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Extra environment for the API server (repeatable), e.g. VPP_TELEMETRY_RETENTION_DAYS=7.",
+)
+@click.option(
+    "--smoke",
+    is_flag=True,
+    help="30-second small run (CI): HTTP ingest, 1 Modbus device; fails only on errors.",
+)
+@click.option(
+    "--max-error-rate",
+    default=0.0,
+    show_default=True,
+    help="Exit 1 when errors / operations exceed this fraction.",
+)
+def loadtest(
+    database_url: str | None,
+    duration: float,
+    sample_interval: float,
+    resources: int,
+    rate: float,
+    ingest: str,
+    mqtt_host: str,
+    mqtt_port: int,
+    mqtt_qos: int,
+    api_rps: float,
+    ws_clients: int,
+    dispatch_interval: float,
+    dispatch_resources: int,
+    modbus_devices: int,
+    modbus_poll: float,
+    workers: int,
+    max_inflight: int,
+    output_dir: str | None,
+    server_env: tuple[str, ...],
+    smoke: bool,
+    max_error_rate: float,
+) -> None:
+    """Capacity / soak test a real API process (see docs/performance.md).
+
+    Starts `vpp serve` and SunSpec simulators as subprocesses, then runs
+    telemetry ingestion, dashboard reads, WebSocket subscribers, periodic
+    dispatch and Modbus polling concurrently, sampling throughput, latency
+    percentiles, errors, database size and server RSS over time.
+    """
+    import time as _time
+    from pathlib import Path
+
+    from vpp.loadtest import LoadConfig, run_load
+    from vpp.loadtest.report import render_markdown
+
+    extra: dict[str, str] = {}
+    for item in server_env:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            raise click.UsageError(f"--server-env expects KEY=VALUE, got {item!r}")
+        extra[key] = value
+    if smoke:
+        duration, sample_interval = 30.0, 5.0
+        resources, rate, ingest = 10, 2.0, "http"
+        api_rps, ws_clients, dispatch_interval, dispatch_resources = 10.0, 3, 5.0, 10
+        modbus_devices, modbus_poll = 1, 1.0
+    out = Path(output_dir or f"loadtest-{_time.strftime('%Y%m%d-%H%M%S')}")
+    cfg = LoadConfig(
+        output_dir=out,
+        database_url=database_url,
+        duration_s=duration,
+        sample_interval_s=sample_interval,
+        resources=resources,
+        points_per_s=rate,
+        ingest=ingest,
+        mqtt_host=mqtt_host,
+        mqtt_port=mqtt_port,
+        mqtt_qos=mqtt_qos,
+        api_rps=api_rps,
+        ws_clients=ws_clients,
+        dispatch_interval_s=dispatch_interval,
+        dispatch_resources=dispatch_resources,
+        modbus_devices=modbus_devices,
+        modbus_poll_s=modbus_poll,
+        workers=workers,
+        max_inflight=max_inflight,
+        extra_env=extra,
+    )
+    try:
+        report = run_load(cfg)
+    except (RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(render_markdown(report))
+    ops = sum(s["ok"] + s["errors"] for s in report["scenarios"].values())
+    errors = report["total_errors"]
+    click.echo(f"Report: {Path(report['config']['output_dir']) / 'report.md'}")
+    if errors and (ops == 0 or errors / ops > max_error_rate):
+        raise click.ClickException(f"{errors} error(s) during the load test")
+
+
+# ---------------------------------------------------------------------------
 # Demo
 # ---------------------------------------------------------------------------
 
