@@ -34,6 +34,21 @@ Done once per repository; skip if already in place.
    the repository's *Packages* and make it public if anonymous
    `docker pull` should work; link it to the repository if GitHub did not
    do so automatically.
+5. **Documentation site (GitHub Pages).** `.github/workflows/docs.yml`
+   builds the site on every pull request but only deploys once Pages is
+   switched on, so `main` stays green until then:
+    1. Settings → Pages → *Build and deployment* → Source: **GitHub
+       Actions**. This also creates the `github-pages` environment the
+       deploy job uses (by default it only accepts deployments from the
+       default branch, which is what the workflow does).
+    2. Settings → Secrets and variables → Actions → *Variables* → New
+       repository variable `DOCS_PAGES_ENABLED` = `true`.
+    3. Actions → *Docs* → re-run the latest run on `main` (or merge any
+       change under `docs/`). The site appears at
+       <https://vinerya.github.io/virtual-power-plant/>.
+
+    To stop publishing, delete the variable (or set it to anything but
+    `true`); the build job keeps checking the docs on pull requests.
 
 ## Cutting a release
 

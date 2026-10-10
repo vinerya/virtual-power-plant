@@ -1,0 +1,14 @@
+{#-
+  Material's source.html without data-md-component="source": that attribute
+  makes every page call api.github.com for star/fork counts. This site makes
+  no third-party requests, so the header shows a plain repository link.
+-#}
+<a href="{{ config.repo_url }}" title="{{ lang.t('source') }}" class="md-source">
+  <div class="md-source__icon md-icon">
+    {% set icon = config.theme.icon.repo or "fontawesome/brands/git-alt" %}
+    {% include ".icons/" ~ icon ~ ".svg" %}
+  </div>
+  <div class="md-source__repository">
+    {{ config.repo_name }}
+  </div>
+</a>

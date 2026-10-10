@@ -15,7 +15,7 @@ from vpp._version import __version__
 # metadata, which is stale in an editable install after a version bump.
 @click.version_option(version=__version__, prog_name="vpp")
 def cli() -> None:
-    """Virtual Power Plant — production-grade energy management platform."""
+    """Virtual Power Plant: DER aggregation, dispatch, tariffs and grid protocols."""
 
 
 # ---------------------------------------------------------------------------

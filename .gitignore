@@ -45,6 +45,9 @@ htmlcov/
 # Documentation
 docs/_build/
 docs/api/
+# MkDocs build output and local screenshots of it
+/site/
+/site-screenshots/
 
 # Logs and databases
 *.log

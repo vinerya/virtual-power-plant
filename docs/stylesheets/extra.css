@@ -1,0 +1,49 @@
+/* ReDoc ships a light theme only: keep it on a light card in dark mode. */
+.vpp-redoc {
+  margin-top: 1rem;
+  border-radius: 0.2rem;
+  background: #ffffff;
+  color: #333333;
+  overflow: hidden;
+}
+
+[data-md-color-scheme="slate"] .vpp-redoc {
+  box-shadow: 0 0 0 1px var(--md-default-fg-color--lightest);
+}
+
+/* The Redocly logo is blanked at build time (scripts/mkdocs_hooks.py). */
+.vpp-redoc img[alt="redocly logo"] {
+  display: none;
+}
+
+/* Material styles all tables and links inside .md-typeset; undo it for ReDoc. */
+.md-typeset .vpp-redoc table:not([class]) {
+  display: table;
+  font-size: inherit;
+  border: none;
+  box-shadow: none;
+}
+
+.md-typeset .vpp-redoc ul,
+.md-typeset .vpp-redoc ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.md-typeset .vpp-redoc li {
+  margin: 0;
+}
+
+.md-typeset .vpp-redoc pre,
+.md-typeset .vpp-redoc code {
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+}
+
+.md-typeset .vpp-redoc h1,
+.md-typeset .vpp-redoc h2,
+.md-typeset .vpp-redoc h3 {
+  color: inherit;
+}

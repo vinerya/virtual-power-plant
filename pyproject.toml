@@ -121,6 +121,17 @@ dev = [
     # Official SunSpec model definitions for tests/test_sunspec_models.py.
     "pysunspec2>=1.3.0",
 ]
+# Documentation site (mkdocs.yml): `mkdocs serve` / `mkdocs build --strict`.
+# The build imports the API app (OpenAPI schema) and the CLI (--help pages).
+docs = [
+    "virtual-power-plant[api,db,cli,monitoring]",
+    # MkDocs 2.0 drops the plugin system Material and mkdocstrings rely on.
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.5,<10",
+    "mkdocstrings[python]>=0.29",
+    # mkdocstrings formats the separate signatures with ruff.
+    "ruff>=0.4",
+]
 all = [
     "virtual-power-plant[api,db,protocols,research,cli,monitoring,tracing,dev]",
 ]

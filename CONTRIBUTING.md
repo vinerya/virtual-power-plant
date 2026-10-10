@@ -62,8 +62,8 @@ Backend:
 ```bash
 pytest                                        # whole suite
 pytest tests/test_api_tariffs.py -q           # one module
-ruff check src tests examples
-ruff format --check src tests examples
+ruff check src tests examples scripts
+ruff format --check src tests examples scripts
 mypy src/vpp --ignore-missing-imports
 ```
 
@@ -96,6 +96,26 @@ pnpm exec playwright test tests/trading.spec.ts --headed
 Knobs: `E2E_PORT` (port of the auto-started server), `E2E_BASE_URL` (test an
 already running app), `E2E_NO_SERVER=1`, `PLAYWRIGHT_CHROMIUM_EXECUTABLE`
 (use a preinstalled Chromium).
+
+## Building the docs
+
+The documentation site (<https://vinerya.github.io/virtual-power-plant/>)
+is built with MkDocs + Material from `docs/` and `mkdocs.yml`:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve                  # live preview on http://127.0.0.1:8000
+mkdocs build --strict         # as CI does: any warning fails the build
+```
+
+Write pages in `docs/` with relative links, as for GitHub. The build hook
+(`scripts/mkdocs_hooks.py`) points links to repository files outside
+`docs/` at GitHub, publishes CHANGELOG.md, CONTRIBUTING.md and LICENSE as
+pages, and generates the OpenAPI schema, the CLI reference and the ReDoc
+bundle; Python API pages are rendered by mkdocstrings from docstrings
+(Google style). A new page needs an entry under `nav:` in `mkdocs.yml`.
+`.github/workflows/docs.yml` builds the site on pull requests and
+publishes it from `main`.
 
 ## Dependency updates
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Documentation site** (MkDocs + Material), to be published at
+  <https://vinerya.github.io/virtual-power-plant/> once GitHub Pages is
+  enabled (one-time steps in [releasing](docs/releasing.md#one-time-setup)).
+  It serves the existing guides in `docs/` plus a home page with the
+  maturity table, a getting-started section (installation, first run, and a
+  ten-minute tutorial that dispatches the SunSpec simulator), and
+  references generated at build time: REST API (OpenAPI schema from
+  `create_app()` rendered with a self-hosted ReDoc), CLI (`--help` of every
+  `vpp` command) and Python API (mkdocstrings). Changelog, contributing
+  guide and license are included from the repository root. The site loads
+  no analytics, fonts or other third-party assets. Build it with
+  `pip install -e ".[docs]"` and `mkdocs serve` (new `docs` extra).
+  `.github/workflows/docs.yml` runs `mkdocs build --strict` on pull
+  requests and deploys from `main` only when the repository variable
+  `DOCS_PAGES_ENABLED` is `true`.
+
 ## [3.0.0] - 2026-10-10
 
 This release turns the library into an operable platform: the API is backed

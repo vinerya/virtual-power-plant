@@ -11,7 +11,7 @@ transparent optimization you can read, test and change.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: beta](https://img.shields.io/badge/status-beta-orange.svg)](#what-works-today)
 
-[What works](#what-works-today) · [Quick start](#quick-start) · [Architecture](#architecture) · [API](#api-overview) · [Security](#security-model) · [Docs](docs/) · [Contributing](CONTRIBUTING.md)
+[What works](#what-works-today) · [Quick start](#quick-start) · [Architecture](#architecture) · [API](#api-overview) · [Security](#security-model) · [Docs](https://vinerya.github.io/virtual-power-plant/) ([source](docs/)) · [Contributing](CONTRIBUTING.md)
 
 </div>
 
@@ -52,6 +52,8 @@ connecting it to equipment.
 
 ## What works today
 
+<!-- docs:maturity:start -->
+
 Maturity labels used below:
 
 - **production-grade** — complete for its stated scope, covered by tests,
@@ -91,6 +93,7 @@ Maturity labels used below:
 | Benchmarks | synthetic datasets, scenarios, metrics, runner | research |
 | Forecasting, anomaly detection | `vpp.research` | research |
 | Web console | operator console + customer portal (see [below](#web-console)) | beta |
+<!-- docs:maturity:end -->
 
 ## Architecture
 
@@ -377,6 +380,13 @@ Protocol tests run against in-process mock peers (no certification suites).
 ```
 
 ## Documentation
+
+The documentation site, <https://vinerya.github.io/virtual-power-plant/>,
+has these guides plus a getting-started tutorial and generated REST API,
+CLI and Python API references. It goes live once GitHub Pages is enabled
+for the repository (see [docs/releasing.md](docs/releasing.md#one-time-setup));
+until then, read the Markdown below or build the site locally
+(`pip install -e ".[docs]" && mkdocs serve`).
 
 - [Architecture](docs/architecture.md)
 - [Configuration reference](docs/configuration.md)

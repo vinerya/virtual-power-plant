@@ -1,0 +1,85 @@
+name: Docs
+
+# Builds the MkDocs site (mkdocs.yml) on every pull request and push to main
+# that touches it, and deploys it to GitHub Pages from main.
+#
+# Deployment is opt-in so main stays green until Pages is set up: in
+# Settings -> Pages choose "GitHub Actions" as the source, then add the
+# repository variable DOCS_PAGES_ENABLED=true (Settings -> Secrets and
+# variables -> Actions -> Variables). See docs/releasing.md.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "overrides/**"
+      - "scripts/mkdocs_hooks.py"
+      - "src/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "overrides/**"
+      - "scripts/mkdocs_hooks.py"
+      - "src/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "CONTRIBUTING.md"
+      - "LICENSE"
+      - "pyproject.toml"
+      - ".github/workflows/docs.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package with the docs extra
+        run: pip install -e ".[docs]"
+      - name: Build (warnings are errors)
+        run: mkdocs build --strict
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    # Only from main, and only once the maintainer has enabled Pages (source:
+    # GitHub Actions) and set DOCS_PAGES_ENABLED=true. This job never turns
+    # Pages on by itself.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      vars.DOCS_PAGES_ENABLED == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

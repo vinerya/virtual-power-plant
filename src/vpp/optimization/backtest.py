@@ -63,7 +63,8 @@ def run_backtest(
         controller: pre-configured :class:`MPCController`.
         config: backtest window + tick cadence.
         price_series: ground-truth prices, one per tick (length >= num_ticks).
-        load_series, solar_series: ground-truth load/solar, same length.
+        load_series: ground-truth load, same length as ``price_series``.
+        solar_series: ground-truth solar, same length as ``price_series``.
         forecast_fn: ``(now, horizon_steps) -> {'prices': [...], 'load_kw': [...],
             'solar_kw': [...]}``. The harness does not enforce that forecasts
             equal ground truth — that's how we test forecast-error sensitivity.

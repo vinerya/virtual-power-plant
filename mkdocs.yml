@@ -1,0 +1,149 @@
+# Documentation site: `pip install -e ".[docs]"`, then `mkdocs serve` (live
+# preview on http://127.0.0.1:8000) or `mkdocs build --strict` (as CI does).
+# Published to GitHub Pages by .github/workflows/docs.yml.
+site_name: Virtual Power Plant
+site_description: >-
+  Open-source Virtual Power Plant platform: DER dispatch optimization, tariffs
+  and billing, V2G, demand response and grid protocol integration.
+site_url: https://vinerya.github.io/virtual-power-plant/
+repo_url: https://github.com/vinerya/virtual-power-plant
+repo_name: vinerya/virtual-power-plant
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; Moudather Chelbi, Mariem Khemir and contributors &middot; MIT License
+
+strict: true
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+# Generates the changelog/contributing/license pages, openapi.json and the CLI
+# reference, and maps links to repository files (see the module docstring).
+hooks:
+  - scripts/mkdocs_hooks.py
+
+theme:
+  name: material
+  # partials/source.html: repository link without the api.github.com call.
+  custom_dir: overrides
+  # System fonts only: no requests to Google Fonts.
+  font: false
+  icon:
+    logo: material/lightning-bolt
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            filters: ["!^_"]
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            heading_level: 2
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  # No analytics, no consent cookie, no third-party requests (see font: false).
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/vinerya/virtual-power-plant
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - getting-started/index.md
+      - Installation: getting-started/installation.md
+      - First run: getting-started/first-run.md
+      - "Tutorial: simulated inverter": getting-started/tutorial.md
+  - Guides:
+      - Architecture: architecture.md
+      - Deployment: deployment.md
+      - Configuration: configuration.md
+      - Operations runbook: operations.md
+      - Performance and capacity: performance.md
+      - Observability: observability.md
+      - Security: security.md
+      - Protocols, V2G and DR: protocols.md
+      - Tariffs and billing: tariffs.md
+      - Releasing: releasing.md
+  - Reference:
+      - reference/index.md
+      - REST API:
+          - API guide: api.md
+          - OpenAPI (ReDoc): reference/rest-api.md
+      - CLI: reference/cli.md
+      - Python API:
+          - Core: reference/python/core.md
+          - Optimization: reference/python/optimization.md
+          - Tariffs: reference/python/tariffs.md
+          - Protocols: reference/python/protocols.md
+          - Settings: reference/python/settings.md
+  - Project:
+      - Changelog: changelog.md
+      - Contributing: contributing.md
+      - License: license.md
