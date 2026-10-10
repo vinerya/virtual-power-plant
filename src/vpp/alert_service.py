@@ -68,6 +68,8 @@ FRACTION_METRICS = frozenset({"soc", "soh"})
 OPEN_STATUSES = ("active", "acknowledged", "snoozed")
 #: Minimum seconds between "evaluation queue full" warnings.
 DROP_LOG_INTERVAL_S = 10.0
+#: Most queued telemetry events evaluated in one transaction.
+EVALUATION_BATCH = 200
 
 DEFAULT_RULES: tuple[dict[str, Any], ...] = (
     {
@@ -490,39 +492,46 @@ class AlertService:
 
     async def _run(self) -> None:
         while True:
-            event = await self._queue.get()
+            batch = [await self._queue.get()]
+            while len(batch) < EVALUATION_BATCH and not self._queue.empty():
+                batch.append(self._queue.get_nowait())
             try:
-                await self.process_event(event)
+                await self.process_events(batch)
             except Exception:
-                logger.exception("Alert evaluation failed for event %s", event.event_id)
+                # Retry one by one, so one bad event does not lose the batch.
+                for event in batch:
+                    try:
+                        await self.process_event(event)
+                    except Exception:
+                        logger.exception("Alert evaluation failed for event %s", event.event_id)
             finally:
-                self._queue.task_done()
+                for _ in batch:
+                    self._queue.task_done()
 
     # -- evaluation ------------------------------------------------------------
 
     async def process_event(self, event: Event) -> list[dict[str, Any]]:
         """Evaluate one telemetry event. Returns newly fired alerts (serialised)."""
-        data = event.data or {}
-        resource_id = data.get("resource_id") or data.get("id")
-        if not resource_id:
-            return []
-        resource_id = str(resource_id)
+        return await self.process_events([event])
+
+    async def process_events(self, events: Sequence[Event]) -> list[dict[str, Any]]:
+        """Evaluate telemetry events in order, in one transaction.
+
+        Returns the newly fired alerts (serialised). The worker hands over
+        everything queued at once: one session and one commit per batch
+        instead of per event roughly doubled how much telemetry the
+        evaluator keeps up with (it dropped events above ~200/s on one
+        worker; found with ``vpp loadtest``, see docs/performance.md).
+        """
 
         async def evaluate(session: AsyncSession) -> list[tuple[Alert, AlertModel]]:
             fired: list[tuple[Alert, AlertModel]] = []
-            for metric in self._metrics_of_interest:
-                value = _numeric(data.get(metric))
-                if value is None:
+            for event in events:
+                data = event.data or {}
+                resource_id = data.get("resource_id") or data.get("id")
+                if not resource_id:
                     continue
-                if metric in FRACTION_METRICS:
-                    value = normalise_soc(value)
-
-                for alert in self.manager.check(metric, value, source=resource_id):
-                    row, is_new = await self._persist(session, alert, metric, resource_id)
-                    if is_new:
-                        fired.append((alert, row))
-
-                await self._auto_resolve(session, metric, value, resource_id)
+                fired.extend(await self._evaluate(session, data, str(resource_id)))
             return fired
 
         # Shielded: stopping the evaluator mid-commit must not leak a
@@ -543,6 +552,25 @@ class AlertService:
                     logger.exception("Failed to broadcast alert %s", payload["id"])
             out.append(payload)
         return out
+
+    async def _evaluate(
+        self, session: AsyncSession, data: dict[str, Any], resource_id: str
+    ) -> list[tuple[Alert, AlertModel]]:
+        fired: list[tuple[Alert, AlertModel]] = []
+        for metric in self._metrics_of_interest:
+            value = _numeric(data.get(metric))
+            if value is None:
+                continue
+            if metric in FRACTION_METRICS:
+                value = normalise_soc(value)
+
+            for alert in self.manager.check(metric, value, source=resource_id):
+                row, is_new = await self._persist(session, alert, metric, resource_id)
+                if is_new:
+                    fired.append((alert, row))
+
+            await self._auto_resolve(session, metric, value, resource_id)
+        return fired
 
     async def _persist(
         self,

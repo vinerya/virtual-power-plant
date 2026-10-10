@@ -559,6 +559,75 @@ async def test_queue_full_is_logged_once_per_interval_and_counted(app, caplog):
 
 
 @pytest.mark.asyncio
+async def test_queued_events_are_evaluated_in_one_transaction(app, db_session):
+    """Regression (found with `vpp loadtest`): one transaction per telemetry
+    event capped the evaluator at ~200 events/s; the worker now evaluates
+    what is queued in one transaction, with the same outcome."""
+    from sqlalchemy import event as sa_event
+
+    metric = f"m_{_uid()}"
+    await _add_rule(
+        name=f"Low {metric}", metric=metric, comparison="<", threshold=10.0, cooldown_s=0
+    )
+    resource = ResourceModel(name=f"bat-{_uid()}", resource_type="battery", rated_power=5.0)
+    db_session.add(resource)
+    await db_session.commit()
+    fake = FakeBroadcaster()
+    svc = AlertService(get_session_factory(), broadcaster=fake)
+    await svc.reload_rules()
+
+    def ev(value: float) -> Event:
+        return Event(
+            event_type=EventType.RESOURCE_UPDATED, data={"resource_id": resource.id, metric: value}
+        )
+
+    # In range, fires, repeats (deduplicated), recovers (auto-resolved), fires again.
+    for value in (50.0, 5.0, 4.0, 50.0, 3.0):
+        svc._queue.put_nowait(ev(value))
+    commits = 0
+
+    def count(conn) -> None:
+        nonlocal commits
+        commits += 1
+
+    engine = get_session_factory().kw["bind"].sync_engine
+    sa_event.listen(engine, "commit", count)
+    worker = asyncio.create_task(svc._run())
+    try:
+        await asyncio.wait_for(svc.drain(), 10)
+    finally:
+        worker.cancel()
+        sa_event.remove(engine, "commit", count)
+    assert commits == 1
+    rows = await _alerts_for(resource.id)
+    assert [r.status for r in rows] == ["resolved", "active"]
+    assert rows[0].occurrences == 2
+    assert len(fake.sent) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_batch_is_retried_event_by_event(app, monkeypatch):
+    svc = AlertService(get_session_factory())
+    seen: list[int] = []
+
+    async def process_events(events):
+        if len(events) > 1:
+            raise RuntimeError("one bad event")
+        seen.append(events[0].data["n"])
+        return []
+
+    monkeypatch.setattr(svc, "process_events", process_events)
+    for n in range(3):
+        svc._queue.put_nowait(Event(event_type=EventType.RESOURCE_UPDATED, data={"n": n}))
+    worker = asyncio.create_task(svc._run())
+    try:
+        await asyncio.wait_for(svc.drain(), 10)
+    finally:
+        worker.cancel()
+    assert seen == [0, 1, 2]
+
+
+@pytest.mark.asyncio
 async def test_rule_crud_reloads_running_service(client, auth_headers, monkeypatch):
     from vpp import alert_service as alert_service_module
 
