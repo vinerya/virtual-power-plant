@@ -28,7 +28,7 @@ def preserve_db_globals():
 
 
 @pytest.mark.asyncio
-async def test_lifespan_starts_updater(monkeypatch, preserve_db_globals):
+async def test_lifespan_starts_updater(monkeypatch, tmp_path, preserve_db_globals):
     """If degradation_updater_enabled is True, a background task is created."""
     started = asyncio.Event()
 
@@ -43,7 +43,7 @@ async def test_lifespan_starts_updater(monkeypatch, preserve_db_globals):
     monkeypatch.setattr(app_module, "_degradation_periodic_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_a.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'a.db'}",
         degradation_updater_enabled=True,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)
@@ -57,7 +57,7 @@ async def test_lifespan_starts_updater(monkeypatch, preserve_db_globals):
 
 
 @pytest.mark.asyncio
-async def test_lifespan_cancels_on_shutdown(monkeypatch, preserve_db_globals):
+async def test_lifespan_cancels_on_shutdown(monkeypatch, tmp_path, preserve_db_globals):
     """The background task must be cancelled cleanly on shutdown."""
     started = asyncio.Event()
 
@@ -68,7 +68,7 @@ async def test_lifespan_cancels_on_shutdown(monkeypatch, preserve_db_globals):
     monkeypatch.setattr(app_module, "_degradation_periodic_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_b.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'b.db'}",
         degradation_updater_enabled=True,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)
@@ -83,7 +83,7 @@ async def test_lifespan_cancels_on_shutdown(monkeypatch, preserve_db_globals):
 
 
 @pytest.mark.asyncio
-async def test_disable_via_settings(monkeypatch, preserve_db_globals):
+async def test_disable_via_settings(monkeypatch, tmp_path, preserve_db_globals):
     """When the feature flag is False, no background task is created."""
     called = False
 
@@ -94,7 +94,7 @@ async def test_disable_via_settings(monkeypatch, preserve_db_globals):
     monkeypatch.setattr(app_module, "_degradation_periodic_loop", fake_loop)
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_c.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'c.db'}",
         degradation_updater_enabled=False,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)

@@ -2,24 +2,34 @@
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import os
+import shutil
+import tempfile
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Force testing settings before any VPP imports
+# Force testing settings before any VPP imports.  The session database lives
+# in a per-run temporary directory (not the working tree), so a run leaves no
+# files behind and two concurrent pytest runs never share a database.  It has
+# to be chosen before any VPP import reads the settings, which is earlier than
+# pytest's ``tmp_path_factory`` exists, hence ``tempfile`` (removed at exit).
+os.environ["PYTEST_VPP_TMPDIR"] = tempfile.mkdtemp(prefix="vpp-tests-")
 os.environ["VPP_ENV"] = "testing"
-os.environ["VPP_DATABASE_URL"] = "sqlite+aiosqlite:///./test_vpp.db"
+os.environ["VPP_DATABASE_URL"] = "sqlite+aiosqlite:///" + str(
+    Path(os.environ["PYTEST_VPP_TMPDIR"]) / "test_vpp.db"
+)
 os.environ["VPP_SECRET_KEY"] = "test-secret-key-not-for-production"
 # The session-scoped app serves the whole suite from one client address; a
 # per-minute limit would make later tests fail with 429 depending on how many
 # requests earlier ones made. Rate limiting has its own tests (explicit apps).
 os.environ.setdefault("VPP_RATE_LIMIT_ENABLED", "false")
-
-import contextlib
 
 from vpp.api.app import create_app
 from vpp.auth.security import create_access_token, get_password_hash
@@ -27,18 +37,23 @@ from vpp.db.engine import close_db, get_db, init_db
 from vpp.db.repositories import UserRepository
 from vpp.resources import Battery, Solar, WindTurbine
 
+_SESSION_TMP = Path(os.environ["PYTEST_VPP_TMPDIR"])
+atexit.register(shutil.rmtree, _SESSION_TMP, ignore_errors=True)
+TEST_DB_PATH = _SESSION_TMP / "test_vpp.db"
+TEST_DB_URL = os.environ["VPP_DATABASE_URL"]
+
 
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def app():
     """Create the FastAPI app with a test database."""
     _app = create_app()
     # Initialise test database
-    await init_db("sqlite+aiosqlite:///./test_vpp.db")
+    await init_db(TEST_DB_URL)
     yield _app
     await close_db()
     # Clean up test database
     with contextlib.suppress(FileNotFoundError):
-        os.remove("test_vpp.db")
+        TEST_DB_PATH.unlink()
 
 
 @pytest_asyncio.fixture

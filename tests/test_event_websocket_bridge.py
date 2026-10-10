@@ -91,13 +91,15 @@ def preserve_db_globals():
 
 
 @pytest.mark.asyncio
-async def test_real_app_lifespan_wires_event_bus_to_websocket(monkeypatch, preserve_db_globals):
+async def test_real_app_lifespan_wires_event_bus_to_websocket(
+    monkeypatch, tmp_path, preserve_db_globals
+):
     """The running app (not just the standalone helper) must forward
     EventBus publishes to connected WebSocket clients."""
     reset_event_bus()
 
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_events.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'events.db'}",
         degradation_updater_enabled=False,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)

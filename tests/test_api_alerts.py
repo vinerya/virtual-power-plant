@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -575,11 +574,11 @@ def preserve_db_globals():
 
 
 @pytest.mark.asyncio
-async def test_lifespan_wires_alert_service(monkeypatch, preserve_db_globals):
-    db_file = f"test_lifespan_alerts_{_uid()}.db"
+async def test_lifespan_wires_alert_service(monkeypatch, tmp_path, preserve_db_globals):
+    db_file = tmp_path / "alerts.db"
     reset_event_bus()
     test_settings = Settings(
-        database_url=f"sqlite+aiosqlite:///./{db_file}",
+        database_url=f"sqlite+aiosqlite:///{db_file}",
         degradation_updater_enabled=False,
         alerts_enabled=True,
         alerts_seed_default_rules=True,
@@ -622,23 +621,17 @@ async def test_lifespan_wires_alert_service(monkeypatch, preserve_db_globals):
         assert get_alert_service() is None
     finally:
         reset_event_bus()
-        if os.path.exists(db_file):
-            os.remove(db_file)
 
 
 @pytest.mark.asyncio
-async def test_lifespan_alerts_disabled(monkeypatch, preserve_db_globals):
-    db_file = f"test_lifespan_alerts_{_uid()}.db"
+async def test_lifespan_alerts_disabled(monkeypatch, tmp_path, preserve_db_globals):
+    db_file = tmp_path / "alerts.db"
     test_settings = Settings(
-        database_url=f"sqlite+aiosqlite:///./{db_file}",
+        database_url=f"sqlite+aiosqlite:///{db_file}",
         degradation_updater_enabled=False,
         alerts_enabled=False,
     )
     monkeypatch.setattr(app_module, "get_settings", lambda: test_settings)
     fastapi_app = app_module.create_app(rate_limit_enabled=False)
-    try:
-        async with fastapi_app.router.lifespan_context(fastapi_app):
-            assert get_alert_service() is None
-    finally:
-        if os.path.exists(db_file):
-            os.remove(db_file)
+    async with fastapi_app.router.lifespan_context(fastapi_app):
+        assert get_alert_service() is None

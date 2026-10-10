@@ -134,10 +134,10 @@ async def test_start_only_enabled_adapters():
 
 @pytest.mark.asyncio
 async def test_lifespan_starts_and_stops_ocpp(
-    monkeypatch, preserve_db_globals, isolated_protocol_registry
+    monkeypatch, tmp_path, preserve_db_globals, isolated_protocol_registry
 ):
     test_settings = Settings(
-        database_url="sqlite+aiosqlite:///./test_lifespan_ocpp.db",
+        database_url=f"sqlite+aiosqlite:///{tmp_path / 'ocpp.db'}",
         degradation_updater_enabled=False,
         ocpp_enabled=True,
     )
