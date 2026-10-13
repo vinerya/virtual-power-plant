@@ -1,0 +1,44 @@
+{
+  "name": "virtual-power-plant",
+  "image": "mcr.microsoft.com/devcontainers/python:1-3.11-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22",
+      "pnpmVersion": "9.15.9"
+    }
+  },
+  "postCreateCommand": "pip install -e '.[dev,api,db,cli,protocols,monitoring,degradation,migrations,tracing]' && git config --global --add safe.directory \"$PWD\"",
+  "forwardPorts": [8000, 3000],
+  "portsAttributes": {
+    "8000": { "label": "vpp-api" },
+    "3000": { "label": "web console" }
+  },
+  "containerEnv": {
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "VPP_ENV": "development"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "charliermarsh.ruff",
+        "ms-python.mypy-type-checker",
+        "ms-azuretools.vscode-docker",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.pytestArgs": ["tests"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}
