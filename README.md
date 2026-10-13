@@ -174,6 +174,24 @@ Add Prometheus (:9090) and Grafana (:3001):
 docker compose -f docker-compose.yml -f monitoring/docker-compose.monitoring.yml up -d
 ```
 
+### Managed PostgreSQL (Supabase, Amazon RDS, Neon, ...)
+
+The API only needs a PostgreSQL connection string, so a hosted PostgreSQL
+such as [Supabase](https://supabase.com) should work in place of the
+bundled container. This has not been tested yet (CI runs against plain
+PostgreSQL 16). Point the API at it and create the tables:
+
+```bash
+export VPP_DATABASE_URL='postgresql+asyncpg://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres'
+vpp migrate
+```
+
+Use a direct or session-mode connection (port 5432 on Supabase); a
+transaction-mode pooler (Supabase's port 6543, PgBouncer in transaction
+mode) does not work well with `asyncpg`'s prepared statements. Only the
+database is used: the app keeps its own users, API keys and WebSocket
+updates, so Supabase Auth, Storage and Realtime are not needed.
+
 ### Backend without Docker
 
 ```bash
