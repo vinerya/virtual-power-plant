@@ -1,0 +1,4 @@
+# Normalize line endings in the repository to LF regardless of the platform's
+# core.autocrlf setting, so a Linux dev container sharing a Windows checkout
+# does not see every CRLF file as modified.
+* text=auto
