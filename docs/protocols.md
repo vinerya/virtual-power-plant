@@ -468,6 +468,51 @@ modelled), set points that do not persist or need a vendor unlock, unit IDs,
 and scale factors that change at run time. Validate against the real device
 before enabling control on it.
 
+### OpenADR: a scripted VTN
+
+`tests/conformance/openleadr_vtn.py` runs an [OpenLEADR](https://github.com/openleadr/openleadr-python)
+VTN that accepts any VEN registration and queues a sequence of events for
+it (SIMPLE level 1, SIMPLE level 2, then a `LOAD_DISPATCH` delta; `--help`
+lists the scenarios and timings). With `VPP_DR_AUTO_RESPONSE_ENABLED=true`
+the DR orchestrator dispatches them, so the whole path from `oadrPoll` to
+`optimization_runs` can be exercised without a utility.
+
+With Docker Compose the VTN is the `openadr-vtn` service of
+`docker-compose.yml`, which runs only with the `openadr` profile. The API's
+`VPP_OPENADR_VTN_URL` defaults to that service, so turning on the VEN and
+auto-response is all it takes:
+
+```bash
+VPP_OPENADR_ENABLED=true VPP_DR_AUTO_RESPONSE_ENABLED=true \
+  docker compose --profile openadr up -d --build
+VPP_VTN_ARGS="--scenario simple --level 2 --lead 10" \
+  docker compose up -d openadr-vtn   # rerun the VTN with other events
+docker compose up -d openadr-vtn     # the VTN alone, e.g. for an API run on the host
+```
+
+To get the same from a plain `docker compose up -d`, put
+`COMPOSE_PROFILES=openadr`, `VPP_OPENADR_ENABLED=true` and
+`VPP_DR_AUTO_RESPONSE_ENABLED=true` in a `.env` file next to
+`docker-compose.yml` (Compose reads it; git ignores it).
+
+The VTN is published on `127.0.0.1:8080` (`VPP_VTN_PORT`). Events are
+queued when the VEN registers, so to replay them restart `openadr-vtn`,
+then reconnect the `openadr` adapter on the Protocols page (or restart
+`vpp-api`). Received events, opt decisions and dispatches show on the
+Protocols page; the runs appear under Trading → Dispatches.
+
+On the host instead (Python 3.10–3.13; OpenLEADR does not work on 3.14):
+
+```bash
+pip install openleadr
+python tests/conformance/openleadr_vtn.py            # http://127.0.0.1:8080/OpenADR2/Simple/2.0b
+```
+
+and point the API at it with `VPP_OPENADR_ENABLED=true` and
+`VPP_OPENADR_VTN_URL=http://localhost:8080/OpenADR2/Simple/2.0b`. From the
+API container the URL is `http://host.docker.internal:8080/OpenADR2/Simple/2.0b`;
+leave out the `openadr` profile then, since both VTNs publish port 8080.
+
 ### Automated test
 
 `tests/test_sunspec_simulator.py` starts the simulator in-process on an
