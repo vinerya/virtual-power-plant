@@ -14,7 +14,7 @@
 # The session cookie is `Secure` in production builds: serve the console over
 # HTTPS (or open it on http://localhost, which browsers treat as secure).
 # ============================================================================
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN corepack enable
 WORKDIR /app
@@ -36,7 +36,7 @@ COPY . .
 RUN pnpm build
 
 # ---------------------------------------------------------------------------
-FROM node:22-alpine AS runner
+FROM node:26-alpine AS runner
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
