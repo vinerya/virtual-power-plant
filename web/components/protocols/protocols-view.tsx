@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ErrorState } from "@/components/ui/error-state";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ProtocolMessages } from "@/components/protocols/protocol-messages";
 import {
+  DR_PROTOCOLS,
   OPERATIONAL_STATUSES,
   connectProtocol,
   disconnectProtocol,
@@ -64,6 +66,7 @@ export function ProtocolsView() {
 
   const live = q.data.filter((p) => p.mode === "live").length;
   const simulated = q.data.length - live;
+  const hasDR = q.data.some((p) => DR_PROTOCOLS.has(p.name));
 
   return (
     <div className="space-y-4" data-testid="protocols-view">
@@ -78,6 +81,7 @@ export function ProtocolsView() {
           </li>
         ))}
       </ul>
+      {hasDR && <ProtocolMessages canOperate={canOperate} />}
     </div>
   );
 }
