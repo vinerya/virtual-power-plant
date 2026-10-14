@@ -380,7 +380,7 @@ fresh token.
 | `/optimization` | schedule planner and closed-loop backtest |
 | `/trading`, `/trading/dispatches`, `/trading/strategies` | simulated-venue workspace, dispatch history + explainer, strategy backtests |
 | `/tariffs`, `/tariffs/[id]` | tariff browser, TOU heatmaps, bill simulator, URDB import |
-| `/protocols` | adapters with LIVE / SIMULATED badges, connect/disconnect |
+| `/protocols` | adapters with LIVE / SIMULATED badges, connect/disconnect; protocol messages: OpenADR DR events with signals and opt-in/out override, the DR decision log, and a live `grid_events` feed |
 | `/settings` | platform config YAML editor with schema validation |
 | `/settings/account` | change password, log out everywhere, your API keys |
 | `/settings/users` | admin: users (role, activation, deletion, password reset, sessions) and every API key |
