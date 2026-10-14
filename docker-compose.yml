@@ -19,6 +19,10 @@
 # Simulated SunSpec inverter + battery (Modbus TCP, sunspec-sim:5020 on the
 # compose network; see docs/protocols.md "Testing without hardware"):
 #   docker compose --profile sim up -d
+# Scripted OpenADR VTN (OpenLEADR, openadr-vtn:8080 on the compose network,
+# 127.0.0.1:8080 on the host), with the API's VEN and automatic DR response
+# on (see docs/protocols.md "OpenADR: a scripted VTN"):
+#   VPP_OPENADR_ENABLED=true VPP_DR_AUTO_RESPONSE_ENABLED=true docker compose --profile openadr up -d
 # OpenTelemetry tracing into Jaeger (UI http://localhost:16686, service "vpp";
 # see docs/observability.md):
 #   VPP_TRACING_ENABLED=true docker compose --profile tracing up -d
@@ -54,6 +58,14 @@ services:
       # needs a single API worker). See docs/protocols.md.
       VPP_MODBUS_INGESTION_ENABLED: ${VPP_MODBUS_INGESTION_ENABLED:-false}
       VPP_CONTROL_ENABLED: ${VPP_CONTROL_ENABLED:-false}
+      # OpenADR VEN and automatic demand-response dispatch (both off unless
+      # set). The VTN URL defaults to the "openadr" profile's test VTN; set it
+      # to the utility's VTN otherwise. See docs/protocols.md.
+      VPP_OPENADR_ENABLED: ${VPP_OPENADR_ENABLED:-false}
+      VPP_OPENADR_VTN_URL: ${VPP_OPENADR_VTN_URL:-http://openadr-vtn:8080/OpenADR2/Simple/2.0b}
+      VPP_OPENADR_VEN_NAME: ${VPP_OPENADR_VEN_NAME:-vpp-ven}
+      VPP_OPENADR_VERIFY_TLS: ${VPP_OPENADR_VERIFY_TLS:-true}
+      VPP_DR_AUTO_RESPONSE_ENABLED: ${VPP_DR_AUTO_RESPONSE_ENABLED:-false}
       # OpenTelemetry tracing (off unless VPP_TRACING_ENABLED=true). Spans go
       # over OTLP/HTTP to the `jaeger` service of the "tracing" profile by
       # default; point OTEL_EXPORTER_OTLP_ENDPOINT at your own collector instead.
@@ -75,6 +87,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      # The test VTN, when the "openadr" profile runs it; skipped otherwise.
+      openadr-vtn:
+        condition: service_healthy
+        required: false
+    # host.docker.internal is the host machine (built into Docker Desktop; this
+    # adds it on Linux), e.g. for a VTN running on the host.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - vpp-network
@@ -139,6 +159,33 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    restart: unless-stopped
+    networks:
+      - vpp-network
+
+  # Test utility, not started by default (`--profile openadr`, or on its own
+  # with `docker compose up -d openadr-vtn`). An OpenLEADR VTN that accepts any
+  # VEN and queues scripted demand-response events when it registers
+  # (tests/conformance/openleadr_vtn.py; flags via VPP_VTN_ARGS, e.g.
+  # "--scenario simple --level 2"). The API's VEN registers with it when
+  # VPP_OPENADR_ENABLED=true (VPP_OPENADR_VTN_URL defaults to this service).
+  openadr-vtn:
+    profiles: ["openadr"]
+    build:
+      context: ./tests/conformance
+      dockerfile: Dockerfile.openleadr-vtn
+    command: ${VPP_VTN_ARGS:-}
+    ports:
+      - "127.0.0.1:${VPP_VTN_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; socket.create_connection(('127.0.0.1', 8080), 2).close()"
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
     networks:
       - vpp-network
