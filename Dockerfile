@@ -9,7 +9,7 @@
 # migrations with `vpp migrate` (docker-compose.yml does this before
 # starting uvicorn).
 # ============================================================================
-FROM python:3.11-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -35,7 +35,7 @@ RUN pip wheel --wheel-dir /wheels \
     "psycopg2-binary>=2.9"
 
 # ============================================================================
-FROM python:3.11-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 LABEL org.opencontainers.image.title="vpp-api" \
       org.opencontainers.image.description="Open-source Virtual Power Plant platform - API" \
